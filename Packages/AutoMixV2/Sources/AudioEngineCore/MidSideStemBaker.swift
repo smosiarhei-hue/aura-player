@@ -26,6 +26,10 @@ public struct MidSideBakeRequest: Sendable, Equatable {
     public var instrumentalUntilSec: Double
     /// Length of the stem→dry bloom. One bar for the lab AutoMix LAND.
     public var bloomFadeSec: Double
+    /// Phrase length for the instrumental bed. 0 leaves the outro unlooped.
+    public var loopSec: Double
+    /// Tempo echo. 0 skips the wash that glues the vocal into the bed.
+    public var echoDelaySec: Double
 
     public init(
         fileURL: URL,
@@ -34,7 +38,9 @@ public struct MidSideBakeRequest: Sendable, Equatable {
         mode: MidSideStemMode,
         amount: Float = 1,
         instrumentalUntilSec: Double = 0,
-        bloomFadeSec: Double = 0.08
+        bloomFadeSec: Double = 0.08,
+        loopSec: Double = 0,
+        echoDelaySec: Double = 0
     ) {
         self.fileURL = fileURL
         self.cueSec = cueSec
@@ -43,6 +49,8 @@ public struct MidSideBakeRequest: Sendable, Equatable {
         self.amount = amount
         self.instrumentalUntilSec = instrumentalUntilSec
         self.bloomFadeSec = bloomFadeSec
+        self.loopSec = loopSec
+        self.echoDelaySec = echoDelaySec
     }
 }
 
@@ -359,7 +367,9 @@ public enum MidSideStemBaker {
         handoffProgress: Double,
         padSec: Double = 0,
         landFadeSec: Double = 0,
-        playbackRate: Double = 1
+        playbackRate: Double = 1,
+        loopSec: Double = 0,
+        echoDelaySec: Double = 0
     ) throws -> (outgoing: URL, incoming: URL) {
         let musical = min(maximumDurationSec, max(4, blendSec))
         let duration = min(maximumDurationSec, musical + max(0, padSec))
@@ -375,7 +385,9 @@ public enum MidSideStemBaker {
                 cueSec: cueA,
                 durationSec: duration,
                 mode: .instrumental,
-                amount: 0.78
+                amount: 0.78,
+                loopSec: loopSec,
+                echoDelaySec: echoDelaySec
             )
         )
         do {
@@ -387,7 +399,8 @@ public enum MidSideStemBaker {
                     mode: .vocal,
                     amount: 0.8,
                     instrumentalUntilSec: landAtSec,
-                    bloomFadeSec: fadeWall * rate
+                    bloomFadeSec: fadeWall * rate,
+                    echoDelaySec: echoDelaySec
                 )
             )
             return (aURL, bURL)
@@ -506,6 +519,28 @@ public enum MidSideStemBaker {
             StemSeparator.lastBackend = .hybridSpectral
         } else {
             StemSeparator.lastBackend = .hybridSpectral
+        }
+
+        // Glue the vocal into the bed before LAND. The dry song after LAND
+        // is written below and does not keep this wash.
+        if request.echoDelaySec > 0.05 {
+            if request.mode == .instrumental {
+                StemMashupGlue.shapeInstrumentalBed(
+                    left: &left,
+                    right: &right,
+                    rate: rate,
+                    loopSec: request.loopSec,
+                    delaySec: request.echoDelaySec
+                )
+            } else if request.mode == .vocal {
+                StemMashupGlue.shapeIncomingVocal(
+                    left: &left,
+                    right: &right,
+                    rate: rate,
+                    delaySec: request.echoDelaySec,
+                    untilFrame: Int(untilFrame)
+                )
+            }
         }
 
         // Stem→dry bloom near LAND. The incoming vocal becomes the full song.

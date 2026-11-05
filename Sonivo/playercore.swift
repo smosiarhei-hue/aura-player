@@ -1124,9 +1124,9 @@ final class PlayerCore {
             bar = elapsed
         }
 
-        // Phrase loop on the outgoing bed. On a stem CAF the cue is the start of the slice.
-        // Let the loop go one bar before LAND so the downbeat is the whole next song.
-        let loopBars = neuralAutomix ? max(2, plan.loopBarsA) : max(0, plan.loopBarsA)
+        // The stem bed already loops inside the CAF. Seeking here stops the player
+        // and the vocal loses the instrumental under it.
+        let loopBars = neuralAutomix ? 0 : max(0, plan.loopBarsA)
         let barSec = 4 * 60 / Double(safeBPM)
         let barFrac = barSec / max(4, transitionDuration)
         let loopUntil = neuralAutomix ? activeMashupStyle.automixLandProgress - barFrac : 0.72
@@ -2951,6 +2951,9 @@ final class PlayerCore {
                     // ending mid-window previously froze B after a stop/reload race).
                     let stemPadSec = 4.0
                     let barSec = (4 * 60) / max(30, Double(style.targetBPM))
+                    let loopBars = max(2, self.activeTransitionPlan?.loopBarsA ?? 2)
+                    let loopSec = duetBake ? 0 : barSec * Double(loopBars)
+                    let echoDelaySec = duetBake ? 0 : min(0.7, max(0.12, 60 / max(30, Double(style.targetBPM)) * 0.75))
                     let rateB = Double(style.rateB == 0 ? 1 : style.rateB)
                     let bakeStartedAt = Date()
                     let neuralPair: (outgoing: URL, incoming: URL)?
@@ -2965,7 +2968,9 @@ final class PlayerCore {
                             handoffProgress: handoff,
                             padSec: stemPadSec,
                             landFadeSec: barSec,
-                            playbackRate: rateB
+                            playbackRate: rateB,
+                            loopSec: loopSec,
+                            echoDelaySec: echoDelaySec
                         )
                     } catch is CancellationError {
                         return
@@ -2999,7 +3004,9 @@ final class PlayerCore {
                                     handoffProgress: handoff,
                                     padSec: stemPadSec,
                                     landFadeSec: barSec,
-                                    playbackRate: rateB
+                                    playbackRate: rateB,
+                                    loopSec: loopSec,
+                                    echoDelaySec: echoDelaySec
                                 ))
                             } catch {
                                 return .failure(error)
@@ -3463,8 +3470,9 @@ final class PlayerCore {
         let fromStream = isUsingStreamPlayer
         mashupStemEntryFromStream = fromStream
         mashupStemEntryStartedAt = Date()
-        // Short bridge — long dry+stem overlap stacked a third bed (field dirt).
-        mashupStemEntryDuration = fromStream ? 0.10 : 0.06
+        // Long enough for the outgoing vocal to leave into the instrumental,
+        // short enough that the dry song and the stem bed are not stacked.
+        mashupStemEntryDuration = fromStream ? 0.32 : 0.08
         incomingIsStream = false
         mashupPlayingMasterBake = false
         if !fromStream {

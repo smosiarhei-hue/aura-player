@@ -269,8 +269,9 @@ public struct MashupLiveStyle: Sendable, Equatable {
         return (min(1, max(0, outgoing)), min(1, max(0, incoming)))
     }
 
-    /// Stem AutoMix: the ending instrumental holds, the next vocal is up,
-    /// then the bed leaves across one bar and the vocal is the dry song.
+    /// Stem AutoMix: the ending instrumental is the bed under the next vocal.
+    /// The vocal is already up, so the cut does not leave a hole. The bed
+    /// leaves across one bar and the vocal is the dry song.
     public func stemNeuralVolumes(progress: Double, blendSec: Double) -> (outgoing: Float, incoming: Float) {
         if isDuet { return duetVolumes(progress: progress) }
         let p = min(1, max(0, progress))
@@ -278,16 +279,17 @@ public struct MashupLiveStyle: Sendable, Equatable {
         let bpm = Double(targetBPM > 30 ? targetBPM : 120)
         let bar = min(0.22, max(0.07, (4 * 60 / bpm) / max(4, blendSec)))
         let release = max(0, land - bar)
+        let bed: Float = 0.88
         let outgoing: Float
         if p <= release {
-            outgoing = 1
+            outgoing = bed
         } else if p < land {
-            outgoing = Float(max(0, 1 - (p - release) / max(0.08, bar)))
+            outgoing = Float(max(0, Double(bed) * (1 - (p - release) / max(0.08, bar))))
         } else {
             outgoing = 0
         }
-        let vocal = Float(min(1, p / 0.16))
-        return (outgoing, p >= land ? 1 : vocal)
+        let vocal: Float = p >= land ? 1 : min(1, 0.82 + Float(p / 0.12) * 0.18)
+        return (outgoing, vocal)
     }
 
     /// How loud B sits under A during ONE VOCAL Automix (before LAND bloom).

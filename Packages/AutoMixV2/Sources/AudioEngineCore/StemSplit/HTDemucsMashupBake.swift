@@ -47,7 +47,9 @@ public enum HTDemucsMashupBake {
         handoffProgress: Double,
         padSec: Double,
         landFadeSec: Double = 0,
-        playbackRate: Double = 1
+        playbackRate: Double = 1,
+        loopSec: Double = 0,
+        echoDelaySec: Double = 0
     ) async throws -> (outgoing: URL, incoming: URL)? {
         guard HTDemucsModelStore.shared.installedPackageURL() != nil else { return nil }
         let musical = min(MidSideStemBaker.maximumDurationSec, max(4, blendSec))
@@ -67,7 +69,9 @@ public enum HTDemucsMashupBake {
             cueB: cueB,
             duration: duration,
             landAt: landAt,
-            fadeSec: fadeWall * rate
+            fadeSec: fadeWall * rate,
+            loopSec: loopSec,
+            echoDelaySec: echoDelaySec
         )
         if pair != nil { lastBackend = "htdemucs" }
         return pair
@@ -94,7 +98,9 @@ public actor HTDemucsRuntime {
         cueB: Double,
         duration: Double,
         landAt: Double,
-        fadeSec: Double
+        fadeSec: Double,
+        loopSec: Double,
+        echoDelaySec: Double
     ) async throws -> (outgoing: URL, incoming: URL)? {
         if jobs > 0 {
             return try cachedPair(
@@ -105,7 +111,9 @@ public actor HTDemucsRuntime {
                 cueB: cueB,
                 duration: duration,
                 landAt: landAt,
-                fadeSec: fadeSec
+                fadeSec: fadeSec,
+                loopSec: loopSec,
+                echoDelaySec: echoDelaySec
             )
         }
         jobs += 1
@@ -118,7 +126,9 @@ public actor HTDemucsRuntime {
             cueB: cueB,
             duration: duration,
             landAt: landAt,
-            fadeSec: fadeSec
+            fadeSec: fadeSec,
+            loopSec: loopSec,
+            echoDelaySec: echoDelaySec
         )
     }
 
@@ -146,11 +156,15 @@ public actor HTDemucsRuntime {
         cueB: Double,
         duration: Double,
         landAt: Double,
-        fadeSec: Double
+        fadeSec: Double,
+        loopSec: Double,
+        echoDelaySec: Double
     ) throws -> (outgoing: URL, incoming: URL)? {
         let outgoingStem: StemTake = duet ? .vocal : .instrumental
+        let bedLoop = duet ? 0 : loopSec
         guard let outgoing = try renderCached(
-            url: outgoingURL, cue: cueA, duration: duration, stem: outgoingStem, landAt: 0, fadeSec: fadeSec
+            url: outgoingURL, cue: cueA, duration: duration, stem: outgoingStem, landAt: 0, fadeSec: fadeSec,
+            loopSec: bedLoop, echoDelaySec: duet ? 0 : echoDelaySec
         ) else { return nil }
         do {
             guard let incoming = try renderCached(
@@ -159,7 +173,9 @@ public actor HTDemucsRuntime {
                 duration: duration,
                 stem: .vocal,
                 landAt: landAt,
-                fadeSec: fadeSec
+                fadeSec: fadeSec,
+                loopSec: 0,
+                echoDelaySec: duet ? 0 : echoDelaySec
             ) else {
                 MidSideStemBaker.removeTempFiles([outgoing])
                 return nil
@@ -179,18 +195,24 @@ public actor HTDemucsRuntime {
         cueB: Double,
         duration: Double,
         landAt: Double,
-        fadeSec: Double
+        fadeSec: Double,
+        loopSec: Double,
+        echoDelaySec: Double
     ) async throws -> (outgoing: URL, incoming: URL)? {
         // Ending song is the instrumental bed. The next song enters as vocal,
         // then opens into the dry file at LAND. Duet is both vocals.
         let outgoingStem: StemTake = duet ? .vocal : .instrumental
+        let bedLoop = duet ? 0 : loopSec
+        let wash = duet ? 0 : echoDelaySec
         let outgoing = try await renderCAF(
             url: outgoingURL,
             cue: cueA,
             duration: duration,
             stem: outgoingStem,
             landAt: 0,
-            fadeSec: fadeSec
+            fadeSec: fadeSec,
+            loopSec: bedLoop,
+            echoDelaySec: wash
         )
         do {
             let incoming = try await renderCAF(
@@ -199,7 +221,9 @@ public actor HTDemucsRuntime {
                 duration: duration,
                 stem: .vocal,
                 landAt: landAt,
-                fadeSec: fadeSec
+                fadeSec: fadeSec,
+                loopSec: 0,
+                echoDelaySec: wash
             )
             return (outgoing, incoming)
         } catch {
@@ -214,10 +238,15 @@ public actor HTDemucsRuntime {
         duration: Double,
         stem: StemTake,
         landAt: Double,
-        fadeSec: Double
+        fadeSec: Double,
+        loopSec: Double,
+        echoDelaySec: Double
     ) async throws -> URL {
         let cached = try await window(url: url, startSec: max(0, cue), seconds: duration)
-        return try mixSlice(cached, cue: cue, duration: duration, stem: stem, landAt: landAt, fadeSec: fadeSec)
+        return try mixSlice(
+            cached, cue: cue, duration: duration, stem: stem, landAt: landAt, fadeSec: fadeSec,
+            loopSec: loopSec, echoDelaySec: echoDelaySec
+        )
     }
 
     private func renderCached(
@@ -226,12 +255,17 @@ public actor HTDemucsRuntime {
         duration: Double,
         stem: StemTake,
         landAt: Double,
-        fadeSec: Double
+        fadeSec: Double,
+        loopSec: Double,
+        echoDelaySec: Double
     ) throws -> URL? {
         guard let cached = windows.last(where: {
             $0.filePath == url.path && $0.covers(startSec: max(0, cue), durationSec: duration)
         }) else { return nil }
-        return try mixSlice(cached, cue: cue, duration: duration, stem: stem, landAt: landAt, fadeSec: fadeSec)
+        return try mixSlice(
+            cached, cue: cue, duration: duration, stem: stem, landAt: landAt, fadeSec: fadeSec,
+            loopSec: loopSec, echoDelaySec: echoDelaySec
+        )
     }
 
     private func mixSlice(
@@ -240,7 +274,9 @@ public actor HTDemucsRuntime {
         duration: Double,
         stem: StemTake,
         landAt: Double,
-        fadeSec: Double
+        fadeSec: Double,
+        loopSec: Double,
+        echoDelaySec: Double
     ) throws -> URL {
         guard let slice = cached.slice(startSec: max(0, cue), durationSec: duration) else {
             throw HTDemucsModelError("окно перехода вне кэша")
@@ -270,7 +306,20 @@ public actor HTDemucsRuntime {
             untilFrame: until,
             fadeFrames: max(1, Int(max(0.4, fadeSec) * cached.rate))
         )
-        return try Self.writeCAF(left: mixed.left, right: mixed.right, rate: cached.rate)
+        var left = mixed.left
+        var right = mixed.right
+        if echoDelaySec > 0.05 {
+            if stem == .instrumental {
+                StemMashupGlue.shapeInstrumentalBed(
+                    left: &left, right: &right, rate: cached.rate, loopSec: loopSec, delaySec: echoDelaySec
+                )
+            } else if stem == .vocal, let until {
+                StemMashupGlue.shapeIncomingVocal(
+                    left: &left, right: &right, rate: cached.rate, delaySec: echoDelaySec, untilFrame: until
+                )
+            }
+        }
+        return try Self.writeCAF(left: left, right: right, rate: cached.rate)
     }
 
     private func window(url: URL, startSec: Double, seconds: Double) async throws -> CachedWindow {
