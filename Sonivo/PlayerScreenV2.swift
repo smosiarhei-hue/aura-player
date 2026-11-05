@@ -58,10 +58,6 @@ struct PlayerScreenV2: View {
         return boostedVisualEnergy(spectrum.dynamicBass, gain: 1.18)
     }
 
-    private var beatPulse: CGFloat {
-        max(kickEnergy, bassEnergy * 0.85)
-    }
-
     private var midEnergy: CGFloat {
         guard player.isPlaying, !reduceMotion else { return 0 }
         return boostedVisualEnergy(spectrum.dynamicMids, gain: 1.22)
@@ -122,11 +118,26 @@ struct PlayerScreenV2: View {
                 let topInset = max(safeTop, 12)
                 // Video is a background layer, never a different layout mode.
                 // Keep the same reserved artwork space as readiness/setting changes.
-                let standardArtworkStageHeight = min(totalWidth - 40, totalHeight * 0.44)
+                // Apple Music Now Playing: dominant square cover, then controls on the wash.
+                let coverInset: CGFloat = 24
+                let standardArtworkStageHeight = min(totalWidth - coverInset * 2, totalHeight * 0.50)
 
                 ZStack(alignment: .top) {
+                    // Full-bleed blurred cover atmosphere (native UIBlurEffect) — like Apple Music.
+                    // The sharp cover sits ON TOP of this; nothing dissolves the artwork itself.
+                    NowPlayingAtmosphere(
+                        primary: coverWashPrimary,
+                        secondary: coverWashSecondary,
+                        secondaryAmount: coverWashAmount
+                    )
+                    .frame(width: totalWidth, height: totalHeight)
+                    .opacity(showLyricsMode || isFullScreenVideoShot ? 0 : 1)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+
                     background
                         .frame(width: totalWidth, height: totalHeight)
+                        .opacity(showLyricsMode || isFullScreenVideoShot ? 1 : 0.18)
                         .clipped()
 
                     // Attach the native rendering layer during preparation too. Readiness
@@ -159,37 +170,10 @@ struct PlayerScreenV2: View {
                                 VStack(spacing: 0) {
                                     artworkStage(width: totalWidth, height: standardArtworkStageHeight)
                                         .frame(width: totalWidth, height: standardArtworkStageHeight)
-                                        .padding(.top, 12)
+                                        .padding(.top, 8)
                                     lowerDeck(safeAreaBottom: safeBottom)
                                 }
                                 .frame(maxWidth: .infinity)
-                                .background(alignment: .top) {
-                                    // Mirrored wash sits under the square cover, never over it.
-                                    DownwardCoverWash(
-                                        primary: coverWashPrimary,
-                                        secondary: coverWashSecondary,
-                                        secondaryAmount: coverWashAmount,
-                                        beat: beatPulse
-                                    )
-                                    .frame(height: min(220, standardArtworkStageHeight * 0.72))
-                                    .mask(
-                                        LinearGradient(
-                                            stops: [
-                                                .init(color: .black.opacity(0.55), location: 0),
-                                                .init(color: .black, location: 0.18),
-                                                .init(color: .black, location: 0.55),
-                                                .init(color: .clear, location: 1)
-                                            ],
-                                            startPoint: .top,
-                                            endPoint: .bottom
-                                        )
-                                    )
-                                    .padding(.top, 12 + standardArtworkStageHeight - 8)
-                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                                    .opacity(isFullScreenVideoShot ? 0 : 1)
-                                    .allowsHitTesting(false)
-                                    .accessibilityHidden(true)
-                                }
                             }
                             .scrollIndicators(.hidden)
                             .accessibilityLabel("Плеер и дополнительные действия")
@@ -200,7 +184,8 @@ struct PlayerScreenV2: View {
                 }
                 .frame(width: totalWidth, height: totalHeight, alignment: .top)
                 .animation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion), value: showLyricsMode)
-                .environment(\.colorScheme, isFullScreenVideoShot ? .dark : preferredScheme)
+                // Apple Music Now Playing is always dark over the blurred cover wash.
+                .environment(\.colorScheme, (isFullScreenVideoShot || !showLyricsMode) ? .dark : preferredScheme)
             }
             .ignoresSafeArea(.container, edges: .all)
         }
@@ -536,9 +521,11 @@ struct PlayerScreenV2: View {
     }
 
     private func artworkStage(width: CGFloat, height: CGFloat) -> some View {
-        let cardSide = min(width - 40, height)
+        // Apple Music: one dominant continuous square. Never mask/dissolve the art.
+        let cardSide = min(width - 48, height)
         let tiltAngle = reduceMotion ? 0.0 : Double(coverDragX / width) * 4.0
         let dragScale = reduceMotion ? 1.0 : (1.0 - min(0.06, abs(coverDragX / width) * 0.06))
+        let playScale = player.isPlaying ? 1.0 : 0.92
 
         return ZStack {
             if isFullScreenVideoShot {
@@ -546,15 +533,19 @@ struct PlayerScreenV2: View {
                 Color.clear
                     .frame(width: width, height: height)
             } else {
-                // Intact square cover. The lab wash is a separate reflection under the card.
                 artwork
                     .frame(width: cardSide, height: cardSide)
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .shadow(color: .black.opacity(0.42), radius: 18, y: 8)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5)
+                    )
+                    .shadow(color: .black.opacity(0.55), radius: 28, y: 14)
+                    .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
             }
         }
         .frame(width: width, height: height)
-        .scaleEffect((player.isPlaying ? 1.0 : 0.96) * dragScale)
+        .scaleEffect(playScale * dragScale)
         .offset(x: coverDragX)
         .rotationEffect(.degrees(tiltAngle))
         .contentShape(Rectangle())
@@ -575,7 +566,7 @@ struct PlayerScreenV2: View {
                     }
                 }
         )
-        .animation(SN.slowSpring, value: player.isPlaying)
+        .animation(.interactiveSpring(response: 0.38, dampingFraction: 0.75), value: player.isPlaying)
         .animation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion), value: showLyricsMode)
     }
 
@@ -803,14 +794,19 @@ struct PlayerScreenV2: View {
 
     @ViewBuilder
     private func coverLayer(for track: Track?, preferredImage: UIImage?) -> some View {
+        // Fill the square like Apple Music — letterboxing cropped the art and looked like a card.
         Group {
             if let preferredImage {
                 Image(uiImage: preferredImage)
                     .resizable()
-                    .scaledToFit()
+                    .scaledToFill()
             } else if let raw = track?.coverURL, let url = URL(string: raw) {
                 AsyncImage(url: url) { phase in
-                    if let image = phase.image { image.resizable().scaledToFit() } else { fallbackArtwork }
+                    if let image = phase.image {
+                        image.resizable().scaledToFill()
+                    } else {
+                        fallbackArtwork
+                    }
                 }
             } else {
                 fallbackArtwork
@@ -823,7 +819,7 @@ struct PlayerScreenV2: View {
     }
 
     private func lowerDeck(safeAreaBottom: CGFloat) -> some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 16) {
             metadataRow
             PlayerTimelineSection(player: player) { centerStatusLabel }
             transportControls
@@ -849,11 +845,11 @@ struct PlayerScreenV2: View {
                 .foregroundStyle(SN.inkMuted)
                 .padding(.top, 4)
             secondaryPlayerActions
-                .padding(.top, 24)
+                .padding(.top, 20)
 
         }
         .padding(.horizontal, 24)
-        .padding(.top, 24)
+        .padding(.top, 18)
         .padding(.bottom, max(safeAreaBottom, 20))
         .frame(maxWidth: .infinity)
     }
@@ -2477,35 +2473,35 @@ struct PlayerQualityModalView: View {
 
 }
 
-// MARK: - Downward cover wash
+// MARK: - Now Playing atmosphere (Apple Music style)
 //
-// The bottom of the cover, mirrored in place, then blurred by UIBlurEffect.
-// The system owns the blur radius. Controls above this wash use Liquid Glass
-// (.glassEffect / GlassEffectContainer), which refracts whatever is behind them.
+// Full-bleed cover, then native UIBlurEffect. The sharp square cover sits above
+// this layer — never dissolve/mask the artwork itself. Liquid Glass controls
+// (.glassEffect) refract this wash.
 // https://developer.apple.com/documentation/swiftui/applying-liquid-glass-to-custom-views
 
-private struct DownwardCoverWash: UIViewRepresentable {
+private struct NowPlayingAtmosphere: UIViewRepresentable {
     var primary: UIImage?
     var secondary: UIImage?
     var secondaryAmount: CGFloat
-    var beat: CGFloat
 
-    func makeUIView(context: Context) -> DownwardCoverWashView {
-        DownwardCoverWashView()
+    func makeUIView(context: Context) -> NowPlayingAtmosphereView {
+        NowPlayingAtmosphereView()
     }
 
-    func updateUIView(_ view: DownwardCoverWashView, context: Context) {
+    func updateUIView(_ view: NowPlayingAtmosphereView, context: Context) {
         view.primaryImage = primary
         view.secondaryImage = secondary
         view.secondaryAmount = secondaryAmount
-        view.beat = beat
     }
 }
 
-private final class DownwardCoverWashView: UIView {
+private final class NowPlayingAtmosphereView: UIView {
     private let primaryView = UIImageView()
     private let secondaryView = UIImageView()
-    private let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
+    private let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterialDark))
+    private let dimView = UIView()
+    private let bottomFade = CAGradientLayer()
 
     var primaryImage: UIImage? {
         didSet { primaryView.image = primaryImage }
@@ -2516,25 +2512,30 @@ private final class DownwardCoverWashView: UIView {
     var secondaryAmount: CGFloat = 0 {
         didSet { applyAlphas() }
     }
-    var beat: CGFloat = 0 {
-        didSet { setNeedsLayout() }
-    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         isUserInteractionEnabled = false
         clipsToBounds = true
-        backgroundColor = .clear
+        backgroundColor = .black
         for imageView in [primaryView, secondaryView] {
             imageView.contentMode = .scaleAspectFill
             imageView.clipsToBounds = true
             imageView.isUserInteractionEnabled = false
-            // Reflect the bottom edge of the intact square cover.
-            imageView.layer.contentsRect = CGRect(x: 0, y: 0.55, width: 1, height: 0.45)
             addSubview(imageView)
         }
         blurView.isUserInteractionEnabled = false
         addSubview(blurView)
+        dimView.isUserInteractionEnabled = false
+        dimView.backgroundColor = UIColor.black.withAlphaComponent(0.42)
+        addSubview(dimView)
+        bottomFade.colors = [
+            UIColor.clear.cgColor,
+            UIColor.black.withAlphaComponent(0.55).cgColor,
+            UIColor.black.withAlphaComponent(0.82).cgColor
+        ]
+        bottomFade.locations = [0.0, 0.55, 1.0]
+        layer.addSublayer(bottomFade)
     }
 
     required init?(coder: NSCoder) {
@@ -2543,18 +2544,13 @@ private final class DownwardCoverWashView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        let width = bounds.width * 1.28
-        let height = max(1, bounds.height * 0.82)
-        let scale = 1.05 + beat * 0.045
-        for imageView in [primaryView, secondaryView] {
-            imageView.transform = .identity
-            imageView.bounds = CGRect(x: 0, y: 0, width: width, height: height)
-            imageView.center = CGPoint(x: bounds.midX, y: height / 2)
-            imageView.layer.contentsRect = CGRect(x: 0, y: 0.55, width: 1, height: 0.45)
-            // Flip around the view center so the reflection continues downward.
-            imageView.transform = CGAffineTransform(scaleX: scale, y: -scale)
-        }
+        // Slight overscan so aspect-fill never shows edges while drifting.
+        let overscan = bounds.insetBy(dx: -bounds.width * 0.08, dy: -bounds.height * 0.08)
+        primaryView.frame = overscan
+        secondaryView.frame = overscan
         blurView.frame = bounds
+        dimView.frame = bounds
+        bottomFade.frame = bounds
         applyAlphas()
     }
 
