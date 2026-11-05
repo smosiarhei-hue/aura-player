@@ -12,6 +12,14 @@ Field Automix (`AUSoundIsolation` → residual vocal) **портил инстр�
 3. Только когда bed/vocal звучат чисто — портим алгоритм в Swift `StemSeparator`.
 4. `StemSeparator.useSoundIsolation = false` пока lab не одобрит neural bake.
 
+## Нейро-окно перехода
+
+Яндекс отдаёт только микс. Живое разделение на стемы — [StemSplit/demucs-onnx](https://github.com/StemSplit/demucs-onnx) (HTDemucs, куски по 7,8 с, на CPU быстрее реального времени). Пока трек играет, `POST /api/stems/window` режет аутро A или интро B на `vocals.wav` и `instrumental.wav`. Play этот расчёт не ждёт. Mid/Side в `vocalInstrumental.ts` остаётся запасным путём, если окно ещё не готово.
+
+```bash
+pip install demucs-onnx
+```
+
 ## Lab carve (источник истины)
 
 | Mode | Файл | Поведение |

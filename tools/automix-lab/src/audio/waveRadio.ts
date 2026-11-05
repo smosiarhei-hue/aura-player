@@ -650,6 +650,60 @@ export class WaveRadio {
     if (!quiet) this.setStatus("loading", `Декодирую · ${meta.title}`);
     await this.engine.loadArrayBuffer(id, buf, meta.fileName);
     if (!this.engine.getDeck(id).buffer) throw new Error("decode failed");
+    this.queueStemWindow(id, meta);
+  }
+
+  /**
+   * HTDemucs on the transition window only, in parallel with playback.
+   * Repo: https://github.com/StemSplit/demucs-onnx — Yandex has no stem API.
+   */
+  private queueStemWindow(id: "a" | "b", meta: WaveTrackMeta) {
+    const file = decodeURIComponent(meta.url.split("/").pop() || "");
+    if (!file) return;
+    const dur = Math.max(1, meta.durationMs / 1000 || this.engine.getDeck(id).duration || 1);
+    const role = id === "a" ? "outro" : "intro";
+    const durationSec = Math.min(24, dur);
+    const startSec = role === "outro" ? Math.max(0, dur - durationSec) : 0;
+    if (!this.brainStatus || this.brainStatus.startsWith("Стемы")) {
+      this.brainStatus = "Стемы · окно перехода считается";
+    }
+    void fetch("/api/stems/window", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        file,
+        trackId: meta.id,
+        startSec,
+        durationSec,
+        role,
+      }),
+    })
+      .then(async (r) => {
+        if (!r.ok) return;
+        const watch = window.setInterval(() => {
+          void fetch(`/api/stems/status?trackId=${encodeURIComponent(meta.id)}&role=${role}`)
+            .then((res) => res.json())
+            .then((body: { phase?: string; error?: string }) => {
+              if (body.phase === "ready") {
+                window.clearInterval(watch);
+                if (!this.brainStatus || this.brainStatus.startsWith("Стемы")) {
+                  this.brainStatus =
+                    role === "outro" ? "Стемы · аутро готово" : "Стемы · интро готово";
+                  this.emit();
+                }
+              } else if (body.phase === "error") {
+                window.clearInterval(watch);
+                if (!this.brainStatus || this.brainStatus.startsWith("Стемы")) {
+                  this.brainStatus = "Стемы · не посчитались";
+                  this.emit();
+                }
+              }
+            })
+            .catch(() => undefined);
+        }, 2000);
+        window.setTimeout(() => window.clearInterval(watch), 180_000);
+      })
+      .catch(() => undefined);
   }
 
   /** Mirror server load phase so Play isn't a silent spinner. */

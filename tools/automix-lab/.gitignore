@@ -29,6 +29,10 @@ public/samples/*.mp3
 # Offline Whisper model + transcript cache
 .whisper-cache/
 
+# HTDemucs transition windows (local, can be large)
+.stem-cache/
+.stem-venv/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
