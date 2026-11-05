@@ -163,6 +163,21 @@ struct PlayerScreenV2: View {
                                     lowerDeck(safeAreaBottom: safeBottom)
                                 }
                                 .frame(maxWidth: .infinity)
+                                .background(alignment: .top) {
+                                    // Lab wash: the cover's lower edge, mirrored, continuing
+                                    // under the controls. It starts mid-art and does not climb back up.
+                                    DownwardCoverWash(
+                                        primary: coverWashPrimary,
+                                        secondary: coverWashSecondary,
+                                        secondaryAmount: coverWashAmount,
+                                        beat: beatPulse
+                                    )
+                                    .padding(.top, 12 + standardArtworkStageHeight * 0.52)
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                                    .opacity(isFullScreenVideoShot ? 0 : 1)
+                                    .allowsHitTesting(false)
+                                    .accessibilityHidden(true)
+                                }
                             }
                             .scrollIndicators(.hidden)
                             .accessibilityLabel("Плеер и дополнительные действия")
@@ -509,7 +524,6 @@ struct PlayerScreenV2: View {
     }
 
     private func artworkStage(width: CGFloat, height: CGFloat) -> some View {
-        let cardSide = min(width - 40, height)
         let tiltAngle = reduceMotion ? 0.0 : Double(coverDragX / width) * 4.0
         let dragScale = reduceMotion ? 1.0 : (1.0 - min(0.06, abs(coverDragX / width) * 0.06))
 
@@ -519,10 +533,10 @@ struct PlayerScreenV2: View {
                 Color.clear
                     .frame(width: width, height: height)
             } else {
+                // Full-bleed lab cover. The bottom dissolves into the mirrored wash.
                 artwork
-                    .frame(width: cardSide, height: cardSide)
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .shadow(color: .black.opacity(0.42), radius: 18, y: 8)
+                    .frame(width: width, height: height)
+                    .mask(coverDissolveMask)
             }
         }
         .frame(width: width, height: height)
@@ -721,45 +735,59 @@ struct PlayerScreenV2: View {
         return (lines[lineIndex].text, lineIndex + 1 < lines.count ? lines[lineIndex + 1].text : nil)
     }
 
-    @ViewBuilder private var artwork: some View {
-        let mixing = player.isTransitionActive
-        let mixP = min(1, max(0, player.transitionProgress))
-        let isLand = mixing && (mixP >= 0.72 || (player.mashupPhaseLabel?.hasPrefix("LAND") == true))
+    /// Automix lab dissolve: sharp at the top, gone at the bottom so the wash continues it.
+    private var coverDissolveMask: some View {
+        LinearGradient(
+            stops: [
+                .init(color: .black, location: 0),
+                .init(color: .black, location: 0.54),
+                .init(color: .black.opacity(0.72), location: 0.70),
+                .init(color: .black.opacity(0.28), location: 0.86),
+                .init(color: .clear, location: 1)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
 
-        // Lab-style Automix cover choreography: B peeks under A, then LAND resolves to B.
-        if mixing,
+    private var coverMixAmount: Double {
+        guard player.isTransitionActive,
+              let outgoing = player.currentTrack,
+              let incoming = player.incomingTrack ?? player.displayTrack,
+              outgoing.id != incoming.id else { return 0 }
+        return min(1, max(0, player.transitionProgress))
+    }
+
+    private var coverWashPrimary: UIImage? {
+        if coverMixAmount > 0, let outgoing = player.currentTrack {
+            return artworkImage(for: outgoing)
+        }
+        return track.flatMap { artworkImage(for: $0) }
+    }
+
+    private var coverWashSecondary: UIImage? {
+        guard coverMixAmount > 0,
+              let incoming = player.incomingTrack ?? player.displayTrack else { return nil }
+        return artworkImage(for: incoming)
+    }
+
+    private var coverWashAmount: CGFloat { CGFloat(coverMixAmount) }
+
+    @ViewBuilder private var artwork: some View {
+        let mixP = coverMixAmount
+
+        // Lab Automix stage: the next cover replaces this one by opacity only.
+        // The mirrored wash underneath carries the blur.
+        if mixP > 0,
            let outgoing = player.currentTrack,
            let incoming = player.incomingTrack ?? player.displayTrack,
            outgoing.id != incoming.id {
             ZStack {
                 coverLayer(for: incoming, preferredImage: artworkImage(for: incoming))
-                    .scaleEffect(isLand ? 1 : (1.06 - mixP * 0.05))
-                    .opacity(isLand ? 1 : (0.22 + mixP * 0.55))
-                    .blur(radius: reduceMotion ? 0 : (isLand ? 0 : max(0, 5 - mixP * 5)))
-                    .saturation(isLand ? 1 : (0.75 + mixP * 0.25))
-
+                    .opacity(mixP)
                 coverLayer(for: outgoing, preferredImage: artworkImage(for: outgoing))
-                    .scaleEffect(isLand ? 0.94 : (1 - mixP * 0.04))
-                    .opacity(isLand ? 0 : (1 - mixP * 0.35))
-                    .blur(radius: reduceMotion ? 0 : (isLand ? 8 : 0))
-                    .saturation(isLand ? 0.4 : (1 - mixP * 0.25))
-
-                if !reduceMotion {
-                    RadialGradient(
-                        colors: [
-                            Color.white.opacity(0.10 + mixP * 0.12),
-                            Color.clear
-                        ],
-                        center: .center,
-                        startRadius: 10,
-                        endRadius: 220
-                    )
-                    .blendMode(.plusLighter)
-                    .opacity(isLand ? 0 : (0.35 + mixP * 0.45))
-                    .allowsHitTesting(false)
-                }
+                    .opacity(1 - mixP)
             }
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.28), value: isLand)
             .animation(reduceMotion ? nil : .linear(duration: 0.05), value: mixP)
         } else {
             coverLayer(for: track, preferredImage: {
@@ -1081,6 +1109,7 @@ struct PlayerScreenV2: View {
         PlaybackQualityFacts(codec: player.currentCodec, bitrate: player.currentBitrate).badge
     }
     private var transportControls: some View {
+        GlassEffectContainer(spacing: 18) {
         HStack(spacing: 0) {
             Button {
                 Haptics.tap(.light)
@@ -1090,16 +1119,19 @@ struct PlayerScreenV2: View {
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(player.shuffle ? SN.amber : SN.inkMuted)
                     .frame(width: 48, height: 48)
-                    .contentShape(Rectangle())
+                    .glassCircle()
+                    .contentShape(Circle())
             }
             .frame(maxWidth: .infinity)
             .accessibilityLabel(player.shuffle ? "Перемешивание включено" : "Перемешать")
 
             Button(action: previousTrack) {
                 Image(systemName: "backward.fill")
-                    .font(.system(size: 26, weight: .bold))
-                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .font(.system(size: 22, weight: .bold))
+                    .frame(width: 56, height: 56)
+                    .glassCircle()
             }
+            .frame(maxWidth: .infinity)
 
             Button(action: togglePlayback) {
                 ZStack {
@@ -1122,9 +1154,11 @@ struct PlayerScreenV2: View {
 
             Button(action: nextTrack) {
                 Image(systemName: "forward.fill")
-                    .font(.system(size: 26, weight: .bold))
-                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .font(.system(size: 22, weight: .bold))
+                    .frame(width: 56, height: 56)
+                    .glassCircle()
             }
+            .frame(maxWidth: .infinity)
 
             Button {
                 Haptics.tap(.light)
@@ -1138,13 +1172,15 @@ struct PlayerScreenV2: View {
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(player.repeatMode != .off ? SN.amber : SN.inkMuted)
                     .frame(width: 48, height: 48)
-                    .contentShape(Rectangle())
+                    .glassCircle()
+                    .contentShape(Circle())
             }
             .frame(maxWidth: .infinity)
             .accessibilityLabel("Повтор")
         }
         .foregroundStyle(SN.ink)
         .buttonStyle(TactileButtonStyle(scale: 0.94))
+        }
     }
 
     private var moreMenuButton: some View {
@@ -2440,6 +2476,99 @@ struct PlayerQualityModalView: View {
     }
     private var currentQualityFormatDetail: String? { currentQuality.detail }
 
+}
+
+// MARK: - Downward cover wash
+//
+// The bottom of the cover, mirrored in place, then blurred by UIBlurEffect.
+// The system owns the blur radius. Controls above this wash use Liquid Glass
+// (.glassEffect / GlassEffectContainer), which refracts whatever is behind them.
+// https://developer.apple.com/documentation/swiftui/applying-liquid-glass-to-custom-views
+
+private struct DownwardCoverWash: UIViewRepresentable {
+    var primary: UIImage?
+    var secondary: UIImage?
+    var secondaryAmount: CGFloat
+    var beat: CGFloat
+
+    func makeUIView(context: Context) -> DownwardCoverWashView {
+        DownwardCoverWashView()
+    }
+
+    func updateUIView(_ view: DownwardCoverWashView, context: Context) {
+        view.primaryImage = primary
+        view.secondaryImage = secondary
+        view.secondaryAmount = secondaryAmount
+        view.beat = beat
+    }
+}
+
+private final class DownwardCoverWashView: UIView {
+    private let primaryView = UIImageView()
+    private let secondaryView = UIImageView()
+    private let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
+
+    var primaryImage: UIImage? {
+        didSet { primaryView.image = primaryImage }
+    }
+    var secondaryImage: UIImage? {
+        didSet { secondaryView.image = secondaryImage }
+    }
+    var secondaryAmount: CGFloat = 0 {
+        didSet { applyAlphas() }
+    }
+    var beat: CGFloat = 0 {
+        didSet { setNeedsLayout() }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        clipsToBounds = true
+        backgroundColor = .clear
+        for imageView in [primaryView, secondaryView] {
+            imageView.contentMode = .scaleAspectFill
+            imageView.clipsToBounds = true
+            imageView.isUserInteractionEnabled = false
+            // Keep the lower part of the cover, the part that meets the wash.
+            imageView.layer.contentsRect = CGRect(x: 0, y: 0.28, width: 1, height: 0.72)
+            addSubview(imageView)
+        }
+        blurView.isUserInteractionEnabled = false
+        addSubview(blurView)
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let width = bounds.width * 1.28
+        let height = max(1, bounds.height * 0.82)
+        let scale = 1.05 + beat * 0.045
+        for imageView in [primaryView, secondaryView] {
+            imageView.transform = .identity
+            imageView.bounds = CGRect(x: 0, y: 0, width: width, height: height)
+            imageView.center = CGPoint(x: bounds.midX, y: height / 2)
+            imageView.layer.contentsRect = CGRect(x: 0, y: 0.28, width: 1, height: 0.72)
+            // Flip around the view center so the reflection continues downward.
+            imageView.transform = CGAffineTransform(scaleX: scale, y: -scale)
+        }
+        blurView.frame = bounds
+        applyAlphas()
+    }
+
+    private func applyAlphas() {
+        let incoming = min(1, max(0, secondaryAmount))
+        if secondaryImage == nil {
+            secondaryView.alpha = 0
+            primaryView.alpha = primaryImage == nil ? 0 : 1
+        } else {
+            secondaryView.alpha = incoming
+            primaryView.alpha = 1 - incoming
+        }
+    }
 }
 
 // MARK: - Full-spectrum, physically damped player background
