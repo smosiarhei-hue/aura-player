@@ -3346,9 +3346,12 @@ final class PlayerCore {
                         self.applyMashupTransitionEQ(progress: enterP)
                         AutoMixDJEngine.shared.markMashupProgress(enterP)
                         AutoMixDJEngine.shared.currentBPM = Double(self.activeMashupStyle.targetBPM)
-                        AutoMixDJEngine.shared.statusBadge = neuralPair == nil
-                            ? self.activeMashupStyle.phaseLabel(progress: enterP)
-                            : "HTDemucs"
+                        let sepLabel = HTDemucsMashupBake.lastBackend == "htdemucs"
+                            ? "htdemucs"
+                            : MidSideStemBaker.lastSeparationBackend.rawValue
+                        AutoMixDJEngine.shared.statusBadge = sepLabel == "htdemucs"
+                            ? "HTDemucs"
+                            : self.activeMashupStyle.phaseLabel(progress: enterP)
                         let lockedA = self.activeMashupStyle.rateA
                         let lockedB = self.activeMashupStyle.rateB
                         let pitchB = self.activeMashupStyle.pitchCentsB
@@ -3367,7 +3370,7 @@ final class PlayerCore {
                                 lockedB,
                                 pitchB,
                                 self.activeMashupStyle.automixIncomingBedGain,
-                                neuralPair == nil ? MidSideStemBaker.lastSeparationBackend.rawValue : "htdemucs"
+                                sepLabel
                             )
                         )
                         self.startTransitionTimer()
