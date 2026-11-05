@@ -618,8 +618,8 @@ final class PlayerCore {
     private var mashupBakeOutgoingBaseCue: Double = 0
     /// True while playing the offline A+B master (volumes already baked in).
     private var mashupPlayingMasterBake = false
-    /// Stem bake failed — run an honest equal-power crossfade instead of dual
-    /// full-volume "mashup" (which just muddies two dry streams).
+    /// Stem bake failed or still cooking — dry decks with Automix EQ/echo/plate
+    /// instead of dual full-volume stems (which muddies two dry streams).
     private var mashupBakeFailedUseCrossfade = false
     /// Outgoing track whose mix already failed. The playhead stays past the cue,
     /// so a cancel used to schedule the same bake again (fail → cancel → bake.start).
@@ -1106,25 +1106,29 @@ final class PlayerCore {
         applyEQ()
     }
 
-    /// Sample MixPlanner `plan.fx` on the live stream path (echo / reverb / stutter / loop).
-    /// DualDeck owns the same FX graph when V2 ownership is on; today the ear is PlayerCore.
+    /// Sample MixPlanner `plan.fx` on the live path (echo / reverb / stutter / loop).
+    /// Automix always keeps a lab-style echo+plate wash, even when the stem bake
+    /// failed and we are riding dry decks — clearing FX made those mixes feel empty.
     @discardableResult
     private func applyLivePlanFX(progress: Double, elapsed: Double, outgoingVolume: Float) -> Float {
-        guard let plan = activeTransitionPlan, plan.type != .none else {
-            clearLiveMixFX()
-            return outgoingVolume
-        }
         let neuralAutomix = mashupBakeRealIncomingURL != nil
             && !mashupPlayingMasterBake
             && !activeMashupStyle.isDuet
-        if plan.fx.isEmpty && !neuralAutomix {
+        let liveAutomix = transitionMode == .automix
+            && isMashupTransitionMode
+            && !activeMashupStyle.isDuet
+        let plan = activeTransitionPlan
+        let hasPlanFX = plan.map { $0.type != .none && !$0.fx.isEmpty } ?? false
+        if !hasPlanFX && !neuralAutomix && !liveAutomix {
             clearLiveMixFX()
             return outgoingVolume
         }
-        let bpm = plan.tempoTargetBPM > 30 ? plan.tempoTargetBPM : activeMashupStyle.targetBPM
+        let bpm = (plan?.tempoTargetBPM ?? 0) > 30
+            ? (plan?.tempoTargetBPM ?? 120)
+            : activeMashupStyle.targetBPM
         let safeBPM = bpm > 30 ? bpm : 120
         let bar: Double
-        if neuralAutomix || plan.tempoTargetBPM > 30 {
+        if neuralAutomix || liveAutomix || (plan?.tempoTargetBPM ?? 0) > 30 {
             bar = EffectAutomation.bar(atSeconds: elapsed, bpm: safeBPM)
         } else {
             bar = elapsed
@@ -1133,10 +1137,11 @@ final class PlayerCore {
         // A seek back to the phrase restarts the decoder and the next song stutters.
         // The bed plays forward; echo and plate are already in the stem slice.
         let loopBars = 0
-        _ = neuralAutomix
         let barSec = 4 * 60 / Double(safeBPM)
         let barFrac = barSec / max(4, transitionDuration)
-        let loopUntil = neuralAutomix ? activeMashupStyle.automixLandProgress - barFrac : 0.72
+        let loopUntil = (neuralAutomix || liveAutomix)
+            ? activeMashupStyle.automixLandProgress - barFrac
+            : 0.72
         if loopBars > 0, bar + 0.001 >= liveLoopNextBar, progress < loopUntil {
             if neuralAutomix { mashupPhraseLoopCueSec = 0 }
             seekOutgoingPhraseLoop()
@@ -1147,29 +1152,34 @@ final class PlayerCore {
         var echoFb: Float = 30
         var reverbWet: Float = 0
         var stutterIntensity: Float = 0
-        for event in plan.fx {
-            guard event.target == .a, let value = EffectAutomation.value(for: event, atBar: bar) else { continue }
-            switch event.kind {
-            case .echoOut:
-                echoWet = max(echoWet, min(75, max(0, value)))
-                echoFb = event.param ?? echoFb
-            case .reverbWash:
-                reverbWet = max(reverbWet, min(55, max(0, value)))
-            case .stutter:
-                stutterIntensity = max(stutterIntensity, min(1, max(0, value)))
-            default:
-                break
+        if let plan, hasPlanFX {
+            for event in plan.fx {
+                guard event.target == .a, let value = EffectAutomation.value(for: event, atBar: bar) else { continue }
+                switch event.kind {
+                case .echoOut:
+                    echoWet = max(echoWet, min(75, max(0, value)))
+                    echoFb = event.param ?? echoFb
+                case .reverbWash:
+                    reverbWet = max(reverbWet, min(55, max(0, value)))
+                case .stutter:
+                    stutterIntensity = max(stutterIntensity, min(1, max(0, value)))
+                default:
+                    break
+                }
             }
         }
 
-        if neuralAutomix {
+        if neuralAutomix || liveAutomix {
             let land = activeMashupStyle.automixLandProgress
             let release = max(0, land - barFrac)
             let exit = progress <= release ? 0 : min(1, (progress - release) / max(0.08, barFrac * 1.45))
             let entry = min(1, progress / 0.18)
             let open = Float(entry * (1 - exit))
-            echoWet = max(echoWet, (18 + 28 * 0.35) * open)
-            reverbWet = max(reverbWet, 24 * open)
+            // Dry-deck Automix needs a louder wash; stems already carry echo/plate in the CAF.
+            let echoBase: Float = neuralAutomix ? (18 + 28 * 0.35) : (28 + 34 * 0.45)
+            let plateBase: Float = neuralAutomix ? 24 : 36
+            echoWet = max(echoWet, echoBase * open)
+            reverbWet = max(reverbWet, plateBase * open)
         }
 
         let delaySec: Float = safeBPM > 0
@@ -3118,10 +3128,42 @@ final class PlayerCore {
                     let loopSec = 0.0
                     let echoDelaySec = duetBake ? 0 : min(0.5, max(0.18, 60 / max(30, Double(style.targetBPM)) * 0.5))
                     let rateB = Double(style.rateB == 0 ? 1 : style.rateB)
-                    let neuralPair: (outgoing: URL, incoming: URL)?
-                    do {
-                        neuralPair = try await HTDemucsMashupBake.stemPair(
-                            duet: duetBake,
+                    // Bake in parallel with the cue wait. Waiting for HTDemucs first left
+                    // 20s of silence after schedule, then a late abrupt land.
+                    let bakeTask = Task.detached(priority: .userInitiated) { () -> (outgoing: URL, incoming: URL) in
+                        do {
+                            if let neural = try await HTDemucsMashupBake.stemPair(
+                                duet: duetBake,
+                                outgoingURL: outURL,
+                                incomingURL: inURL,
+                                cueA: cueA,
+                                cueB: cueB,
+                                blendSec: blend,
+                                handoffProgress: handoff,
+                                padSec: stemPadSec,
+                                landFadeSec: barSec,
+                                playbackRate: rateB,
+                                loopSec: loopSec,
+                                echoDelaySec: echoDelaySec
+                            ) {
+                                return neural
+                            }
+                        } catch is CancellationError {
+                            throw CancellationError()
+                        } catch {
+                            // Fall through to mid/side.
+                        }
+                        if duetBake {
+                            return try MidSideStemBaker.bakeDuetStemPair(
+                                outgoingURL: outURL,
+                                incomingURL: inURL,
+                                cueA: cueA,
+                                cueB: cueB,
+                                blendSec: blend,
+                                padSec: stemPadSec
+                            )
+                        }
+                        return try MidSideStemBaker.bakeAutomixStemPair(
                             outgoingURL: outURL,
                             incomingURL: inURL,
                             cueA: cueA,
@@ -3134,74 +3176,114 @@ final class PlayerCore {
                             loopSec: loopSec,
                             echoDelaySec: echoDelaySec
                         )
-                    } catch is CancellationError {
-                        return
-                    } catch {
-                        neuralPair = nil
-                        SonivoDiagnostics.log("[Mashup] HTDemucs bake error: \(error.localizedDescription)", tag: "AUDIO")
-                        AutoMixSessionLog.shared.fault("bake.htdemucs \(error.localizedDescription)")
                     }
-                    let bakeResult: Result<(outgoing: URL, incoming: URL), Error>
-                    if let neuralPair {
-                        bakeResult = .success(neuralPair)
-                    } else {
-                        SonivoDiagnostics.log("[Mashup] HTDemucs unavailable — mid/side stem bake", tag: "AUDIO")
-                        bakeResult = await Task.detached(priority: .userInitiated) {
-                            do {
-                                if duetBake {
-                                    return .success(try MidSideStemBaker.bakeDuetStemPair(
-                                        outgoingURL: outURL,
-                                        incomingURL: inURL,
-                                        cueA: cueA,
-                                        cueB: cueB,
-                                        blendSec: blend,
-                                        padSec: stemPadSec
-                                    ))
-                                }
-                                return .success(try MidSideStemBaker.bakeAutomixStemPair(
-                                    outgoingURL: outURL,
-                                    incomingURL: inURL,
-                                    cueA: cueA,
-                                    cueB: cueB,
-                                    blendSec: blend,
-                                    handoffProgress: handoff,
-                                    padSec: stemPadSec,
-                                    landFadeSec: barSec,
-                                    playbackRate: rateB,
-                                    loopSec: loopSec,
-                                    echoDelaySec: echoDelaySec
-                                ))
-                            } catch {
-                                return .failure(error)
-                            }
-                        }.value
-                    }
-                    // Separation runs during the lead. Hold the audible mix until the
-                    // musical cue so the playhead doesn't jump backward.
                     let reachedCue = await self.waitUntilMashupCue(cueA)
                     guard reachedCue, !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
                           self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else {
-                        if case .success(let stemPair) = bakeResult {
+                        bakeTask.cancel()
+                        if let stemPair = try? await bakeTask.value {
                             MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
                         }
                         return
+                    }
+                    // At the cue: take stems if ready, else start the live Automix now.
+                    enum BakeProbe {
+                        case ready(Result<(outgoing: URL, incoming: URL), Error>)
+                        case pending
+                    }
+                    let bakeProbe = await withTaskGroup(of: BakeProbe.self) { group in
+                        group.addTask {
+                            do { return .ready(.success(try await bakeTask.value)) }
+                            catch { return .ready(.failure(error)) }
+                        }
+                        group.addTask {
+                            try? await Task.sleep(for: .milliseconds(120))
+                            return .pending
+                        }
+                        let first = await group.next() ?? .pending
+                        group.cancelAll()
+                        return first
+                    }
+                    let bakeResult: Result<(outgoing: URL, incoming: URL), Error>
+                    var bakePendingAtCue = false
+                    switch bakeProbe {
+                    case .ready(let result):
+                        bakeResult = result
+                    case .pending:
+                        bakePendingAtCue = true
+                        bakeResult = .failure(CocoaError(.fileReadUnknown))
+                        self.mashupBakeFailedUseCrossfade = true
+                        AutoMixSessionLog.shared.event("bake.pending → live Automix at cue")
+                        Task { @MainActor [weak self] in
+                            guard let self else { return }
+                            let late = await bakeTask.result
+                            guard self.transitionRequestID == transitionID, self.isTransitioning else {
+                                if case .success(let pair) = late {
+                                    MidSideStemBaker.removeTempFiles([pair.outgoing, pair.incoming])
+                                }
+                                return
+                            }
+                            guard case .success(let stemPair) = late else { return }
+                            let live = self.isUsingStreamPlayer ? self.progress : self.liveProgress()
+                            let heard = max(0, live - cueA)
+                            let landAt = blend * handoff
+                            if heard >= landAt - 1.5 {
+                                MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
+                                AutoMixSessionLog.shared.event(
+                                    String(format: "bake.late-drop lag=%.2fs", heard)
+                                )
+                                return
+                            }
+                            do {
+                                self.mashupBakeFailedUseCrossfade = false
+                                self.clearMashupBakeTemps()
+                                self.mashupBakeTempURLs = [stemPair.outgoing, stemPair.incoming]
+                                self.mashupBakeRealIncomingURL = inURL
+                                self.mashupBakeIncomingBaseCue = cueB
+                                self.mashupBakeOutgoingBaseCue = cueA
+                                self.mashupIncomingCueSec = cueB
+                                self.incomingStartPosition = cueB
+                                let wasStream = self.isUsingStreamPlayer
+                                try self.playMashupStemPair(
+                                    outgoingURL: stemPair.outgoing,
+                                    incomingURL: stemPair.incoming,
+                                    startOffsetSec: heard
+                                )
+                                if wasStream {
+                                    self.mashupStemEntryStartedAt = Date()
+                                    self.mashupStemEntryDuration = 0.35
+                                    self.mashupStemEntryFromStream = true
+                                }
+                                let enterP = min(1, heard / max(0.001, blend))
+                                let rates = self.activeMashupStyle.playbackRates(progress: enterP)
+                                self.applyMashupTimePitch(progress: enterP, outgoing: true, rate: rates.outgoing)
+                                self.applyMashupTimePitch(progress: enterP, outgoing: false, rate: rates.incoming)
+                                self.applyMashupTransitionEQ(progress: enterP)
+                                AutoMixSessionLog.shared.event(
+                                    String(format: "bake.upgrade lag=%.2fs", heard)
+                                )
+                            } catch {
+                                MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
+                                self.mashupBakeFailedUseCrossfade = true
+                            }
+                        }
                     }
                     let liveAfter = self.isUsingStreamPlayer ? self.progress : self.liveProgress()
                     // Only the time already past the cue belongs in the slice. Wall-clock
                     // bake time used to start the file 13s in, with 2s of audio left.
                     let heardPastCue = max(0, liveAfter - cueA)
                     let bakeLag = min(heardPastCue, max(0, blend - 1.5))
-                    if case .failure(let bakeError) = bakeResult {
+                    if case .failure(let bakeError) = bakeResult, !bakePendingAtCue {
                         self.mashupBakeFailedUseCrossfade = true
-                        // A 22s dry stack after a failed stem carve is mud. Keep a short handoff.
-                        self.transitionDuration = min(self.transitionDuration, 8)
+                        // Keep enough runway for echo/plate to read as a mix, not a cut.
+                        self.transitionDuration = min(max(self.transitionDuration, 10), 14)
                         let extA = outURL.pathExtension
                         let extB = inURL.pathExtension
                         AutoMixSessionLog.shared.fault(
-                            "bake.fail \(bakeError.localizedDescription) extA=\(extA) extB=\(extB) → crossfade fallback"
+                            "bake.fail \(bakeError.localizedDescription) extA=\(extA) extB=\(extB) → live Automix FX"
                         )
                         SonivoDiagnostics.log(
-                            "[Mashup] stem bake failed (\(extA)/\(extB)) — equal-power crossfade fallback: \(bakeError.localizedDescription)",
+                            "[Mashup] stem bake failed (\(extA)/\(extB)) — live Automix FX fallback: \(bakeError.localizedDescription)",
                             tag: "AUDIO"
                         )
                     }
@@ -3489,12 +3571,13 @@ final class PlayerCore {
             idlePlayer.volume = 0
             idleStreamingPlayer.volume = 0
         } else {
-            // Without stem bake, mashup volumes (both ~1.0) just stack two dry streams.
+            // Stem fail still keeps Automix character: EQ one-vocal + echo/plate + beatmatch.
+            // Equal-power only avoids stacking two dry lead vocals when stems are missing.
             let useMashupVolumes = mashup && !mashupBakeFailedUseCrossfade
             let gains = useMashupVolumes
                 ? mashupHeardVolumes(progress: p)
                 : CrossfadeCurve.gains(progress: p)
-            let gatedOutgoing: Float = mashup && !mashupBakeFailedUseCrossfade
+            let gatedOutgoing: Float = mashup
                 ? applyLivePlanFX(progress: p, elapsed: elapsed, outgoingVolume: gains.outgoing)
                 : gains.outgoing
             let sourceLevel = gatedOutgoing
@@ -3539,7 +3622,7 @@ final class PlayerCore {
                 return
             }
 
-            let beatRates: (outgoing: Float, incoming: Float) = mashup && !mashupBakeFailedUseCrossfade
+            let beatRates: (outgoing: Float, incoming: Float) = mashup
                 ? activeMashupStyle.playbackRates(progress: p)
                 : (outgoing: 1, incoming: 1)
 
@@ -3577,13 +3660,8 @@ final class PlayerCore {
         if mashup {
             AutoMixDJEngine.shared.markMashupProgress(p)
             AutoMixDJEngine.shared.currentBPM = Double(activeMashupStyle.targetBPM)
-            if mashupBakeFailedUseCrossfade {
-                AutoMixDJEngine.shared.statusBadge = "MIXING"
-                clearLiveMixFX()
-            } else {
-                AutoMixDJEngine.shared.statusBadge = activeMashupStyle.phaseLabel(progress: p)
-                applyMashupTransitionEQ(progress: p)
-            }
+            AutoMixDJEngine.shared.statusBadge = activeMashupStyle.phaseLabel(progress: p)
+            applyMashupTransitionEQ(progress: p)
         }
 
         // Apple Automix / Duet / Mashup: one hard cut at LAND — artwork, timeline,

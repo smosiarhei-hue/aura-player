@@ -58,7 +58,7 @@ struct MoodAutomixTests {
         #expect(wash.incomingStartSec > 4)
     }
 
-    @Test("Cold start is a runway, not an 8s or 16s intro")
+    @Test("Cold start is a short runway until the files are scanned")
     func provisionalVariesAndDoesNotSkipAFixedIntro() {
         let short = MoodAutomix.placed(outgoingDuration: 150, incomingDuration: 140)
         let long = MoodAutomix.placed(outgoingDuration: 240, incomingDuration: 230)
@@ -66,8 +66,12 @@ struct MoodAutomixTests {
         #expect(long.mood == "scan")
         #expect(short.incomingStartSec == 0)
         #expect(long.incomingStartSec == 0)
-        #expect(abs(short.blendSec - long.blendSec) > 4)
-        #expect(abs(short.blendSec - 16) > 0.5 || abs(long.blendSec - 16) > 0.5)
+        // Keep the silent scan short — the live mix retargets after energy read.
+        #expect(short.blendSec >= 8 && short.blendSec <= 12)
+        #expect(long.blendSec >= 8 && long.blendSec <= 12)
+        #expect(long.blendSec >= short.blendSec)
+        #expect(abs(short.blendSec - 16) > 0.5)
+        #expect(abs(long.blendSec - 22) > 0.5)
     }
 
     @Test("A phrase dip sets the window from that dip")

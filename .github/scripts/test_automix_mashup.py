@@ -260,7 +260,9 @@ class AutoMixMashupTests(unittest.TestCase):
 
         player = (ROOT / "Sonivo/playercore.swift").read_text()
         self.assertIn("mashupBakeFailedUseCrossfade", player)
-        self.assertIn("equal-power crossfade fallback", player)
+        self.assertIn("live Automix FX fallback", player)
+        self.assertIn("bake.pending → live Automix at cue", player)
+        self.assertIn("liveAutomix", player)
         # After bake.fail, arm local materialized B (not hybrid stream).
         self.assertIn("localIncomingURL = inURLForBake ?? nextURL", player)
         self.assertIn("openAutomixPlaybackFile", player)

@@ -161,8 +161,10 @@ public enum MoodAutomix {
     }
 
     private static func provisional(outgoingDuration: Double) -> MoodAutomixWindow {
+        // Only a preparation runway until the files are scanned. A 22s silent
+        // "scan" window made the player look busy while the mix still started late.
         let dur = max(30, outgoingDuration)
-        let blend = clamp(dur * 0.13, min: 12, max: longestBlendSec)
+        let blend = clamp(dur * 0.07, min: 8, max: 12)
         return MoodAutomixWindow(
             blendSec: blend,
             incomingStartSec: 0,
