@@ -116,8 +116,8 @@ struct PlayerScreenV2: View {
                 let totalHeight = geo.size.height
                 let totalWidth = geo.size.width
                 let topInset = max(safeTop, 12)
-                // Edge-to-edge top art with room below for a standard control stack.
-                let standardArtworkStageHeight = min(totalWidth, totalHeight * 0.48)
+                // Cover owns the top; primary controls pin toward the bottom of the viewport.
+                let standardArtworkStageHeight = min(totalWidth, totalHeight * 0.52)
 
                 ZStack(alignment: .top) {
                     // Blurred/color-matched wash under the dissolve — continues the cover.
@@ -170,11 +170,10 @@ struct PlayerScreenV2: View {
                                 VStack(spacing: 0) {
                                     artworkStage(width: totalWidth, height: standardArtworkStageHeight)
                                         .frame(width: totalWidth, height: standardArtworkStageHeight)
-                                    // Light tuck into the fade — controls stay in the lower half, not under the art.
                                     lowerDeck(safeAreaBottom: safeBottom)
-                                        .padding(.top, -standardArtworkStageHeight * 0.08)
                                 }
-                                .frame(maxWidth: .infinity)
+                                // Fill the first screen so Spacer can drop the control panel down.
+                                .frame(maxWidth: .infinity, minHeight: totalHeight)
                             }
                             .scrollIndicators(.hidden)
                             .accessibilityLabel("Плеер и дополнительные действия")
@@ -834,18 +833,28 @@ struct PlayerScreenV2: View {
     }
 
     private func lowerDeck(safeAreaBottom: CGFloat) -> some View {
-        VStack(spacing: 22) {
-            metadataRow
-            PlayerTimelineSection(player: player) { centerStatusLabel }
-            transportControls
-            FluidVolumeSlider()
-                .accessibilityElement(children: .contain)
-            primaryUtilityRow
+        VStack(spacing: 0) {
+            // Push the compact Now Playing cluster toward the bottom of the first screen.
+            Spacer(minLength: 10)
+
+            VStack(spacing: 10) {
+                metadataRow
+                PlayerTimelineSection(player: player) { centerStatusLabel }
+                transportControls
+                FluidVolumeSlider()
+                    .accessibilityElement(children: .contain)
+                primaryUtilityRow
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, 2)
+            .padding(.bottom, 6)
 
             trackWaveButton
-                .padding(.top, 8)
+                .padding(.horizontal, 28)
+                .padding(.top, 10)
             if let error = YandexMusicService.shared.waveError {
                 Text(error).font(SN.text(.caption)).foregroundStyle(SN.inkMuted)
+                    .padding(.horizontal, 28)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -854,20 +863,19 @@ struct PlayerScreenV2: View {
                     .font(SN.text(.caption, .semibold))
                     .foregroundStyle(SN.ink)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 28)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             Label("Действия ниже", systemImage: "chevron.down")
                 .font(SN.text(.caption, .medium))
                 .foregroundStyle(SN.inkMuted)
-                .padding(.top, 8)
+                .padding(.top, 10)
             secondaryPlayerActions
-                .padding(.top, 12)
-
+                .padding(.horizontal, 28)
+                .padding(.top, 8)
+                .padding(.bottom, max(safeAreaBottom, 16))
         }
-        .padding(.horizontal, 28)
-        .padding(.top, 18)
-        .padding(.bottom, max(safeAreaBottom, 20))
         .frame(maxWidth: .infinity)
     }
 
@@ -923,7 +931,6 @@ struct PlayerScreenV2: View {
             .frame(maxWidth: .infinity)
             .accessibilityLabel("Очередь")
         }
-        .padding(.top, 4)
     }
 
     private var trackWaveButton: some View {
@@ -1167,18 +1174,18 @@ struct PlayerScreenV2: View {
 
             Button(action: previousTrack) {
                 Image(systemName: "backward.fill")
-                    .font(.system(size: 28, weight: .bold))
-                    .frame(width: 64, height: 64)
+                    .font(.system(size: 26, weight: .bold))
+                    .frame(width: 56, height: 52)
                     .contentShape(Rectangle())
             }
             .frame(maxWidth: .infinity)
 
             Button(action: togglePlayback) {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 40, weight: .bold))
+                    .font(.system(size: 34, weight: .bold))
                     .offset(x: player.isPlaying ? 0 : 2)
                     .contentTransition(.symbolEffect(.replace.byLayer))
-                    .frame(width: 72, height: 72)
+                    .frame(width: 60, height: 56)
                     .contentShape(Rectangle())
             }
             .frame(maxWidth: .infinity)
@@ -1186,8 +1193,8 @@ struct PlayerScreenV2: View {
 
             Button(action: nextTrack) {
                 Image(systemName: "forward.fill")
-                    .font(.system(size: 28, weight: .bold))
-                    .frame(width: 64, height: 64)
+                    .font(.system(size: 26, weight: .bold))
+                    .frame(width: 56, height: 52)
                     .contentShape(Rectangle())
             }
             .frame(maxWidth: .infinity)
@@ -1211,7 +1218,6 @@ struct PlayerScreenV2: View {
         }
         .foregroundStyle(SN.ink)
         .buttonStyle(TactileButtonStyle(scale: 0.94))
-        .padding(.vertical, 4)
     }
 
     private var moreMenuButton: some View {
