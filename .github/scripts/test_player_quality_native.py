@@ -37,14 +37,21 @@ class PlayerQualityNativeTests(unittest.TestCase):
         complete=core.split('private func completeTransition',1)[1].split('private func ',1)[0]
         self.assertIn('currentCodec = incomingQuality?.codec',complete)
         self.assertIn('currentBitrate = incomingQuality?.bitrate',complete)
-    def test_lyrics_control_moves_next_to_favorite_and_is_not_duplicated_below(self):
+    def test_lyrics_control_lives_on_primary_utility_not_duplicated_below(self):
         screen=source('PlayerScreenV2.swift')
         metadata=screen.split('private var metadataRow:',1)[1].split('@ViewBuilder private var centerStatusLabel',1)[0]
-        self.assertLess(metadata.index('library.toggleFavorite'),metadata.index('lyricsToggleButton'))
-        self.assertLess(metadata.index('lyricsToggleButton'),metadata.index('moreMenuButton'))
-        self.assertIn('accessibilityLabel: "Текст песни"',metadata)
+        self.assertIn('library.toggleFavorite',metadata)
+        self.assertIn('moreMenuButton',metadata)
+        self.assertNotIn('quote.bubble',metadata)
+        utility=screen.split('private var primaryUtilityRow:',1)[1].split('private var trackWaveButton',1)[0]
+        self.assertIn('quote.bubble',utility)
+        self.assertIn('accessibilityLabel("Текст песни")',utility)
+        self.assertIn('AirPlayButtonView()',utility)
+        self.assertIn('list.bullet',utility)
         secondary=screen.split('private var secondaryPlayerActions:',1)[1].split('private var sleepTimerBottomButton',1)[0]
         self.assertNotIn('quote.bubble',secondary)
+        self.assertNotIn('lyricsToggleButton',secondary)
+        self.assertNotIn('lyricsToggleButton',screen)
     @unittest.skipUnless(sys.platform=='darwin','Swift value-model runtime check requires macOS')
     def test_quality_value_model_runtime(self):
         checks='''

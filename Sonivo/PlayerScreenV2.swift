@@ -947,6 +947,8 @@ struct PlayerScreenV2: View {
             Text("Дополнительно")
                 .font(SN.text(.caption, .semibold))
                 .foregroundStyle(SN.inkMuted)
+            // First-screen Apple Music utilities live in primaryUtilityRow.
+            // Keep Sonivo-only extras (sleep / EQ) below the track-wave button.
             HStack(spacing: 0) {
                 sleepTimerBottomButton
                     .frame(maxWidth: .infinity)
@@ -962,9 +964,6 @@ struct PlayerScreenV2: View {
                 .accessibilityLabel("Эквалайзер")
                 .accessibilityValue(player.eqEnabled ? "Включён" : "Выключен")
                 .frame(maxWidth: .infinity)
-
-                lyricsToggleButton
-                    .frame(maxWidth: .infinity)
             }
             .padding(.horizontal, 4)
         }
@@ -1053,17 +1052,6 @@ struct PlayerScreenV2: View {
                 moreMenuButton
             }
         }
-    }
-    private var lyricsToggleButton: some View {
-        GlassIconButton(
-            systemImage: showLyricsMode ? "quote.bubble.fill" : "quote.bubble",
-            tint: showLyricsMode ? SN.amber : SN.inkMuted,
-            accessibilityLabel: "Текст песни"
-        ) {
-            withAnimation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion)) { showLyricsMode.toggle() }
-        }
-        .disabled(track == nil)
-        .accessibilityValue(showLyricsMode ? "Открыт" : "Закрыт")
     }
     @ViewBuilder private var centerStatusLabel: some View {
         if aiVideoShotService.isGenerating && aiVideoShotService.currentTrackId == track?.id.uuidString {

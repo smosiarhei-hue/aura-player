@@ -42,11 +42,22 @@ class PlayerTrackWaveTests(unittest.TestCase):
         self.assertIn('ScrollView(.vertical)',body)
         self.assertNotIn('playerDismissGesture',body)
         self.assertNotIn('.background(SN.bg.ignoresSafeArea())\n        .simultaneousGesture',body)
-        deck=screen.split('private func lowerDeck',1)[1].split('private var trackWaveButton',1)[0]
-        for first,second in [('metadataRow','transportControls'),('FluidVolumeSlider()','trackWaveButton'),('trackWaveButton','secondaryPlayerActions')]:
+        deck=screen.split('private func lowerDeck',1)[1].split('private var primaryUtilityRow',1)[0]
+        for first,second in [
+            ('metadataRow','transportControls'),
+            ('FluidVolumeSlider()','primaryUtilityRow'),
+            ('primaryUtilityRow','trackWaveButton'),
+            ('trackWaveButton','secondaryPlayerActions'),
+        ]:
             self.assertLess(deck.index(first),deck.index(second))
+        utility=screen.split('private var primaryUtilityRow',1)[1].split('private var trackWaveButton',1)[0]
+        for expected in ['AirPlayButtonView','quote.bubble','list.bullet','"Очередь"']:
+            self.assertIn(expected,utility)
         actions=screen.split('private var secondaryPlayerActions',1)[1].split('private var sleepTimerBottomButton',1)[0]
-        for expected in ['AirPlayButtonView','sleepTimerBottomButton','"Эквалайзер"','"Очередь"']: self.assertIn(expected,actions)
+        for expected in ['sleepTimerBottomButton','"Эквалайзер"']:
+            self.assertIn(expected,actions)
+        self.assertNotIn('AirPlayButtonView',actions)
+        self.assertNotIn('"Очередь"',actions)
     def test_dismissal_is_explicit_fullscreen_at_every_player_entry_point(self):
         presentation=source('PlayerSheetPresentation.swift')
         self.assertIn('struct PlayerFullscreenPresentation',presentation)
