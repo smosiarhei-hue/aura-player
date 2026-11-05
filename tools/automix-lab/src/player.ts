@@ -440,6 +440,7 @@ function sampleArtColor(url: string | null | undefined) {
     ambient.style.setProperty("--c1", "#5a3a58");
     ambient.style.setProperty("--c2", "#1a3048");
     ambient.style.setProperty("--c3", "#2a1840");
+    document.querySelector<HTMLElement>("#stage")?.style.removeProperty("--wash");
     return;
   }
   ambient.style.setProperty("--art-url", `url("${url}")`);
@@ -514,6 +515,7 @@ function sampleArtColor(url: string | null | undefined) {
       ambient.style.setProperty("--c1", rgbCss(c1));
       ambient.style.setProperty("--c2", rgbCss(c2));
       ambient.style.setProperty("--c3", rgbCss(c3));
+      document.querySelector<HTMLElement>("#stage")?.style.setProperty("--wash", rgbCss(c1));
     } catch {
       /* CORS-tainted covers still drive blur via CSS url */
     }

@@ -169,7 +169,7 @@ function coverUrlFromTrack(track: {
 }): string | null {
   const raw = track.coverUri || track.ogImage;
   if (!raw) return null;
-  const sized = raw.replace("%%", "400x400");
+  const sized = raw.replace("%%", "1000x1000");
   if (sized.startsWith("http")) return sized;
   return `https://${sized}`;
 }
