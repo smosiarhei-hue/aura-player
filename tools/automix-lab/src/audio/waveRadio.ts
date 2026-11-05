@@ -463,10 +463,17 @@ export class WaveRadio {
     const metaDur = this.current?.durationMs ? this.current.durationMs / 1000 : 0;
     const dur =
       this.profileA?.durationSec || this.engine.getDeck("a").duration || metaDur || 0;
+    const pos = this.engine.getSoloPosition();
     const at = this.automixAt();
-    if (at != null && at > 1) return Math.max(0, at - 0.35);
-    if (dur > 2) return Math.max(0, Math.min(this.softUntilSec(), dur - 0.35));
-    return Math.max(30, this.engine.getSoloPosition() + 15);
+    const cueCap =
+      at != null && at > 1
+        ? Math.max(0, at - 0.35)
+        : dur > 2
+          ? Math.max(0, Math.min(this.softUntilSec(), dur - 0.35))
+          : Math.max(30, pos + 15);
+    // If playback is already past the cue, keep the current spot reachable
+    // so a rewind does not snap the song into the mix.
+    return Math.max(cueCap, Math.min(Math.max(0, dur - 0.35), pos));
   }
 
   /**
@@ -520,18 +527,23 @@ export class WaveRadio {
   ): Promise<"reached" | "stopped" | "aborted"> {
     let from = fromSec;
     while (this.running && gen === this.loopGen) {
+      if (this.pendingSeek != null) {
+        from = this.pendingSeek;
+        this.pendingSeek = null;
+        this.scrubbing = false;
+      }
       const until =
         this.transitionMode === "automix" || this.transitionMode === "duet"
           ? (this.plan?.params.cueASec ?? softUntilSec)
           : softUntilSec;
       if (from >= until - 0.25) return "reached";
-      const start = this.pendingSeek != null ? this.pendingSeek : from;
-      this.pendingSeek = null;
-      this.scrubbing = false;
+      const start = from;
       const reached = await this.engine.playSoloUntil("a", start, until, rate);
       if (!this.running || gen !== this.loopGen) return "aborted";
       if (this.pendingSeek != null || this.scrubbing) {
         from = this.pendingSeek ?? start;
+        this.pendingSeek = null;
+        this.scrubbing = false;
         continue;
       }
       return reached ? "reached" : "stopped";
@@ -1243,6 +1255,24 @@ export class WaveRadio {
           );
           const until = Math.min(durA - 0.12, pos + 2);
           const cont = await this.engine.resumeSoloUntil(until);
+          if (this.pendingSeek != null || this.scrubbing) {
+            const jump = this.pendingSeek ?? this.engine.getSoloPosition();
+            this.pendingSeek = null;
+            this.scrubbing = false;
+            const kept = await this.engine.playSoloUntil(
+              "a",
+              jump,
+              Math.min(durA - 0.12, jump + 2),
+              1
+            );
+            if (!this.running || gen !== this.loopGen) return;
+            if (this.pendingSeek != null || this.scrubbing) {
+              hop -= 1;
+              continue;
+            }
+            if (!kept) break;
+            continue;
+          }
           if (!cont) break;
         }
         livePlan = this.plan as AIMixPlan | null;
@@ -1351,7 +1381,7 @@ export class WaveRadio {
           "playing",
           `${incoming.artists} — ${incoming.title}`
         );
-        const soloP = this.engine.playSoloUntil("a", landedAt, provisionalUntil, 1);
+        let soloFrom = landedAt;
 
         // Promoted B becomes A — keep its transcript as the new outgoing cue source.
         this.transcriptA = this.transcriptB;
@@ -1391,7 +1421,27 @@ export class WaveRadio {
           }
         })();
 
-        await Promise.all([soloP, prefetch]);
+        let soloEnded = false;
+        while (this.running && gen === this.loopGen) {
+          const ended = await this.engine.playSoloUntil("a", soloFrom, provisionalUntil, 1);
+          if (!this.running || gen !== this.loopGen) return;
+          if (this.pendingSeek != null || this.scrubbing) {
+            soloFrom = this.pendingSeek ?? this.engine.getSoloPosition();
+            this.pendingSeek = null;
+            this.scrubbing = false;
+            continue;
+          }
+          soloEnded = ended;
+          break;
+        }
+        if (!soloEnded) {
+          if (gen === this.loopGen) {
+            this.running = false;
+            this.setStatus("idle", "Стоп");
+          }
+          return;
+        }
+        await prefetch;
         if (!this.running || gen !== this.loopGen) return;
         const readyPlan = this.plan as AIMixPlan | null;
 

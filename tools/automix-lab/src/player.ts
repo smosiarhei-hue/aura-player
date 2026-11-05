@@ -110,11 +110,11 @@ app.innerHTML = `
     </header>
 
     <main class="now">
-      <div class="cover-wash" id="coverWash" aria-hidden="true">
-        <img class="outgoing" id="washA" alt="" />
-        <img class="incoming" id="washB" alt="" />
-      </div>
       <div class="art-wrap" id="artWrap">
+        <div class="cover-wash" id="coverWash" aria-hidden="true">
+          <img class="outgoing" id="washA" alt="" />
+          <img class="incoming" id="washB" alt="" />
+        </div>
         <div class="art-orbit" aria-hidden="true"></div>
         <div class="art-pulse" id="artPulse" aria-hidden="true"></div>
         <div class="mix-veil" id="mixVeil" aria-hidden="true"></div>
@@ -432,6 +432,35 @@ function boostSat(c: Rgb, amount = 1.35): Rgb {
   };
 }
 
+function relLuminance(c: Rgb): number {
+  const ch = (v: number) => {
+    const x = v / 255;
+    return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * ch(c.r) + 0.7152 * ch(c.g) + 0.0722 * ch(c.b);
+}
+
+/** Light covers get a slightly deeper wash and dark controls. */
+function applyWash(c: Rgb | null) {
+  const stage = document.querySelector<HTMLElement>("#stage");
+  if (!stage) return;
+  if (!c) {
+    stage.style.removeProperty("--wash");
+    stage.classList.remove("tone-light");
+    return;
+  }
+  const light = relLuminance(c) > 0.62;
+  const wash = light
+    ? {
+        r: Math.round(c.r * 0.84),
+        g: Math.round(c.g * 0.84),
+        b: Math.round(c.b * 0.84),
+      }
+    : c;
+  stage.style.setProperty("--wash", rgbCss(wash));
+  stage.classList.toggle("tone-light", light);
+}
+
 function sampleArtColor(url: string | null | undefined) {
   const ambient = document.querySelector<HTMLElement>("#ambient")!;
   if (!url) {
@@ -440,7 +469,7 @@ function sampleArtColor(url: string | null | undefined) {
     ambient.style.setProperty("--c1", "#5a3a58");
     ambient.style.setProperty("--c2", "#1a3048");
     ambient.style.setProperty("--c3", "#2a1840");
-    document.querySelector<HTMLElement>("#stage")?.style.removeProperty("--wash");
+    applyWash(null);
     return;
   }
   ambient.style.setProperty("--art-url", `url("${url}")`);
@@ -460,10 +489,18 @@ function sampleArtColor(url: string | null | undefined) {
       let g = 0;
       let b = 0;
       let n = 0;
+      let rawR = 0;
+      let rawG = 0;
+      let rawB = 0;
+      let rawN = 0;
       for (let i = 0; i < data.length; i += 4) {
         const pr = data[i]!;
         const pg = data[i + 1]!;
         const pb = data[i + 2]!;
+        rawR += pr;
+        rawG += pg;
+        rawB += pb;
+        rawN++;
         const lum = 0.2126 * pr + 0.7152 * pg + 0.0722 * pb;
         if (lum < 18 || lum > 242) continue;
         r += pr;
@@ -481,12 +518,10 @@ function sampleArtColor(url: string | null | undefined) {
           buckets.set(key, { n: 1, r: pr, g: pg, b: pb });
         }
       }
-      if (!n) return;
-      const mean: Rgb = {
-        r: (r / n) | 0,
-        g: (g / n) | 0,
-        b: (b / n) | 0,
-      };
+      if (!n && !rawN) return;
+      const mean: Rgb = n
+        ? { r: (r / n) | 0, g: (g / n) | 0, b: (b / n) | 0 }
+        : { r: (rawR / rawN) | 0, g: (rawG / rawN) | 0, b: (rawB / rawN) | 0 };
       const ranked = [...buckets.values()]
         .sort((a, b2) => b2.n - a.n)
         .slice(0, 6)
@@ -515,7 +550,7 @@ function sampleArtColor(url: string | null | undefined) {
       ambient.style.setProperty("--c1", rgbCss(c1));
       ambient.style.setProperty("--c2", rgbCss(c2));
       ambient.style.setProperty("--c3", rgbCss(c3));
-      document.querySelector<HTMLElement>("#stage")?.style.setProperty("--wash", rgbCss(c1));
+      applyWash(n ? c1 : mean);
     } catch {
       /* CORS-tainted covers still drive blur via CSS url */
     }
@@ -1318,9 +1353,13 @@ document.querySelector("#btnSkip")?.addEventListener("click", () => {
 {
   const scrub = document.querySelector<HTMLElement>("#scrub")!;
   let dragging = false;
+  const drag = (on: boolean) => {
+    dragging = on;
+    scrub.classList.toggle("dragging", on);
+  };
   scrub.addEventListener("pointerdown", (e) => {
     if (!radio.snapshot().canSeek) return;
-    dragging = true;
+    drag(true);
     scrub.setPointerCapture(e.pointerId);
     seekFromClientX(e.clientX);
   });
@@ -1329,10 +1368,10 @@ document.querySelector("#btnSkip")?.addEventListener("click", () => {
     seekFromClientX(e.clientX);
   });
   scrub.addEventListener("pointerup", () => {
-    dragging = false;
+    drag(false);
   });
   scrub.addEventListener("pointercancel", () => {
-    dragging = false;
+    drag(false);
   });
   scrub.addEventListener("keydown", (e) => {
     if (!radio.snapshot().canSeek) return;
