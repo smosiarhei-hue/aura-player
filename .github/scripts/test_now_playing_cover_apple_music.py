@@ -24,9 +24,11 @@ class NowPlayingCoverAppleMusicTests(unittest.TestCase):
 
     def test_cover_is_edge_to_edge_with_soft_dissolve(self):
         self.assertIn(
-            "let standardArtworkStageHeight = min(totalWidth, totalHeight * 0.56)",
+            "let standardArtworkStageHeight = min(totalWidth, totalHeight * 0.48)",
             PLAYER,
         )
+        self.assertIn("coverAccentWash", PLAYER)
+        self.assertIn("-standardArtworkStageHeight * 0.08", PLAYER)
         stage = PLAYER.split("private func artworkStage(", 1)[1].split(
             "private func inlineLyricsStage", 1
         )[0]

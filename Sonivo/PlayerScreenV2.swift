@@ -116,9 +116,8 @@ struct PlayerScreenV2: View {
                 let totalHeight = geo.size.height
                 let totalWidth = geo.size.width
                 let topInset = max(safeTop, 12)
-                // Apple Music Now Playing: edge-to-edge top art that soft-fades into
-                // frosted controls. Height is near-square but full width — not an inset card.
-                let standardArtworkStageHeight = min(totalWidth, totalHeight * 0.56)
+                // Edge-to-edge top art with room below for a standard control stack.
+                let standardArtworkStageHeight = min(totalWidth, totalHeight * 0.48)
 
                 ZStack(alignment: .top) {
                     // Blurred/color-matched wash under the dissolve — continues the cover.
@@ -132,9 +131,17 @@ struct PlayerScreenV2: View {
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
 
+                    // Accent the palette under the cover so controls sit on a warm wash,
+                    // not a flat black field.
+                    coverAccentWash
+                        .frame(width: totalWidth, height: totalHeight)
+                        .opacity(showLyricsMode || isFullScreenVideoShot ? 0 : 1)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+
                     background
                         .frame(width: totalWidth, height: totalHeight)
-                        .opacity(showLyricsMode || isFullScreenVideoShot ? 1 : 0.10)
+                        .opacity(showLyricsMode || isFullScreenVideoShot ? 1 : 0.06)
                         .clipped()
 
                     // Attach the native rendering layer during preparation too. Readiness
@@ -163,9 +170,9 @@ struct PlayerScreenV2: View {
                                 VStack(spacing: 0) {
                                     artworkStage(width: totalWidth, height: standardArtworkStageHeight)
                                         .frame(width: totalWidth, height: standardArtworkStageHeight)
-                                    // Title sits in the dissolve, same vertical band as Apple Music.
+                                    // Light tuck into the fade — controls stay in the lower half, not under the art.
                                     lowerDeck(safeAreaBottom: safeBottom)
-                                        .padding(.top, -standardArtworkStageHeight * 0.24)
+                                        .padding(.top, -standardArtworkStageHeight * 0.08)
                                 }
                                 .frame(maxWidth: .infinity)
                             }
@@ -568,10 +575,9 @@ struct PlayerScreenV2: View {
         LinearGradient(
             stops: [
                 .init(color: .black, location: 0.00),
-                .init(color: .black, location: 0.46),
-                .init(color: .black.opacity(0.88), location: 0.60),
-                .init(color: .black.opacity(0.48), location: 0.76),
-                .init(color: .black.opacity(0.14), location: 0.90),
+                .init(color: .black, location: 0.58),
+                .init(color: .black.opacity(0.82), location: 0.72),
+                .init(color: .black.opacity(0.35), location: 0.88),
                 .init(color: .clear, location: 1.00)
             ],
             startPoint: .top,
@@ -860,9 +866,29 @@ struct PlayerScreenV2: View {
 
         }
         .padding(.horizontal, 28)
-        .padding(.top, 8)
+        .padding(.top, 18)
         .padding(.bottom, max(safeAreaBottom, 20))
         .frame(maxWidth: .infinity)
+    }
+
+    /// Soft palette bloom under the dissolving cover — gives the control deck its color.
+    private var coverAccentWash: some View {
+        let tone = (resolvedArtworkPaletteTrackID == track?.id ? dominantArtworkColor : nil)
+            ?? artworkPaletteColors.first
+            ?? palette.first
+            ?? Color.black
+        return LinearGradient(
+            stops: [
+                .init(color: .clear, location: 0.28),
+                .init(color: tone.opacity(0.22), location: 0.48),
+                .init(color: tone.opacity(0.42), location: 0.68),
+                .init(color: tone.opacity(0.55), location: 0.88),
+                .init(color: tone.opacity(0.62), location: 1.00)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .blendMode(.plusLighter)
     }
 
     /// Apple Music first-screen footer: lyrics · AirPlay · queue.
@@ -2536,24 +2562,24 @@ private final class NowPlayingAtmosphereView: UIView {
         }
         blurView.isUserInteractionEnabled = false
         addSubview(blurView)
-        // Soft overall dim so palette colors remain visible under controls.
+        // Light dim — leave room for the SwiftUI coverAccentWash palette bloom.
         dimView.isUserInteractionEnabled = false
-        dimView.backgroundColor = UIColor.black.withAlphaComponent(0.28)
+        dimView.backgroundColor = UIColor.black.withAlphaComponent(0.14)
         addSubview(dimView)
         // Keep the upper third less fogged — sharp cover owns that region.
         topClear.colors = [
-            UIColor.black.withAlphaComponent(0.35).cgColor,
+            UIColor.black.withAlphaComponent(0.22).cgColor,
             UIColor.clear.cgColor
         ]
         topClear.locations = [0.0, 1.0]
-        // Soft downward darkening into the control deck.
+        // Soft downward darkening; keep mid wash colorful, not crushed to black.
         bottomFade.colors = [
             UIColor.clear.cgColor,
-            UIColor.black.withAlphaComponent(0.35).cgColor,
-            UIColor.black.withAlphaComponent(0.72).cgColor,
-            UIColor.black.withAlphaComponent(0.88).cgColor
+            UIColor.black.withAlphaComponent(0.18).cgColor,
+            UIColor.black.withAlphaComponent(0.42).cgColor,
+            UIColor.black.withAlphaComponent(0.62).cgColor
         ]
-        bottomFade.locations = [0.0, 0.42, 0.72, 1.0]
+        bottomFade.locations = [0.0, 0.48, 0.74, 1.0]
         layer.addSublayer(topClear)
         layer.addSublayer(bottomFade)
     }
