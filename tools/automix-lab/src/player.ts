@@ -390,7 +390,7 @@ function setCover(img: HTMLImageElement, url: string | null | undefined, fallbac
   }
   img.onload = () => {
     img.hidden = false;
-    fallback.hidden = true;
+    if (!img.classList.contains("incoming")) fallback.hidden = true;
   };
   img.onerror = () => {
     img.hidden = true;
