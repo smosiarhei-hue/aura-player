@@ -59,15 +59,14 @@ export class EchoOutNode {
   }
 
   /**
-   * Echo-out intensity.
-   * amount 0…1 → wet 0…0.7, feedback 0.25…0.6
+   * Echo sits beside the dry signal. Dry gain stays 1 so the track is not ducked.
+   * amount 0…1 → wet 0…0.22, feedback stays low.
    */
   setAmount(amount: number, when: number, immediate = false) {
     const a = clamp(amount, 0, 1);
-    setParam(this.wet.gain, 0.7 * a, when, immediate);
-    setParam(this.feedback.gain, 0.25 + 0.35 * a, when, immediate);
-    // Keep dry present; echo sits on top (not a full wet takeover).
-    setParam(this.dry.gain, 1 - 0.15 * a, when, immediate);
+    setParam(this.wet.gain, 0.22 * a, when, immediate, 0.16);
+    setParam(this.feedback.gain, 0.16 + 0.12 * a, when, immediate, 0.16);
+    setParam(this.dry.gain, 1, when, immediate, 0.16);
   }
 
   /** Direct wet % (0…75) and optional feedback % (0…60), DualDeck-compatible. */

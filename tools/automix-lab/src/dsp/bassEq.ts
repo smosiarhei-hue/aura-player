@@ -54,7 +54,8 @@ export class BassEqNode {
 
   /** Direct bass shelf gain in dB (engine envelopes already compute this). */
   setBassGainDb(db: number, when: number, immediate = false) {
-    setParam(this.bass.gain, clamp(db, -40, 12), when, immediate);
+    // A deep shelf reads as a hole in the mix. Keep the bass swap gentle.
+    setParam(this.bass.gain, clamp(db, -6, 4), when, immediate, 0.16);
   }
 
   /**
@@ -62,7 +63,7 @@ export class BassEqNode {
    * Positive amount ducks mid (dB negative); negative amount boosts presence.
    */
   setVocalDuckDb(db: number, when: number, immediate = false) {
-    setParam(this.mid.gain, clamp(db, -24, 9), when, immediate);
+    setParam(this.mid.gain, clamp(db, -4, 3), when, immediate, 0.16);
   }
 
   setAirDb(db: number, when: number, immediate = false) {

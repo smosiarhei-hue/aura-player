@@ -155,7 +155,6 @@ export class WaveRadio {
   private brainGen = 0;
   private pendingSeek: number | null = null;
   private scrubbing = false;
-  private planReady: Promise<void> | null = null;
   private planReadyResolve: (() => void) | null = null;
   private cueWatchTimer: number | null = null;
   private transitionMode: TransitionMode = loadTransitionMode();
@@ -394,6 +393,10 @@ export class WaveRadio {
     return this.transitionMode;
   }
 
+  setOutputVolume(value: number) {
+    this.engine.setOutputVolume(value);
+  }
+
   setTransitionMode(mode: TransitionMode) {
     if (
       mode !== "automix" &&
@@ -527,29 +530,12 @@ export class WaveRadio {
   }
 
   private beginPlanGate() {
-    this.planReady = new Promise<void>((resolve) => {
-      this.planReadyResolve = resolve;
-    });
+    this.planReadyResolve = () => undefined;
   }
 
   private signalPlanReady() {
     this.planReadyResolve?.();
     this.planReadyResolve = null;
-  }
-
-  private async waitForPlan(gen: number, ms = 90_000): Promise<boolean> {
-    if (this.plan && this.profileB) return true;
-    const gate = this.planReady;
-    if (!gate) return Boolean(this.plan && this.profileB);
-    let timedOut = false;
-    const timer = window.setTimeout(() => {
-      timedOut = true;
-      this.signalPlanReady();
-    }, ms);
-    await gate;
-    window.clearTimeout(timer);
-    if (!this.running || gen !== this.loopGen) return false;
-    return Boolean(this.plan && this.profileB) && !timedOut;
   }
 
   /** Hot-retarget Automix / Duet cue while the song is playing. */
@@ -1002,34 +988,32 @@ export class WaveRadio {
         let liveNext = this.next as WaveTrackMeta | null;
         let liveProfileB = this.profileB as TrackAIProfile | null;
 
-        if (!liveNext || !this.engine.getDeck("b").buffer) {
-          this.setStatus("loading", "Жду следующий трек…");
-          await this.waitForPlan(
-            gen,
-            this.transitionMode === "automix" || this.transitionMode === "duet"
-              ? 90_000
-              : 25_000
-          );
-          livePlan = this.plan as AIMixPlan | null;
-          liveNext = this.next as WaveTrackMeta | null;
-          liveProfileB = this.profileB as TrackAIProfile | null;
-          if (!liveNext || !this.engine.getDeck("b").buffer) {
-            throw new Error("Следующий трек не готов");
+        const wantPlan =
+          this.transitionMode === "automix" || this.transitionMode === "duet";
+        const durA = this.engine.getDeck("a").duration || this.current!.durationMs / 1000;
+        for (let hop = 0; hop < 8 && this.running && gen === this.loopGen; hop++) {
+          const haveNext = Boolean(this.next && this.engine.getDeck("b").buffer);
+          const havePlan = Boolean(this.plan);
+          if (haveNext && (!wantPlan || havePlan)) break;
+          const pos = this.engine.getSoloPosition();
+          if (pos >= durA - 1.3) break;
+          this.setStatus("playing", "Трек играет · готовлю переход…");
+          const until = Math.min(durA - 0.12, pos + 2);
+          const cont = await this.engine.resumeSoloUntil(until);
+          if (!cont) break;
+        }
+        livePlan = this.plan as AIMixPlan | null;
+        liveNext = this.next as WaveTrackMeta | null;
+        liveProfileB = this.profileB as TrackAIProfile | null;
+        if (livePlan) {
+          const pos = this.engine.getSoloPosition();
+          if (pos > livePlan.params.cueASec + 0.2) {
+            const room = Math.max(4, livePlan.params.blendDurationSec || 8);
+            livePlan.params.cueASec = Math.min(pos, Math.max(0, durA - room - 0.3));
           }
-        } else if (
-          (this.transitionMode === "automix" || this.transitionMode === "duet") &&
-          !livePlan
-        ) {
-          this.setStatus(
-            "loading",
-            this.transitionMode === "duet"
-              ? "Duet · слушаю фразы A/B…"
-              : "Automix · добираю план сведения…"
-          );
-          await this.waitForPlan(gen);
-          livePlan = this.plan as AIMixPlan | null;
-          liveNext = this.next as WaveTrackMeta | null;
-          liveProfileB = this.profileB as TrackAIProfile | null;
+        }
+        if (!liveNext || !this.engine.getDeck("b").buffer) {
+          throw new Error("Следующий трек не готов");
         }
 
         if (!liveNext) throw new Error("Следующий трек не готов");

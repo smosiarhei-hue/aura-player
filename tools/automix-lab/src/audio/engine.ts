@@ -4,7 +4,6 @@ import {
   pitchCentsAt,
   playbackRatesAt,
   volumesAt,
-  wantsLeadKill,
 } from "./envelopes";
 import type { MashupParams } from "./envelopes";
 import { runMixCritic } from "./mixCritic";
@@ -14,13 +13,9 @@ import {
   FilterSweepNode,
   MidSideStemNode,
   ReverbWashNode,
-  bakeStemSlice,
-  bakeInstrThenDry,
   beatmatchTransport,
   stemFxAt,
   setParam,
-  stretchPlaybackWindow,
-  tempoNeedsPitchLock,
 } from "../dsp";
 
 export type DeckId = "a" | "b";
@@ -83,6 +78,7 @@ export type AudioMeter = {
 export class AutomixEngine {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
+  private outputGain = 0.8;
   private analyser: AnalyserNode | null = null;
   private analyserBuf: Uint8Array<ArrayBuffer> | null = null;
   private decks: Record<DeckId, DeckState> = {
@@ -129,7 +125,7 @@ export class AutomixEngine {
     if (!this.ctx) {
       this.ctx = new AudioContext();
       this.master = this.ctx.createGain();
-      this.master.gain.value = 0.95;
+      this.master.gain.value = this.outputGain;
       this.analyser = this.ctx.createAnalyser();
       this.analyser.fftSize = 512;
       this.analyser.smoothingTimeConstant = 0.62;
@@ -142,6 +138,14 @@ export class AutomixEngine {
     }
     if (this.ctx.state === "suspended") await this.ctx.resume();
     return this.ctx;
+  }
+
+  /** Output loudness, 0–1. Applies immediately once the context exists. */
+  setOutputVolume(value: number) {
+    this.outputGain = Math.min(1, Math.max(0, value));
+    if (this.master && this.ctx) {
+      this.master.gain.setTargetAtTime(this.outputGain, this.ctx.currentTime, 0.03);
+    }
   }
 
   /** Live spectrum bands for UI (ambient / pulse). Safe when silent. */
@@ -240,6 +244,72 @@ export class AutomixEngine {
     this.soloUntilSec = Math.max(this.soloStartSec + 0.2, untilSec);
   }
 
+  /**
+   * Keep the same solo source running past the cue while the next track
+   * or the plan is still loading. Avoids a stop/start jump.
+   */
+  resumeSoloUntil(untilSec: number): Promise<boolean> {
+    const chain = this.chainA ?? this.chainB;
+    const ctx = this.ctx;
+    if (!chain || !ctx) return Promise.resolve(false);
+    const pos = this.soloEndedAt ?? this.getSoloPosition();
+    const rate = this.soloRate || 1;
+    this.startedAt = performance.now() - ((pos - this.soloStartSec) / rate) * 1000;
+    this.soloUntilSec = Math.max(pos + 0.35, untilSec);
+    this.soloEndedAt = null;
+    this.playing = true;
+    const deckId: DeckId = this.chainA ? "a" : "b";
+    const deck = this.decks[deckId];
+    return new Promise<boolean>((resolve) => {
+      this.soloUntilResolve = resolve;
+      const tick = () => {
+        if (!this.playing) {
+          const done = this.soloUntilResolve;
+          this.soloUntilResolve = null;
+          done?.(false);
+          return;
+        }
+        if (ctx.state === "suspended") void ctx.resume().catch(() => undefined);
+        const elapsed = (performance.now() - this.startedAt) / 1000;
+        const here = this.soloStartSec + elapsed * rate;
+        this.onTick?.({
+          playing: true,
+          progress: 0,
+          phase: "PLAY",
+          volA: deckId === "a" ? 1 : 0,
+          volB: deckId === "b" ? 1 : 0,
+          bassA: 0,
+          bassB: 0,
+          rateA: 1,
+          rateB: 1,
+          pitchB: 0,
+          instrA: 0,
+          instrB: 0,
+          vocalB: 0,
+          hpfA: 0,
+          lpfB: 0,
+          echoA: 0,
+          reverbA: 0,
+          stutterA: 0,
+          displayElapsed: Math.min(deck.duration, here),
+          displayDuration: deck.duration,
+          displayDeck: deckId,
+        });
+        if (here >= this.soloUntilSec) {
+          this.soloEndedAt = Math.min(deck.duration, this.soloUntilSec);
+          this.playing = false;
+          cancelAnimationFrame(this.raf);
+          const done = this.soloUntilResolve;
+          this.soloUntilResolve = null;
+          done?.(true);
+          return;
+        }
+        this.raf = requestAnimationFrame(tick);
+      };
+      this.raf = requestAnimationFrame(tick);
+    });
+  }
+
   /** Current track position during solo play, or the position where solo stopped. */
   getSoloPosition(): number {
     if (this.playing) {
@@ -303,7 +373,6 @@ export class AutomixEngine {
     if (!a || !b) throw new Error("Загрузи оба трека");
     this.enforceCritic();
     const ctx = await this.ensureContext();
-    this.stop();
 
     const p = this.params;
     const dsp = p.dsp;
@@ -311,126 +380,40 @@ export class AutomixEngine {
     const cueB = Math.min(Math.max(0, p.cueBSec), Math.max(0, b.duration - 1));
     // Adaptive Duet + AutoMix: never shorter than 4s (no blink).
     const blendFloor = 4;
-    const blend = Math.max(blendFloor, Math.min(48, p.blendDurationSec));
+    const remainA = Math.max(1.6, a.duration - cueA - 0.2);
+    const blend = Math.max(
+      Math.min(blendFloor, remainA),
+      Math.min(48, p.blendDurationSec, remainA)
+    );
 
     const modeLabel = dsp.mashupMode || "mashup";
-    onStatus?.(`Modern mashup · ${modeLabel} — обрабатываю окно…`);
-    this.processingNote = `baking ${modeLabel}`;
+    onStatus?.(`Сведение · ${modeLabel}`);
+    this.processingNote = modeLabel;
 
-    // Yield so UI can paint status
-    await new Promise((r) => setTimeout(r, 0));
-
+    // Live path stays on the original files. Offline stem bake and WSOLA
+    // ran after stop(), so the song froze and came back thinner. Tempo is a
+    // small playbackRate; key is detune. No second render of the audio.
     let bufA = a;
     let bufB = b;
     let offsetA = cueA;
     let offsetB = cueB;
     let liveInstrScale = 1;
-    this.bakedLeadA = false;
-    this.bakedLeadB = false;
-    this.bakedVocalA = false;
     this.pitchLockedA = false;
     this.pitchLockedB = false;
 
-    // Pitch-preserving beatmatch. playbackRate would also shift pitch, and
-    // inverse detune on the same node cancels the tempo (they compound).
-    // WSOLA bakes playbackRatesAt into the buffer; Camelot stays on detune.
-    const outDur = blend + 2.6;
-    const outputRate = (side: "a" | "b") => (prog: number) => {
-      const t = prog * outDur;
-      if (t >= blend) return 1;
-      const rates = playbackRatesAt(Math.min(1, t / blend), this.params);
-      return side === "a" ? rates.outgoing : rates.incoming;
-    };
-    if (tempoNeedsPitchLock(p.rateA) && a.duration - cueA > 0.5) {
-      onStatus?.("Time-stretch A · pitch lock…");
-      await new Promise((r) => setTimeout(r, 0));
-      try {
-        bufA = stretchPlaybackWindow(ctx, a, cueA, outDur, outputRate("a"));
-        offsetA = 0;
-        this.pitchLockedA = true;
-      } catch (err) {
-        console.warn("time-stretch A skipped", err);
-      }
-    }
-    if (tempoNeedsPitchLock(p.rateB) && b.duration - cueB > 0.5) {
-      onStatus?.("Time-stretch B · pitch lock…");
-      await new Promise((r) => setTimeout(r, 0));
-      try {
-        bufB = stretchPlaybackWindow(ctx, b, cueB, outDur, outputRate("b"));
-        offsetB = 0;
-        this.pitchLockedB = true;
-      } catch (err) {
-        console.warn("time-stretch B skipped", err);
-      }
-    }
-
-    const leadKill = wantsLeadKill(dsp);
-    const carve = leadKill ? "leadKill" : "bed";
-    const duetMode = dsp.mashupMode === "oneBarDuet";
-
-    // Modern Duet: bake A as vocal/acapella so only B's instrumental remains.
-    if (duetMode && (dsp.bakeVocalA || (dsp.vocalAPeak || 0) >= 0.55)) {
-      const amt = Math.min(1, Math.max(0.78, dsp.vocalAPeak || 0.9));
-      onStatus?.(`Bake A vocal isolate ${Math.round(amt * 100)}% · Duet…`);
-      bufA = bakeStemSlice(ctx, bufA, offsetA, blend, "vocal", amt, "bed");
-      offsetA = 0;
-      this.bakedVocalA = true;
-      dsp.bakeVocalA = true;
-      dsp.bakeStems = true;
-    }
-
-    if (!duetMode && (leadKill || dsp.bakeStems)) {
-      // Acapella Drop / high instrAPeak: leadKill the bed, then B groove→dry.
-      if (leadKill || (dsp.bakeInstrA && dsp.instrAPeak >= 0.35)) {
-        onStatus?.(
-          leadKill
-            ? `Bake A lead-kill bed ${Math.round((dsp.instrAPeak || 0.95) * 100)}%…`
-            : `Bake A instrumental bed ${Math.round(dsp.instrAPeak * 100)}%…`
-        );
-        const amt = leadKill
-          ? Math.min(1, Math.max(0.94, dsp.instrAPeak || 0.95))
-          : Math.min(0.92, Math.max(0.8, dsp.instrAPeak));
-        bufA = bakeStemSlice(ctx, bufA, offsetA, blend, "instrumental", amt, carve);
-        offsetA = 0;
-        liveInstrScale = leadKill ? 0.85 : 0.35;
-        this.bakedLeadA = leadKill;
-        if (leadKill) {
-          dsp.bakeInstrA = true;
-          dsp.bakeStems = true;
-        }
-      }
-
-      // Acapella Drop / high instrAPeak: hold B's lead out, then bloom dry.
-      // Same carve as A so the early window is one vocal, not a second singer.
-      if (leadKill || (dsp.bakeInstrB && dsp.instrBPeak >= 0.5)) {
-        const openFrac = Math.min(
-          0.72,
-          Math.max(0.08, dsp.instrAAt + 0.04, dsp.instrBUntil || 0, dsp.vocalBAt || 0)
-        );
-        const untilSec = Math.max(0.35, blend * openFrac);
-        onStatus?.(`Bake B instr → vocal @ ${untilSec.toFixed(1)}s (${modeLabel})…`);
-        const bAmt = leadKill
-          ? Math.min(0.95, Math.max(0.82, dsp.instrBPeak || 0.9))
-          : Math.min(0.92, Math.max(0.8, dsp.instrBPeak));
-        bufB = bakeInstrThenDry(
-          ctx,
-          bufB,
-          offsetB,
-          blend,
-          untilSec,
-          bAmt,
-          leadKill ? "leadKill" : "bed"
-        );
-        offsetB = 0;
-        this.bakedLeadB = leadKill;
-      }
-    }
-
-    onStatus?.("Сведение мэшапа…");
+    onStatus?.("Сведение…");
     this.processingNote = dsp.decisions[0] ?? modeLabel;
 
-    this.chainA = this.makeChain(bufA, this.pitchLockedA ? 1 : p.rateA, offsetA);
-    this.chainB = this.makeChain(bufB, this.pitchLockedB ? 1 : p.rateB, offsetB);
+    const musical = (rate: number) => Math.min(1.03, Math.max(0.97, rate || 1));
+    const previousA = this.chainA;
+    const previousB = this.chainB;
+    this.chainA = null;
+    this.chainB = null;
+    this.playing = false;
+    cancelAnimationFrame(this.raf);
+
+    this.chainA = this.makeChain(bufA, musical(p.rateA), offsetA);
+    this.chainB = this.makeChain(bufB, musical(p.rateB), offsetB);
 
     this.liveInstrScale = liveInstrScale;
 
@@ -447,12 +430,24 @@ export class AutomixEngine {
           : 120;
     this.chainA.echo.setTempo(bpm, now, true);
     this.chainB.echo.setTempo(this.decks.b.bpm || bpm, now, true);
-    this.applyPhraseLoop(this.chainA, bufA, bpm, p.rateA);
+    this.applyPhraseLoop(this.chainA);
 
     this.applyEnvelope(0, now, true);
 
     this.chainA.source.start(now, this.chainA.startOffset);
     this.chainB.source.start(now, this.chainB.startOffset);
+    for (const old of [previousA, previousB]) {
+      if (!old) continue;
+      try {
+        old.gain.gain.cancelScheduledValues(now);
+        old.gain.gain.setValueAtTime(old.gain.gain.value, now);
+        old.gain.gain.linearRampToValueAtTime(0, now + 0.08);
+        old.source.stop(now + 0.1);
+      } catch {
+        /* already ended */
+      }
+      window.setTimeout(() => this.teardownChain(old), 400);
+    }
 
     // Keep B alive long enough for waveRadio to hand off into solo without a
     // silent gap (finishMashupLog / promote used to outrun a 0.8s tail).
@@ -525,9 +520,6 @@ export class AutomixEngine {
     this.chainA = this.makeChain(bufferA, 1, startA);
     this.chainB = this.makeChain(bufferB, 1, startB);
     this.liveInstrScale = 1;
-    this.bakedLeadA = false;
-    this.bakedLeadB = false;
-    this.bakedVocalA = false;
 
     const now = ctx.currentTime + 0.05;
     this.startedAt = performance.now();
@@ -628,13 +620,9 @@ export class AutomixEngine {
   }
 
   private liveInstrScale = 1;
-  private bakedLeadA = false;
-  /** Modern Duet: A was offline-baked as vocal/acapella. */
-  private bakedVocalA = false;
   /** Blend was offline time-stretched; playbackRate stays 1, Camelot is detune-only. */
   private pitchLockedA = false;
   private pitchLockedB = false;
-  private bakedLeadB = false;
 
   /**
    * Play one deck from `fromSec` until `untilSec` (track position).
@@ -771,29 +759,12 @@ export class AutomixEngine {
     return { source, stem, eq, filters, echo, reverb, gain, startOffset };
   }
 
-  /** Phrase-loop outgoing A for `dsp.loopBarsA` bars (seamlessLoop / spaceReverb). */
-  private applyPhraseLoop(
-    chain: SourceChain,
-    buffer: AudioBuffer,
-    bpm: number,
-    rate: number
-  ) {
-    const bars = Math.max(0, this.params.dsp.loopBarsA | 0);
-    if (bars <= 0) {
-      chain.source.loop = false;
-      return;
-    }
-    const barSec = 240 / Math.max(60, bpm);
-    const loopDur = (bars * barSec) / Math.max(0.5, rate);
-    const start = Math.max(0, chain.startOffset);
-    const end = Math.min(buffer.duration - 0.02, start + loopDur);
-    if (!(end > start + 0.25)) {
-      chain.source.loop = false;
-      return;
-    }
-    chain.source.loop = true;
-    chain.source.loopStart = start;
-    chain.source.loopEnd = end;
+  /**
+   * Phrase-loop repeats a slice and clicks at the seam, which sounds like a
+   * freeze. The planner may still set loopBarsA; playback stays linear.
+   */
+  private applyPhraseLoop(chain: SourceChain) {
+    chain.source.loop = false;
   }
 
   private applyEnvelope(progress: number, audioTime: number, immediate: boolean) {
@@ -804,12 +775,8 @@ export class AutomixEngine {
     const cents = pitchCentsAt(progress, this.params);
     const fx = stemFxAt(progress, this.params);
 
-    const leadKillLive = wantsLeadKill(this.params.dsp);
-    // Bake already lead-kills A. A second full notch hollows the bed.
-    const bakedRelay = this.bakedLeadA;
-    // Shared cancelAndHold + ramp (see dsp/param) — no stacked linearRamp clicks.
-    setParam(this.chainA.gain.gain, vols.outgoing, audioTime, immediate, 0.08);
-    setParam(this.chainB.gain.gain, vols.incoming, audioTime, immediate, 0.08);
+    setParam(this.chainA.gain.gain, vols.outgoing, audioTime, immediate, 0.18);
+    setParam(this.chainB.gain.gain, vols.incoming, audioTime, immediate, 0.18);
 
     this.chainA.eq.setBassGainDb(bass.outgoing, audioTime, immediate);
     this.chainB.eq.setBassGainDb(bass.incoming, audioTime, immediate);
@@ -832,53 +799,16 @@ export class AutomixEngine {
 
     if (duet) {
       // A = vocal isolate (bake already acapella; live reinforces). B stays dry.
-      const liveVocal = this.bakedVocalA
-        ? Math.min(1, Math.max(0.55, fx.vocalA))
-        : Math.min(1, fx.vocalA);
+      const liveVocal = Math.min(0.35, fx.vocalA);
       if (liveVocal > 0.04) this.chainA.stem.setVocal(liveVocal, audioTime, immediate);
       else this.chainA.stem.setDry(audioTime, immediate);
       this.chainB.stem.setDry(audioTime, immediate);
-    } else if (bakedRelay) {
-      // Bake already removed the center lead. A light notch only — a second
-      // full mid mute thins the kick that the carve kept.
-      this.chainA.stem.setInstrumental(0.22, audioTime, immediate, true);
-      this.chainB.stem.setInstrumental(
-        this.bakedLeadB ? Math.min(0.2, fx.instrumentalB) : Math.min(0.97, fx.instrumentalB),
-        audioTime,
-        immediate,
-        false
-      );
-    } else if (leadKillLive && fx.instrumentalA >= 0.75) {
-      this.chainA.stem.setInstrumental(Math.max(0.9, fx.instrumentalA), audioTime, immediate, true);
-      this.chainB.stem.setInstrumental(
-        this.bakedLeadB ? Math.min(0.2, fx.instrumentalB) : Math.min(0.97, fx.instrumentalB),
-        audioTime,
-        immediate,
-        false
-      );
-    } else if (leadKillLive) {
-      this.chainA.stem.setInstrumental(fx.instrumentalA, audioTime, immediate, false);
-      this.chainB.stem.setInstrumental(
-        this.bakedLeadB ? Math.min(0.2, fx.instrumentalB) : Math.min(0.97, fx.instrumentalB),
-        audioTime,
-        immediate,
-        false
-      );
     } else {
-      const raw = Math.max(
-        fx.instrumentalA * this.liveInstrScale,
-        fx.instrumentalA >= 0.85 ? 0.35 : 0
-      );
-      // Acapella without a vocal bake: the envelope says "bed" for the gates,
-      // but the outro is already instrumental — don't notch it into a whisper.
-      const liveA =
-        this.params.dsp.mashupMode === "acapellaDrop" && !leadKillLive
-          ? Math.min(raw, 0.22)
-          : raw;
+      // Light bed only. A full mid-mute makes the track sound cut and hollow.
+      const liveA = Math.min(0.28, fx.instrumentalA * this.liveInstrScale);
       this.chainA.stem.setInstrumental(liveA, audioTime, immediate, false);
-      // Envelope already holds B instrumental until the vocal open — no second gate.
       this.chainB.stem.setInstrumental(
-        this.bakedLeadB ? Math.min(0.2, fx.instrumentalB) : Math.min(0.97, fx.instrumentalB),
+        Math.min(0.28, fx.instrumentalB),
         audioTime,
         immediate,
         false
@@ -896,37 +826,18 @@ export class AutomixEngine {
     this.chainA.reverb.setAmount(fx.reverbA, audioTime, immediate);
     this.chainB.reverb.bypass(audioTime, immediate);
 
-    // Open phrase loop before LAND so A can exit cleanly.
-    if (this.chainA.source.loop && progress >= 0.72) {
-      this.chainA.source.loop = false;
-    }
-
-    // 1/16 stutter gate on outgoing volume (beatStutter).
-    if (fx.stutterA >= 0.04) {
-      const bpm =
-        this.params.targetBPM > 30
-          ? this.params.targetBPM
-          : this.decks.a.bpm > 30
-            ? this.decks.a.bpm
-            : 120;
-      const sixteenth = Math.max(0.03, 60 / bpm / 4);
-      const phase = (audioTime % sixteenth) / sixteenth;
-      const duty = Math.max(0.12, 0.88 - fx.stutterA * 0.72);
-      const gated = phase < duty ? vols.outgoing : 0;
-      setParam(this.chainA.gain.gain, gated, audioTime, true, 0.012);
-    }
-
     const transport = beatmatchTransport(
       rates,
       cents,
       this.pitchLockedA,
       this.pitchLockedB
     );
+    const musical = (rate: number) => Math.min(1.03, Math.max(0.97, rate || 1));
     try {
-      this.chainA.source.playbackRate.setTargetAtTime(transport.rateA, audioTime, 0.04);
-      this.chainB.source.playbackRate.setTargetAtTime(transport.rateB, audioTime, 0.04);
-      this.chainA.source.detune.setTargetAtTime(transport.detuneA, audioTime, 0.05);
-      this.chainB.source.detune.setTargetAtTime(transport.detuneB, audioTime, 0.05);
+      setParam(this.chainA.source.playbackRate, musical(transport.rateA), audioTime, false, 0.25);
+      setParam(this.chainB.source.playbackRate, musical(transport.rateB), audioTime, false, 0.25);
+      setParam(this.chainA.source.detune, transport.detuneA, audioTime, false, 0.25);
+      setParam(this.chainB.source.detune, transport.detuneB, audioTime, false, 0.25);
     } catch {
       /* source may have ended */
     }

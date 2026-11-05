@@ -35,14 +35,12 @@ export class FilterSweepNode {
     this.lpf.connect(this.output);
   }
 
-  /** Open HPF: amount 0 = bypass (~20 Hz), 1 ≈ 4–6 kHz riser. */
+  /** Open HPF: amount 0 = bypass (~30 Hz), 1 ≈ 700 Hz. Never a telephone filter. */
   setHighPass(amount: number, when: number, immediate = false) {
     const a = clamp(amount, 0, 1);
-    // Exponential-ish feel: more movement in the musical midrange.
-    const hz = 20 * Math.pow(300, a); // 20 → ~6000
-    const q = 0.7 + a * 0.55;
-    setParam(this.hpf.frequency, hz, when, immediate, 0.05);
-    setParam(this.hpf.Q, q, when, immediate, 0.05);
+    const hz = 30 * Math.pow(24, a); // 30 → ~720
+    setParam(this.hpf.frequency, hz, when, immediate, 0.18);
+    setParam(this.hpf.Q, 0.7, when, immediate, 0.18);
   }
 
   /** Direct HPF frequency in Hz (20…18000). */
@@ -50,13 +48,12 @@ export class FilterSweepNode {
     setParam(this.hpf.frequency, clamp(hz, 20, 18000), when, immediate, 0.05);
   }
 
-  /** Close LPF: amount 0 = open (~20 kHz). Softer curve — 1 ≈ ~800 Hz, not mud. */
+  /** Close LPF: amount 0 = open (~20 kHz). 1 ≈ 5 kHz — a veil, not a mute. */
   setLowPass(amount: number, when: number, immediate = false) {
     const a = clamp(amount, 0, 1);
-    const hz = 20000 / Math.pow(25, a); // 20000 → ~800 (was ~250 — too muffled)
-    const q = 0.7 + a * 0.25;
-    setParam(this.lpf.frequency, hz, when, immediate, 0.05);
-    setParam(this.lpf.Q, q, when, immediate, 0.05);
+    const hz = 20000 / Math.pow(4, a); // 20000 → ~5000
+    setParam(this.lpf.frequency, hz, when, immediate, 0.18);
+    setParam(this.lpf.Q, 0.7, when, immediate, 0.18);
   }
 
   setLowPassHz(hz: number, when: number, immediate = false) {

@@ -34,7 +34,7 @@ export class ReverbWashNode {
 
     // Three short taps ≈ small hall / plate (ms), stereo-ish by offset.
     const taps = [0.029, 0.037, 0.053];
-    const fbs = [0.42, 0.38, 0.34];
+    const fbs = [0.22, 0.18, 0.16];
     for (let i = 0; i < taps.length; i++) {
       const delay = ctx.createDelay(0.2);
       const fb = ctx.createGain();
@@ -52,14 +52,15 @@ export class ReverbWashNode {
   }
 
   /**
-   * Wash intensity 0…1 → wet 0…0.55 (DualDeck reverbWash caps ~55%).
+   * Light plate on top of a full dry signal. Wet tops out near 16%.
+   * Dry is never ducked — the wash must not thin the track.
    */
   setAmount(amount: number, when: number, immediate = false) {
     const a = clamp(amount, 0, 1);
-    setParam(this.wet.gain, 0.55 * a, when, immediate);
-    setParam(this.dry.gain, 1 - 0.18 * a, when, immediate);
-    const dampHz = 5200 - 1800 * a;
-    setParam(this.damp.frequency, dampHz, when, immediate, 0.05);
+    setParam(this.wet.gain, 0.16 * a, when, immediate, 0.18);
+    setParam(this.dry.gain, 1, when, immediate, 0.18);
+    const dampHz = 6400 - 800 * a;
+    setParam(this.damp.frequency, dampHz, when, immediate, 0.18);
   }
 
   bypass(when: number, immediate = false) {
