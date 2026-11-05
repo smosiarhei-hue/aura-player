@@ -41,7 +41,7 @@ export type WaveTrackMeta = {
   codec?: string;
   bitrateKbps?: number;
   quality?: "lossless" | "hq" | "nq";
-  /** Why we are not on FLAC (geo soft-downgrade, error, …). */
+  /** 320 if Yandex offered it, otherwise 192. */
   qualityNote?: string;
 };
 

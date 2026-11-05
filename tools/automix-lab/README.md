@@ -41,18 +41,9 @@ npm run dev
 
 Токен: `.ym-token.json` (gitignored). Кэш: `.ym-cache/`.
 
-### Почему не FLAC, а HQ 192
+### Поток: 320 или 192
 
-Код **запрашивает** lossless (`/get-file-info?quality=lossless`). Plus на аккаунте есть — но Яндекс **сам решает**, что выдать. С IP датацентра вне РФ/РБ (например cloud-агент в AWS US) ответ стабильно:
-
-`quality: "nq"`, `codec: "aac-mp4"`, `bitrate: 192`
-
-Тогда мы честно падаем на max `download-info` (часто тоже 192) и пишем причину в бейдж (tooltip) и `/api/ym/status` → `lossless`.
-
-Чтобы получить FLAC:
-
-1. Запусти lab **локально** из Беларуси/РФ, или
-2. Поставь `YM_PROXY=http://user:pass@ru-proxy:port` (HTTP(S) proxy с IP РФ/РБ) перед `npm run dev`.
+FLAC не запрашивается. Берём `download-info`: сначала вариант от 256 kbps (обычно 320), если его нет — от 160 kbps (обычно 192). Бейдж показывает битрейт.
 
 ## Song Transitions (как Apple Music AutoMix)
 
@@ -75,7 +66,7 @@ npm run dev
 
 | Функция | Что делает |
 |---|---|
-| **HQ / Lossless** | FLAC через `/get-file-info`; если API отдал nq/192 — geo (см. ниже) |
+| **320 или 192** | Сначала 320 kbps, иначе 192. FLAC не качаем |
 | **Моя волна** | Rotor + feedback started/finished/skip |
 | **BPM + Camelot** | Beatmatch + harmonic pitch ±200¢ |
 | **Фраза 8/16** | Окно на сетке тактов |

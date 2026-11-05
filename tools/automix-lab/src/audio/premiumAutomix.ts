@@ -21,8 +21,8 @@ import type { AIMixPlan } from "./aiMixEngine";
 export const PREMIUM_FEATURES = [
   {
     id: "hqStream",
-    label: "HQ / Lossless поток",
-    detail: "Plus: FLAC через get-file-info; вне РФ/РБ — nq/192 (YM_PROXY)",
+    label: "320 или 192",
+    detail: "Сначала 320 kbps, если Яндекс не отдал — 192. FLAC не качаем.",
   },
   {
     id: "myWave",

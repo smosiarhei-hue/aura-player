@@ -245,7 +245,7 @@ const sheetBodies = {
   auth: () => `
     <div class="auth-block" id="authBox">
       <h3>Sonivo · Яндекс Plus</h3>
-      <p>Моя волна + Whisper/LRC brain: слушает фразу, планирует mashup 12–16 тактов, ровный LAND. FLAC при RU/BY IP, иначе nq/192.</p>
+      <p>Моя волна + Whisper/LRC brain: слушает фразу, планирует mashup 12–16 тактов, ровный LAND. Поток 320 kbps, если его нет — 192.</p>
       <div class="auth-row">
         <button class="btn primary" id="ymConnect" type="button">Подключить</button>
         <button class="btn ghost" id="ymLogout" type="button">Выйти</button>
