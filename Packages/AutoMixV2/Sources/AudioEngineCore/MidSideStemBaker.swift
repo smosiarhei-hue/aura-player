@@ -625,42 +625,122 @@ public enum MidSideStemBaker {
         ]
     }
 
-    /// Float32 non-interleaved reader. A direct converting open throws `'dtsg'`
-    /// (1685348671) for some m4a/mp3 caches the stream player already has open,
-    /// so the second attempt reads a private copy.
+    /// Float32 non-interleaved reader. A converting open of a cache AVPlayer or
+    /// AVAudioEngine already holds throws `'dta?'` / `'dtsg'` (1685348671).
+    /// Order: converting open → private copy → plain open of the copy → decode
+    /// that copy into a float32 CAF. Never reopen the live URL as a last resort.
     public static func openFloat32Source(_ url: URL) throws -> (file: AVAudioFile, scratch: URL?) {
         if let file = try? AVAudioFile(
             forReading: url,
             commonFormat: .pcmFormatFloat32,
             interleaved: false
-        ) {
+        ), file.length > 0 {
             return (file, nil)
         }
+
         let ext = url.pathExtension.isEmpty ? "audio" : url.pathExtension
         let copy = FileManager.default.temporaryDirectory
             .appendingPathComponent("sonivo-src-\(UUID().uuidString).\(ext)")
-        try FileManager.default.copyItem(at: url, to: copy)
+        do {
+            try FileManager.default.copyItem(at: url, to: copy)
+        } catch {
+            // Copy can race a still-writing download; fall through to a decode of the original.
+            if let caf = try? decodeCompressedToFloat32CAF(url) {
+                return (try AVAudioFile(forReading: caf), caf)
+            }
+            throw error
+        }
+
         if let file = try? AVAudioFile(
             forReading: copy,
             commonFormat: .pcmFormatFloat32,
             interleaved: false
-        ) {
+        ), file.length > 0 {
             return (file, copy)
         }
         if let plain = try? AVAudioFile(forReading: copy),
+           plain.length > 0,
            plain.processingFormat.commonFormat == .pcmFormatFloat32,
            !plain.processingFormat.isInterleaved {
             return (plain, copy)
         }
+
+        // Converting open of the copy still failed (common for some m4a/mp3).
+        // Decode through AVAudioConverter into a private CAF the stem bake can read.
+        do {
+            let caf = try decodeCompressedToFloat32CAF(copy)
+            try? FileManager.default.removeItem(at: copy)
+            return (try AVAudioFile(forReading: caf), caf)
+        } catch {
+            try? FileManager.default.removeItem(at: copy)
+            throw error
+        }
+    }
+
+    /// Private copy of a compressed cache for native deck scheduling. Prefer this
+    /// over opening the live URL when AutoMix falls back from a failed stem bake.
+    public static func openPlaybackSource(_ url: URL) throws -> (file: AVAudioFile, scratch: URL?) {
+        if let file = try? AVAudioFile(forReading: url), file.length > 0 {
+            return (file, nil)
+        }
+        let ext = url.pathExtension.isEmpty ? "audio" : url.pathExtension
+        let copy = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sonivo-play-\(UUID().uuidString).\(ext)")
+        try FileManager.default.copyItem(at: url, to: copy)
+        if let file = try? AVAudioFile(forReading: copy), file.length > 0 {
+            return (file, copy)
+        }
+        // Last path: same float32 CAF the bake uses.
+        let caf = try decodeCompressedToFloat32CAF(copy)
         try? FileManager.default.removeItem(at: copy)
-        return (
-            try AVAudioFile(
-                forReading: url,
+        return (try AVAudioFile(forReading: caf), caf)
+    }
+
+    /// Turn a compressed source into a float32 non-interleaved CAF. Used when
+    /// `AVAudioFile(..., commonFormat:)` refuses the container with `'dta?'`.
+    public static func decodeCompressedToFloat32CAF(_ url: URL) throws -> URL {
+        let source = try AVAudioFile(forReading: url)
+        guard source.length > 0 else { throw AudioEngineCoreError.unsupportedOutputFormat }
+        let rate = source.processingFormat.sampleRate
+        let channels = max(1, min(2, source.processingFormat.channelCount))
+        guard rate.isFinite, rate > 0,
+              let outFormat = AVAudioFormat(
                 commonFormat: .pcmFormatFloat32,
+                sampleRate: rate,
+                channels: channels,
                 interleaved: false
-            ),
-            nil
-        )
+              ) else {
+            throw AudioEngineCoreError.unsupportedOutputFormat
+        }
+        let outURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sonivo-pcm-\(UUID().uuidString).caf")
+        let output = try openLinearPCMCAFWriter(at: outURL, format: outFormat)
+        guard let converter = AVAudioConverter(from: source.processingFormat, to: outFormat),
+              let inBuf = AVAudioPCMBuffer(pcmFormat: source.processingFormat, frameCapacity: 8_192),
+              let outBuf = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: 8_192) else {
+            try? FileManager.default.removeItem(at: outURL)
+            throw AudioEngineCoreError.cannotCreateConverter
+        }
+        let cursor = Float32DecodeCursor(file: source, buffer: inBuf)
+        while true {
+            var convertError: NSError?
+            let status = converter.convert(to: outBuf, error: &convertError) { _, statusPtr in
+                cursor.next(statusPtr)
+            }
+            if let convertError {
+                try? FileManager.default.removeItem(at: outURL)
+                throw AudioEngineCoreError.conversionFailed(convertError.localizedDescription)
+            }
+            if status == .error {
+                try? FileManager.default.removeItem(at: outURL)
+                throw AudioEngineCoreError.conversionFailed("PCM decode made no progress")
+            }
+            if outBuf.frameLength > 0 {
+                try output.write(from: outBuf)
+            }
+            if status == .endOfStream { break }
+        }
+        return outURL
     }
 
     /// Open a CAF writer whose *processing* format matches `format` (buffers we write).
@@ -898,6 +978,39 @@ public enum MidSideStemBaker {
                 oL[i] = processedL
                 oR[i] = processedR
             }
+        }
+    }
+}
+
+/// Pulls compressed frames into an AVAudioConverter without escaping the decode queue.
+private final class Float32DecodeCursor: @unchecked Sendable {
+    let file: AVAudioFile
+    let buffer: AVAudioPCMBuffer
+    private var eof = false
+
+    init(file: AVAudioFile, buffer: AVAudioPCMBuffer) {
+        self.file = file
+        self.buffer = buffer
+    }
+
+    func next(_ statusPtr: UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioBuffer? {
+        if eof {
+            statusPtr.pointee = .endOfStream
+            return nil
+        }
+        do {
+            try file.read(into: buffer)
+            if buffer.frameLength == 0 {
+                eof = true
+                statusPtr.pointee = .endOfStream
+                return nil
+            }
+            statusPtr.pointee = .haveData
+            return buffer
+        } catch {
+            eof = true
+            statusPtr.pointee = .endOfStream
+            return nil
         }
     }
 }

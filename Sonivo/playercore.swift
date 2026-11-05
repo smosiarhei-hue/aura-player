@@ -2590,11 +2590,21 @@ final class PlayerCore {
         }
     }
 
+    /// Open a local cache without fighting the live AVPlayer / AVAudioEngine handle.
+    /// Keeps any private copy in the mashup temp list so LAND can still glide.
+    private func openAutomixPlaybackFile(_ url: URL) throws -> AVAudioFile {
+        let opened = try MidSideStemBaker.openPlaybackSource(url)
+        if let scratch = opened.scratch {
+            mashupBakeTempURLs.append(scratch)
+        }
+        guard opened.file.length > 0 else { throw CocoaError(.fileReadCorruptFile) }
+        return opened.file
+    }
+
     /// Synchronous local handoff used at Automix LAND — sets anchors immediately so
     /// the UI never freezes waiting on an async `startLocal` Task.
     private func handoffLocalPlayback(track: Track, fileURL: URL, at seconds: Double) throws {
-        let audioFile = try AVAudioFile(forReading: fileURL)
-        guard audioFile.length > 0 else { throw CocoaError(.fileReadCorruptFile) }
+        let audioFile = try openAutomixPlaybackFile(fileURL)
 
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
         isUsingStreamPlayer = false
@@ -2644,8 +2654,7 @@ final class PlayerCore {
     /// Automix LAND: mount dry B on the outgoing node while B stem keeps playing,
     /// then cut the stem — avoids the silence gap of stop-both-then-open-file.
     private func landAutomixOntoDryB(track: Track, fileURL: URL, at seconds: Double, glide: Double) throws {
-        let audioFile = try AVAudioFile(forReading: fileURL)
-        guard audioFile.length > 0 else { throw CocoaError(.fileReadCorruptFile) }
+        let audioFile = try openAutomixPlaybackFile(fileURL)
 
         PlaybackAudioSessionCoordinator.shared.activateForPlayback()
         isUsingStreamPlayer = false
@@ -3184,6 +3193,8 @@ final class PlayerCore {
                     let bakeLag = min(heardPastCue, max(0, blend - 1.5))
                     if case .failure(let bakeError) = bakeResult {
                         self.mashupBakeFailedUseCrossfade = true
+                        // A 22s dry stack after a failed stem carve is mud. Keep a short handoff.
+                        self.transitionDuration = min(self.transitionDuration, 8)
                         let extA = outURL.pathExtension
                         let extB = inURL.pathExtension
                         AutoMixSessionLog.shared.fault(
@@ -3300,8 +3311,9 @@ final class PlayerCore {
                 var armedIncoming = false
                 if let localIncomingURL {
                     do {
-                        let file = try AVAudioFile(forReading: localIncomingURL)
-                        guard file.length > 0 else { throw CocoaError(.fileReadCorruptFile) }
+                        // Private copy / CAF decode — the live m4a/mp3 open is what
+                        // field-logged as bake.fail + fallback.file 'dta?' → stream.
+                        let file = try self.openAutomixPlaybackFile(localIncomingURL)
                         guard !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
                               self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else { return }
                         self.incomingIsStream = false
@@ -3313,7 +3325,7 @@ final class PlayerCore {
                         targetNode.play()
                         armedIncoming = true
                     } catch {
-                        // Same 'dtsg' that killed the bake must not cancel the mix.
+                        // Same 'dta?' that killed the bake must not cancel the mix.
                         // The stream player can still ride the next song in.
                         targetNode.stop()
                         targetNode.volume = 0

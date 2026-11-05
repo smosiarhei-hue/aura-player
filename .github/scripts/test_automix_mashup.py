@@ -245,6 +245,10 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("commonFormat: .pcmFormatFloat32", baker)
         self.assertIn("interleaved: false", baker)
         self.assertIn("openFloat32Source", baker)
+        # Live AVPlayer/engine caches throw 'dta?' (1685348671) — copy, then CAF decode.
+        self.assertIn("decodeCompressedToFloat32CAF", baker)
+        self.assertIn("openPlaybackSource", baker)
+        self.assertIn("Never reopen the live URL as a last resort", baker)
         htdemucs = (
             ROOT / "Packages/AutoMixV2/Sources/AudioEngineCore/StemSplit/HTDemucsMashupBake.swift"
         ).read_text()
@@ -259,6 +263,8 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("equal-power crossfade fallback", player)
         # After bake.fail, arm local materialized B (not hybrid stream).
         self.assertIn("localIncomingURL = inURLForBake ?? nextURL", player)
+        self.assertIn("openAutomixPlaybackFile", player)
+        self.assertIn("openPlaybackSource", player)
         self.assertIn("idleStreamingPlayer.volume", player)
 
         l10n = (ROOT / "Sonivo/SonivoL10n.swift").read_text()
