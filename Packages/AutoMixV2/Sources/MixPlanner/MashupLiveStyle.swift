@@ -287,7 +287,8 @@ public struct MashupLiveStyle: Sendable, Equatable {
         let bpm = Double(targetBPM > 30 ? targetBPM : 120)
         let bar = min(0.22, max(0.07, (4 * 60 / bpm) / max(4, blendSec)))
         let release = max(0, land - bar)
-        let bed: Float = 0.88
+        // Quiet instrumental bed — A@0.88 + B@0.82 stacked two songs and muddied LAND.
+        let bed: Float = 0.64
         let outgoing: Float
         if p <= release {
             outgoing = bed
@@ -296,17 +297,26 @@ public struct MashupLiveStyle: Sendable, Equatable {
         } else {
             outgoing = 0
         }
-        let vocal: Float = p >= land ? 1 : min(1, 0.82 + Float(p / 0.12) * 0.18)
-        return (outgoing, vocal)
+        let bloom = max(0.12, land - 0.10)
+        let vocal: Float
+        if p >= land {
+            vocal = 1
+        } else if p < bloom {
+            vocal = 0.38 + Float(p / bloom) * 0.22
+        } else {
+            let t = Float((p - bloom) / max(0.08, land - bloom))
+            vocal = 0.60 + 0.40 * t
+        }
+        return (outgoing, min(1, vocal))
     }
 
     /// How loud B sits under A during ONE VOCAL Automix (before LAND bloom).
-    /// Stems already leak; keep bed clearly under A (field 1055 bed 0.78 was too hot).
+    /// Keep the bed clearly under A — dual-loud mid-window dirties the mix.
     public var automixIncomingBedGain: Float {
-        if abs(pitchCentsB) >= 50 { return 0.48 }
-        if archetypeName == "echoFreeze" || archetypeName == "spaceReverb" { return 0.52 }
-        if oneVocalConflict { return 0.58 }
-        return 0.68
+        if abs(pitchCentsB) >= 50 { return 0.36 }
+        if archetypeName == "echoFreeze" || archetypeName == "spaceReverb" { return 0.40 }
+        if oneVocalConflict { return 0.44 }
+        return 0.52
     }
 
     /// Lab `oneBarDuetVolumes`: invite → vocal stack (A stays strong) → LAND A out.

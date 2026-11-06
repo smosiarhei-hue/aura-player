@@ -89,7 +89,8 @@ final class StreamBeatTap {
     }
 
     func clearItemMixFX() {
-        guard !itemMixFX.isEmpty else { return }
+        // Always reset taps — an empty mailbox used to skip Clear/Reset and left
+        // echo ringing on the next Automix track after LAND.
         itemMixFX.removeAll()
         for (_, probe) in probes {
             SonivoStreamProbeClearMixFX(probe.tap)

@@ -959,8 +959,10 @@ final class PlayerCore {
         delay.feedback = 0
         delay.lowPassCutoff = 14_000
         delay.wetDryMix = 0
+        delay.bypass = true
         reverb.loadFactoryPreset(.mediumHall)
         reverb.wetDryMix = 0
+        reverb.bypass = true
     }
 
     private func configureTimePitch(_ node: AVAudioUnitTimePitch) {
@@ -1212,32 +1214,43 @@ final class PlayerCore {
             }
         }
 
-        if neuralAutomix || liveAutomix {
+        if neuralAutomix {
+            // Stem CAF already carries StemMashupGlue wash. Live MixFX on top
+            // doubles the next vocal into echo/reverb and sounds muddy/stuttery.
+            clearLiveMixFX()
+            _ = stutterIntensity
+            return outgoingVolume
+        }
+
+        if liveAutomix {
             let land = activeMashupStyle.automixLandProgress
             let release = max(0, land - barFrac)
             let exit = progress <= release ? 0 : min(1, (progress - release) / max(0.08, barFrac * 1.45))
-            let entry = min(1, progress / 0.18)
+            let entry = min(1, progress / 0.22)
             let open = Float(entry * (1 - exit))
-            // DJ wash must be audible on dry decks; stem CAF already carries a lighter glue wash.
-            let echoBase: Float = neuralAutomix ? (30 + 28 * 0.45) : (40 + 36 * 0.55)
-            let plateBase: Float = neuralAutomix ? 36 : 52
-            echoWet = max(echoWet, echoBase * open)
-            reverbWet = max(reverbWet, plateBase * open)
-            // EchoFreeze / spaceReverb: hold a stronger plate through LAND.
+            // Dry-deck wash only — keep it light so B does not sound doubled.
+            var echoBase: Float = 16 + 18 * 0.40
+            var plateBase: Float = 18
             if activeMashupStyle.archetypeName == "echoFreeze"
                 || activeMashupStyle.archetypeName == "spaceReverb"
                 || activeMashupStyle.archetypeName == "tapeStop" {
-                echoWet = max(echoWet, (neuralAutomix ? 42 : 58) * open)
-                reverbWet = max(reverbWet, (neuralAutomix ? 44 : 60) * open)
+                echoBase = 22 + 16 * 0.40
+                plateBase = 24
             }
+            echoWet = max(echoWet, echoBase * open)
+            reverbWet = max(reverbWet, plateBase * open)
+            // Kill sends before LAND so the next song starts dry and clean.
+            let dryGate = Float(max(0, min(1, (land - progress) / max(0.06, barFrac))))
+            echoWet *= dryGate
+            reverbWet *= dryGate
         }
 
         let delaySec: Float = safeBPM > 0
-            ? Float(min(2, max(0.05, 60 / Double(safeBPM) * 0.75)))
-            : 0.375
+            ? Float(min(1.2, max(0.08, 60 / Double(safeBPM) * 0.5)))
+            : 0.35
         publishLiveMixFX(
             echoWet: echoWet / 75,
-            echoFeedback: min(1, max(0, echoFb / 100)),
+            echoFeedback: min(0.45, max(0, echoFb / 100)),
             delaySec: delaySec,
             reverbWet: reverbWet / 55
         )
@@ -1292,26 +1305,41 @@ final class PlayerCore {
         let idleDelay = activePlayer === playerA ? mixFXDelayB : mixFXDelayA
         let idlePlate = activePlayer === playerA ? mixFXPlateB : mixFXPlateA
         idleDelay.wetDryMix = 0
+        idleDelay.feedback = 0
+        idleDelay.bypass = true
         idlePlate.wetDryMix = 0
+        idlePlate.bypass = true
         if silent {
             outDelay.wetDryMix = 0
+            outDelay.feedback = 0
+            outDelay.bypass = true
             outPlate.wetDryMix = 0
+            outPlate.bypass = true
             return
         }
-        outDelay.delayTime = TimeInterval(min(2, max(0.05, delaySec)))
-        outDelay.feedback = min(85, max(0, echoFeedback * 70))
-        outDelay.lowPassCutoff = 12_500
-        // wetDryMix is 0…100 — map 0…1 MixFX into an audible DJ send.
-        outDelay.wetDryMix = min(70, max(0, echoWet * 62))
-        outPlate.wetDryMix = min(55, max(0, reverbWet * 48))
+        outDelay.bypass = false
+        outPlate.bypass = false
+        outDelay.delayTime = TimeInterval(min(1.2, max(0.08, delaySec)))
+        // Low feedback — high feedback slap doubles the vocal and feels like stutter.
+        outDelay.feedback = min(28, max(0, echoFeedback * 40))
+        outDelay.lowPassCutoff = 9_500
+        // wetDryMix is 0…100 — keep the send subtle so the next song stays clean.
+        outDelay.wetDryMix = min(28, max(0, echoWet * 36))
+        outPlate.wetDryMix = min(22, max(0, reverbWet * 28))
     }
 
     private func clearLiveMixFX() {
         StreamBeatTap.shared.clearItemMixFX()
-        mixFXDelayA.wetDryMix = 0
-        mixFXDelayB.wetDryMix = 0
-        mixFXPlateA.wetDryMix = 0
-        mixFXPlateB.wetDryMix = 0
+        // Bypass fully — wetDryMix=0 alone can leave a delay/plate tail on the next track.
+        for delay in [mixFXDelayA, mixFXDelayB] {
+            delay.wetDryMix = 0
+            delay.feedback = 0
+            delay.bypass = true
+        }
+        for plate in [mixFXPlateA, mixFXPlateB] {
+            plate.wetDryMix = 0
+            plate.bypass = true
+        }
     }
 
     private func seekOutgoingPhraseLoop() {
@@ -3400,8 +3428,8 @@ final class PlayerCore {
                     let stemPadSec = 8.0
                     let barSec = (4 * 60) / max(30, Double(style.targetBPM))
                     let loopSec = 0.0
-                    // Tempo-synced echo glued into the stem CAF (DJ wash, not Spatial Audio).
-                    let echoDelaySec = duetBake ? 0 : min(0.58, max(0.22, 60 / max(30, Double(style.targetBPM)) * 0.75))
+                    // Light tempo glue in the stem CAF only — live MixFX stays off on stems.
+                    let echoDelaySec = duetBake ? 0 : min(0.42, max(0.16, 60 / max(30, Double(style.targetBPM)) * 0.5))
                     let rateB = Double(style.rateB == 0 ? 1 : style.rateB)
                     // Bake in parallel with the cue wait. Waiting for HTDemucs first left
                     // 20s of silence after schedule, then a late abrupt land.
@@ -4147,6 +4175,8 @@ final class PlayerCore {
         let wasStream = isUsingStreamPlayer
 
         if mashupHardCut {
+            // Dry B immediately — leftover MixFX delay/plate made the next song double.
+            clearLiveMixFX()
             // Reliable LAND: keep B stem audible while dry B mounts — stopping both
             // decks first left a silence gap that field users heard as an abrupt cut.
             NotificationCenter.default.post(
@@ -4279,6 +4309,8 @@ final class PlayerCore {
                 suppressTrackFinishUntil = landGuardUntil
                 suppressAutomixSkipUntil = landGuardUntil
             }
+            // Second clear after deck swap — B must stay dry (no leftover echo on next song).
+            clearLiveMixFX()
             AutoMixDJEngine.shared.isPostMixActive = true
             SonivoDiagnostics.log(
                 "[AutoMix] LAND hard-cut → \(nextTrack.title) @ \(String(format: "%.1f", safePos))s sync=\(syncLocal)",
@@ -4542,6 +4574,7 @@ final class PlayerCore {
         if isTransitioning || transitionScheduled {
             AutoMixSessionLog.shared.event("transition.cancel")
         }
+        clearLiveMixFX()
         transitionRequestID = UUID()
         transitionPreparationTask?.cancel()
         transitionPreparationTask = nil

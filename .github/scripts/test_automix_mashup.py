@@ -353,8 +353,20 @@ class AutoMixMashupTests(unittest.TestCase):
         glue = (
             ROOT / "Packages/AutoMixV2/Sources/AudioEngineCore/StemMashupGlue.swift"
         ).read_text()
-        self.assertIn("echoWet: 0.24", glue)
-        self.assertIn("reverbWet: 0.40", glue)
+        # Stem wash must stay light — live MixFX is off on neural stems to avoid doubling.
+        self.assertIn("echoWet: 0.12", glue)
+        self.assertIn("reverbWet: 0.22", glue)
+        self.assertIn("echoWet: 0.04", glue)
+        player_fx = (ROOT / "Sonivo/playercore.swift").read_text()
+        self.assertIn("Stem CAF already carries StemMashupGlue wash", player_fx)
+        self.assertIn("leftover MixFX delay/plate made the next song double", player_fx)
+        self.assertIn("outDelay.wetDryMix = min(28", player_fx)
+        self.assertIn("delay.bypass = true", player_fx)
+        self.assertIn("B must stay dry", player_fx)
+        stream = (ROOT / "Sonivo/streambeat.swift").read_text()
+        self.assertIn("Always reset taps", stream)
+        clear_fx = stream.split("func clearItemMixFX()", 1)[1].split("func ", 1)[0]
+        self.assertNotIn("guard !itemMixFX.isEmpty else { return }", clear_fx)
 
         eq_env = (ROOT / "Sonivo/MixPlanRealtimeTransitionRunner.swift").read_text()
         stem_eq = eq_env.split("static func stemBakeOffsets", 1)[1].split(

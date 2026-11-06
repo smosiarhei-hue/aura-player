@@ -19,8 +19,8 @@ public enum StemMashupGlue {
             &left, &right,
             rate: rate,
             delaySec: delaySec,
-            echoWet: 0.24,
-            reverbWet: 0.40,
+            echoWet: 0.12,
+            reverbWet: 0.22,
             until: left.count
         )
     }
@@ -37,15 +37,16 @@ public enum StemMashupGlue {
         let until = min(max(0, untilFrame), left.count)
         guard until > 8 else { return }
         for i in 0..<until {
-            left[i] *= 1.12
-            right[i] *= 1.12
+            left[i] *= 1.08
+            right[i] *= 1.08
         }
+        // Keep the incoming vocal nearly dry — heavy wash doubled the next song.
         wash(
             &left, &right,
             rate: rate,
             delaySec: delaySec,
-            echoWet: 0.12,
-            reverbWet: 0.30,
+            echoWet: 0.04,
+            reverbWet: 0.12,
             until: until
         )
     }
