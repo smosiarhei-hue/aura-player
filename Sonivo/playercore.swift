@@ -91,53 +91,6 @@ nonisolated private final class RemoteFavoriteSnapshot: @unchecked Sendable {
     func read() -> Track? { lock.lock(); defer { lock.unlock() }; return track }
 }
 
-/// Resumes a mashup-cue wait from timer / cancel without MainActor isolation
-/// (nested types inside `@MainActor` PlayerCore inherit the actor and break
-/// `withTaskCancellationHandler` onCancel — Build IPA 1127).
-fileprivate final class MashupCueWaitBox: @unchecked Sendable {
-    private var resumed = false
-    private var timer: Timer?
-    private var continuation: CheckedContinuation<Bool, Never>?
-    private let lock = NSLock()
-
-    func setContinuation(_ continuation: CheckedContinuation<Bool, Never>) {
-        lock.lock()
-        self.continuation = continuation
-        lock.unlock()
-    }
-
-    func setTimer(_ timer: Timer) {
-        lock.lock()
-        self.timer = timer
-        lock.unlock()
-    }
-
-    nonisolated func finish(_ value: Bool) {
-        lock.lock()
-        let cont: CheckedContinuation<Bool, Never>?
-        let t: Timer?
-        if resumed {
-            cont = nil
-            t = nil
-        } else {
-            resumed = true
-            cont = continuation
-            continuation = nil
-            t = timer
-            timer = nil
-        }
-        lock.unlock()
-        if let t {
-            if Thread.isMainThread {
-                t.invalidate()
-            } else {
-                DispatchQueue.main.async { t.invalidate() }
-            }
-        }
-        cont?.resume(returning: value)
-    }
-}
-
 /// Armed Automix handoff waiting for the musical cue on A.
 /// Kept outside `PlayerCore` so the bake Task handle is not an @Observable field.
 fileprivate final class PendingMashupLiveArm: @unchecked Sendable {
@@ -2968,88 +2921,44 @@ final class PlayerCore {
     /// Park until the musical cue. Pause does not cancel the mix; the playhead
     /// just sits, and we continue when playback resumes.
     ///
-    /// Field 1077: a `Task.detached` sleep loop parked inside the prep Task never
-    /// resumed to bake.pending while TICK still advanced past the cue — use a
-    /// RunLoop timer (same path as session TICK) plus playhead-driven
-    /// `firePendingMashupLiveArmIfNeeded` so the mix starts at the cue.
+    /// Field 1077: playhead ticks own the live Automix start via
+    /// `firePendingMashupLiveArmIfNeeded`. This wait is only a backup and must
+    /// stay fully on MainActor (default-isolation module rejects nonisolated
+    /// wait boxes — Build IPA 1127/1128).
     private func waitUntilMashupCue(_ cue: Double) async -> Bool {
         let safeCue = cue.isFinite ? max(0, cue) : 0
-        let posAtStart = playbackProgress
-        let durAtStart = max(playbackDuration, duration)
-        if isTransitioning {
-            if posAtStart + 0.25 >= safeCue { return true }
-            if durAtStart > 1, posAtStart >= durAtStart - 0.35 { return true }
-            if durAtStart > 1, safeCue >= durAtStart - 0.75 { return true }
-            if incomingLaneReady { return true }
-        } else {
-            return false
-        }
-
         let waitStarted = Date()
+        let posAtStart = playbackProgress
         let deadline = waitStarted.addingTimeInterval(max(0.05, safeCue - posAtStart - 0.2))
-        let box = MashupCueWaitBox()
-
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-                box.setContinuation(continuation)
-                // 20 Hz — same RunLoop.common as Automix session TICK / transition fader.
-                let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
-                    guard let self else {
-                        box.finish(false)
-                        return
-                    }
-                    Task { @MainActor in
-                        // Prep cancel clears isTransitioning — do not trust
-                        // Task.isCancelled on this nested Timer Task.
-                        if !self.isTransitioning {
-                            box.finish(false)
-                            return
-                        }
-                        if self.incomingLaneReady {
-                            box.finish(true)
-                            return
-                        }
-                        let now = Date()
-                        let pos = self.playbackProgress
-                        let dur = max(self.playbackDuration, self.duration)
-                        if self.isPlaying || pos + 0.05 >= posAtStart {
-                            if pos + 0.25 >= safeCue {
-                                box.finish(true)
-                                return
-                            }
-                            if dur > 1, pos >= dur - 0.35 {
-                                box.finish(true)
-                                return
-                            }
-                            // Cue past the tail — start the mix now rather than wait for EOF.
-                            if dur > 1, safeCue >= dur - 0.75 {
-                                box.finish(true)
-                                return
-                            }
-                        }
-                        if self.isPlaying {
-                            let estimated = posAtStart + now.timeIntervalSince(waitStarted)
-                            if estimated + 0.25 >= safeCue {
-                                box.finish(true)
-                                return
-                            }
-                            if dur > 1, estimated >= dur - 0.35 {
-                                box.finish(true)
-                                return
-                            }
-                            if now >= deadline {
-                                box.finish(true)
-                                return
-                            }
-                        }
-                    }
-                }
-                box.setTimer(timer)
-                RunLoop.main.add(timer, forMode: .common)
+        while !Task.isCancelled {
+            if !isTransitioning { return false }
+            // Primary path may already have started the mix.
+            firePendingMashupLiveArmIfNeeded()
+            if incomingLaneReady { return true }
+            let now = Date()
+            let pos = playbackProgress
+            let dur = max(playbackDuration, duration)
+            if isPlaying || pos + 0.05 >= posAtStart {
+                if pos + 0.25 >= safeCue { return true }
+                if dur > 1, pos >= dur - 0.35 { return true }
+                // Cue past the tail — start the mix now rather than wait for EOF.
+                if dur > 1, safeCue >= dur - 0.75 { return true }
             }
-        } onCancel: {
-            box.finish(false)
+            if isPlaying {
+                let estimated = posAtStart + now.timeIntervalSince(waitStarted)
+                if estimated + 0.25 >= safeCue { return true }
+                if dur > 1, estimated >= dur - 0.35 { return true }
+                if now >= deadline { return true }
+            }
+            // Yield to the main run loop so stream observers / session TICK can
+            // advance progress and fire the pending live arm.
+            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    cont.resume()
+                }
+            }
         }
+        return false
     }
 
     /// Start live Automix the instant the playhead crosses the musical cue —
