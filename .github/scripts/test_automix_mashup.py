@@ -442,6 +442,42 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("mountLiveAutomixNativeDecks", player)
         self.assertIn("lane.native dual-deck", player)
         self.assertIn("Apple Automix live grammar", player)
+        # After stream→native flip, republish user EQ onto eqNodeA/B so Automix
+        # and the equalizer do not leave the audible path on a silent stream tap.
+        mount = player.split("private func mountLiveAutomixNativeDecks", 1)[1].split(
+            "private func beginLiveAutomixAtCue", 1
+        )[0]
+        self.assertIn("isUsingStreamPlayer = false", mount)
+        self.assertIn("applyEQ()", mount)
+        # Live mashup must cancel user-EQ ramps so Automix ticks and EQ sheet
+        # cannot fight over AVAudioUnitEQ bands.
+        mashup_eq = player.split("private func applyMashupTransitionEQ", 1)[1].split(
+            "@ObservationIgnored private var nativeEQRamp", 1
+        )[0]
+        self.assertIn("nativeEQRamp?.cancel()", mashup_eq)
+        # Hybrid mid/side bake must keep full Automix EQ (not light stem dissolve).
+        self.assertIn('HTDemucsMashupBake.lastBackend == "htdemucs"', mashup_eq)
+        self.assertIn("MashupLiveEQEnvelope.offsets(progress: progress, style: style)", mashup_eq)
+        apply_eq = player.split("private func applyEQ()", 1)[1].split(
+            "private func writeBands", 1
+        )[0]
+        self.assertIn("mashupLive", apply_eq)
+        self.assertIn("isTransitionActive && isMashupTransitionMode", apply_eq)
+        # Field 1130: provisional bpm0/rate=1 must upgrade when analysis lands.
+        self.assertIn("refreshMashupStyleFromAnalysis", player)
+        self.assertIn("style.upgrade", player)
+        self.assertIn("snapMashupRatesToActiveStyle", player)
+        self.assertIn('reason: "bake-start"', player)
+        self.assertIn('reason: "live-cue"', player)
+        self.assertIn('reason: "bake-upgrade"', player)
+        style = (
+            ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupLiveStyle.swift"
+        ).read_text()
+        automix_char = style.split("func applyAutomixPlaybackCharacter()", 1)[1].split(
+            "public var transitionFingerprint", 1
+        )[0]
+        self.assertIn("!isBeatmatched || targetBPM < 30", automix_char)
+        self.assertIn("hpfDepth = max(1.35, hpfDepth)", automix_char)
         # Cue wait stays on MainActor (DispatchQueue asyncAfter) — no nonisolated
         # wait box (Build IPA 1127/1128 default-isolation compile failures).
         self.assertIn("DispatchQueue.main.asyncAfter", player)

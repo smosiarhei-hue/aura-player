@@ -87,6 +87,45 @@ class PlaybackConflictFixesTests(unittest.TestCase):
         self.assertIn("Системное пространственное аудио", settings_content)
         self.assertIn("$player.spatialAudioEnabled", settings_content)
 
+    def test_more_menu_defers_sheets_so_menu_dismiss_does_not_bounce_them(self):
+        content = (self.repo_root / "Sonivo" / "PlayerScreenV2.swift").read_text(encoding="utf-8")
+        # Field report: ellipsis Menu → EQ/queue/settings flashed then bounced closed.
+        open_modal = content.split("private func openModal(_ modal: ActivePlayerModal", 1)[1].split(
+            "private func scheduleAfterMenuDismiss", 1
+        )[0]
+        self.assertIn("deferForMenu", open_modal)
+        self.assertIn("scheduleAfterMenuDismiss { activeModal = modal }", open_modal)
+        # Direct chrome buttons stay immediate; only Menu paths defer.
+        self.assertIn("activeModal = modal", open_modal)
+        deferral = content.split("private func scheduleAfterMenuDismiss", 1)[1].split(
+            "private func togglePlayback", 1
+        )[0]
+        self.assertIn("milliseconds(320)", deferral)
+        self.assertIn("guard !Task.isCancelled, isPresented", deferral)
+        self.assertIn("pendingModalTask?.cancel()", content)
+        more_menu = content.split("private var moreMenuButton:", 1)[1].split(
+            "private var artistSelectionSheet", 1
+        )[0]
+        self.assertIn('Label("Текст песни"', more_menu)
+        self.assertIn("scheduleAfterMenuDismiss", more_menu)
+        self.assertIn("openModal(.equalizer, deferForMenu: true)", more_menu)
+        # Leaving lyrics must not wipe EQ/queue sheets.
+        lyrics_change = content.split(".onChange(of: showLyricsMode)", 1)[1].split(
+            ".onReceive(NotificationCenter.default.publisher(for: .didUpdateCustomLyrics))", 1
+        )[0]
+        self.assertIn("if activeModal == .lyrics { activeModal = nil }", lyrics_change)
+        self.assertNotIn("activeModal = nil\n            }\n        }\n        .onReceive", lyrics_change)
+        # Nested NavigationStack around EQ/Settings caused sheet bounce.
+        sheet = content.split(".sheet(item: $activeModal)", 1)[1].split(
+            ".sheet(item: $selectedArtist)", 1
+        )[0]
+        self.assertIn("case .equalizer:\n                PlayerEQSheetView()", sheet)
+        self.assertIn("case .settings:\n                SettingsView()", sheet)
+        self.assertNotIn("NavigationStack {\n                switch modal", sheet)
+        self.assertIn("minimumDistance: 8", content.split("lyricsControlsDeck", 1)[1].split(
+            "artworkStage", 1
+        )[0])
+
 
 if __name__ == "__main__":
     unittest.main()

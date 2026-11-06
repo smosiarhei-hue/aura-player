@@ -46,6 +46,9 @@ struct PlayerScreenV2: View {
     @State private var currentArtworkImage: UIImage?
     @State private var cachedPhrases: [LyricPhrase] = []
     @State private var spectrum = SpectrumAnalyzer.shared
+    /// Menu dismissal races `.sheet` presentation; defer and cancel so EQ/queue/settings
+    /// do not open then bounce closed, and stale taps cannot land after the player closes.
+    @State private var pendingModalTask: Task<Void, Never>?
     private let tapSide: CGFloat = SN.tapTarget
 
     private var kickEnergy: CGFloat {
@@ -200,15 +203,24 @@ struct PlayerScreenV2: View {
         }
         .background(SN.bg.ignoresSafeArea())
         .sheet(item: $activeModal) { modal in
-            NavigationStack {
-                switch modal {
-                case .queue: QueueSheetView()
-                case .equalizer: PlayerEQSheetView()
-                case .sleepTimer: SleepTimerSheetView()
-                case .settings: SettingsView()
-                case .quality: PlayerQualityModalView(player: player, onDismiss: { activeModal = nil })
-                case .artistSelection: artistSelectionSheet
-                case .lyrics:
+            // One presentation owner per modal: never wrap views that already own a
+            // NavigationStack / presentationDetents (EQ, Settings, Quality) — nested
+            // stacks make sheets flash, snap detent, or leave chrome non-interactive.
+            switch modal {
+            case .queue:
+                NavigationStack { QueueSheetView() }
+            case .equalizer:
+                PlayerEQSheetView()
+            case .sleepTimer:
+                NavigationStack { SleepTimerSheetView() }
+            case .settings:
+                SettingsView()
+            case .quality:
+                PlayerQualityModalView(player: player, onDismiss: { activeModal = nil })
+            case .artistSelection:
+                NavigationStack { artistSelectionSheet }
+            case .lyrics:
+                NavigationStack {
                     LyricsView(lyrics: lyrics, isLoading: lyricsLoading, player: player)
                         .navigationTitle("Текст песни").navigationBarTitleDisplayMode(.inline)
                         .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Закрыть") { activeModal = nil } } }
@@ -273,7 +285,9 @@ struct PlayerScreenV2: View {
             if isEnabled { scheduleLyricsControlsHide() }
             coverDragX = 0
             if !isEnabled {
-                activeModal = nil
+                // Leaving lyrics must not bounce-dismiss EQ/queue/settings opened from ⋯.
+                pendingModalTask?.cancel()
+                if activeModal == .lyrics { activeModal = nil }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .didUpdateCustomLyrics)) { _ in
@@ -298,6 +312,8 @@ struct PlayerScreenV2: View {
             trackWaveTask?.cancel()
             lyricsControlsHideTask?.cancel()
             coverSwitchTask?.cancel()
+            pendingModalTask?.cancel()
+            pendingModalTask = nil
             coverSwitchGeneration = UUID()
             isCoverSwitching = false
             coverDragX = 0
@@ -513,7 +529,8 @@ struct PlayerScreenV2: View {
                 }
             }
         }
-        .simultaneousGesture(DragGesture(minimumDistance: 0)
+        // Keep-alive only — never steal taps from transport / queue / Menu (minDistance 0 did).
+        .simultaneousGesture(DragGesture(minimumDistance: 8)
             .onChanged { _ in lyricsControlsHideTask?.cancel() }
             .onEnded { _ in scheduleLyricsControlsHide() })
         .padding(.horizontal, 24)
@@ -1299,25 +1316,31 @@ struct PlayerScreenV2: View {
             }
 
             Section {
-                Button { withAnimation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion)) { showLyricsMode.toggle() } } label: {
+                Button {
+                    // Same Menu→chrome race as sheets: wait for the menu to dismiss first.
+                    scheduleAfterMenuDismiss {
+                        withAnimation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion)) {
+                            showLyricsMode.toggle()
+                        }
+                    }
+                } label: {
                     Label("Текст песни", systemImage: "quote.bubble")
                 }
 
-
-                Button { openModal(.queue) } label: {
+                Button { openModal(.queue, deferForMenu: true) } label: {
                     Label("Очередь", systemImage: "list.bullet")
                 }
-                Button { openModal(.equalizer) } label: {
+                Button { openModal(.equalizer, deferForMenu: true) } label: {
                     Label { Text("Эквалайзер") } icon: { SonivoEqualizerGlyph(size: 20).foregroundStyle(SN.accent) }
                 }
-                Button { openModal(.sleepTimer) } label: {
+                Button { openModal(.sleepTimer, deferForMenu: true) } label: {
                     if let timerText = player.sleepTimerFormatted {
                         Label("Таймер сна (\(timerText))", systemImage: "moon.zzz.fill")
                     } else {
                         Label("Таймер сна", systemImage: "moon.zzz")
                     }
                 }
-                Button { openModal(.settings) } label: {
+                Button { openModal(.settings, deferForMenu: true) } label: {
                     Label("Настройки", systemImage: "gearshape")
                 }
             }
@@ -1545,7 +1568,26 @@ struct PlayerScreenV2: View {
             }
         }
     }
-    private func openModal(_ modal: ActivePlayerModal) { Haptics.tap(.light); activeModal = modal }
+    private func openModal(_ modal: ActivePlayerModal, deferForMenu: Bool = false) {
+        Haptics.tap(.light)
+        if deferForMenu {
+            // Menu dismissal fights an immediate `.sheet` — match the artist-picker
+            // 320 ms handoff so EQ/queue/settings do not flash then bounce closed.
+            scheduleAfterMenuDismiss { activeModal = modal }
+        } else {
+            pendingModalTask?.cancel()
+            activeModal = modal
+        }
+    }
+
+    private func scheduleAfterMenuDismiss(_ action: @escaping @MainActor () -> Void) {
+        pendingModalTask?.cancel()
+        pendingModalTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(320))
+            guard !Task.isCancelled, isPresented else { return }
+            action()
+        }
+    }
     private func togglePlayback() { Haptics.tap(.medium); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.togglePlay() }
     private func previousTrack() {
         guard !isCoverSwitching else { return }

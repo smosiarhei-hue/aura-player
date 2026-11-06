@@ -1394,7 +1394,13 @@ final class PlayerCore {
                 resetTransitionEQOffsets()
                 return
             }
-            shaped = MashupLiveEQEnvelope.stemBakeOffsets(progress: progress, style: style)
+            // HTDemucs already carved instr/vocal — light dissolve only.
+            // Hybrid mid/side karaoke is soft: keep full Automix EQ or the mix
+            // collapses to a volume crossfade (field 1130).
+            let neuralStems = HTDemucsMashupBake.lastBackend == "htdemucs"
+            shaped = neuralStems
+                ? MashupLiveEQEnvelope.stemBakeOffsets(progress: progress, style: style)
+                : MashupLiveEQEnvelope.offsets(progress: progress, style: style)
         } else {
             shaped = MashupLiveEQEnvelope.offsets(progress: progress, style: style)
         }
@@ -1407,6 +1413,10 @@ final class PlayerCore {
             eqOffsetB = activeOff
             eqOffsetA = idleOff
         }
+
+        // Cancel any user-EQ ramp so Automix ticks and the EQ sheet cannot fight over bands.
+        nativeEQRamp?.cancel()
+        nativeEQRamp = nil
 
         let out = mashupComposedGains(offset: activeOff)
         let incoming = mashupComposedGains(offset: idleOff)
@@ -1460,6 +1470,14 @@ final class PlayerCore {
         }
         // Fixed headroom per curve; never modulate gain from the music envelope.
         outputLimiter.bypass = true
+        // During live Automix, never start a multi-hundred-ms ramp — mashup ticks own the bands.
+        let mashupLive = isTransitionActive && isMashupTransitionMode
+        if mashupLive {
+            for deck in nodes.indices {
+                writeBands(nodes[deck], targets[deck], globalGain: targetPreamp[deck])
+            }
+            return
+        }
         let bandChange = zip(starting, targets).map { zip($0, $1).map { abs($0 - $1) }.max() ?? 0 }.max() ?? 0
         let duration = stateChanged ? 350 : max(90, min(400, Int(bandChange / 24 * 1000)))
         let steps = max(8, duration / 10)
@@ -3026,6 +3044,9 @@ final class PlayerCore {
             activeStreamingPlayer.volume = 0
             idleStreamingPlayer.volume = 0
             isUsingStreamPlayer = false
+            // Stream MTAP EQ is no longer the audible path — republish the user curve
+            // onto native eqNodeA/B so Automix + EQ do not fight across backends.
+            applyEQ()
             AutoMixSessionLog.shared.event(
                 String(format: "lane.native dual-deck pos=%.1f cueB=%.1f", pos, cueB)
             )
@@ -3050,6 +3071,11 @@ final class PlayerCore {
         // silent equal-power fade that left volB=0 on the stream path (field 1129).
         mashupBakeFailedUseCrossfade = false
         AutoMixSessionLog.shared.event("bake.pending → live Automix at cue")
+        if let outgoing = currentTrack, let incoming = incomingTrack {
+            if refreshMashupStyleFromAnalysis(outgoing: outgoing, incoming: incoming, reason: "live-cue") {
+                snapMashupRatesToActiveStyle(progress: 0)
+            }
+        }
 
         do {
             try mountLiveAutomixNativeDecks(
@@ -3153,10 +3179,14 @@ final class PlayerCore {
                     self.mashupStemEntryFromStream = true
                 }
                 let enterP = min(1, heard / max(0.001, blend))
-                let rates = self.activeMashupStyle.playbackRates(progress: enterP)
-                self.applyMashupTimePitch(progress: enterP, outgoing: true, rate: rates.outgoing)
-                self.applyMashupTimePitch(progress: enterP, outgoing: false, rate: rates.incoming)
-                self.applyMashupTransitionEQ(progress: enterP)
+                if let outgoing = self.currentTrack, let incoming = self.incomingTrack {
+                    _ = self.refreshMashupStyleFromAnalysis(
+                        outgoing: outgoing,
+                        incoming: incoming,
+                        reason: "bake-upgrade"
+                    )
+                }
+                self.snapMashupRatesToActiveStyle(progress: enterP)
                 let mixClock = Date()
                 self.transitionStartTime = mixClock.addingTimeInterval(-heard)
                 self.anchorDate = mixClock
@@ -3166,7 +3196,13 @@ final class PlayerCore {
                 self.progress = heardA
                 self.startTimer()
                 AutoMixSessionLog.shared.event(
-                    String(format: "bake.upgrade lag=%.2fs", heard)
+                    String(
+                        format: "bake.upgrade lag=%.2fs bpm=%.0f rateA=%.3f rateB=%.3f",
+                        heard,
+                        self.activeMashupStyle.targetBPM,
+                        self.activeMashupStyle.rateA,
+                        self.activeMashupStyle.rateB
+                    )
                 )
             } catch {
                 MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
@@ -3311,6 +3347,76 @@ final class PlayerCore {
             style.applyAutomixPlaybackCharacter()
         }
         return style
+    }
+
+    /// Field 1130: schedule froze a provisional `bpm0/rate=1` style, so MIXING was
+    /// only a volume bed (heard as ordinary crossfade) even after BPM analysis landed.
+    /// Re-resolve whenever profiles/plan appear and snap live rates/pitch/EQ character.
+    @discardableResult
+    private func refreshMashupStyleFromAnalysis(
+        outgoing: Track,
+        incoming: Track,
+        reason: String,
+        preserveLand: Bool = true
+    ) -> Bool {
+        guard isMashupTransitionMode, isTransitioning else { return false }
+        let previous = activeMashupStyle
+        var style = resolveMashupStyle(
+            outgoing: outgoing,
+            incoming: incoming,
+            duration: duration > 1 ? duration : outgoing.duration
+        )
+        if preserveLand {
+            if previous.moodLand >= 0.55 {
+                style.moodLand = previous.moodLand
+            }
+            if previous.handoffAt >= 0.55 {
+                style.handoffAt = previous.handoffAt
+                style.vocalHoldUntil = max(style.vocalHoldUntil, previous.vocalHoldUntil)
+                style.vocalPocketUntil = max(style.vocalPocketUntil, previous.vocalPocketUntil)
+            }
+        }
+        let upgraded =
+            abs(style.rateA - previous.rateA) > 0.002
+            || abs(style.rateB - previous.rateB) > 0.002
+            || abs(style.pitchCentsB - previous.pitchCentsB) > 0.5
+            || (style.targetBPM > 30 && previous.targetBPM < 30)
+            || style.isBeatmatched != previous.isBeatmatched
+            || style.archetypeName != previous.archetypeName
+        guard upgraded else { return false }
+        activeMashupStyle = style
+        let analysis = AutoMixV2AnalysisRuntime.shared
+        if let plan = analysis.transitionPlan, plan.type != .none,
+           let outP = analysis.currentProfile, mashupProfileMatches(outP, track: outgoing),
+           let inP = analysis.nextProfile, mashupProfileMatches(inP, track: incoming) {
+            activeTransitionPlan = plan
+        }
+        AutoMixSessionLog.shared.event(
+            String(
+                format: "style.upgrade %@ bpm=%.0f rateA=%.3f rateB=%.3f pitchB=%.0f beat=%d fp=%@",
+                reason,
+                style.targetBPM,
+                style.rateA,
+                style.rateB,
+                style.pitchCentsB,
+                style.isBeatmatched ? 1 : 0,
+                style.transitionFingerprint
+            )
+        )
+        AutoMixDJEngine.shared.currentBPM = Double(style.targetBPM)
+        return true
+    }
+
+    private func snapMashupRatesToActiveStyle(progress: Double) {
+        guard isMashupTransitionMode else { return }
+        let rates = activeMashupStyle.playbackRates(progress: progress)
+        if isUsingStreamPlayer {
+            activeStreamingPlayer.rate = isPlaying ? rates.outgoing : 0
+            idleStreamingPlayer.rate = isPlaying ? rates.incoming : 0
+        }
+        applyMashupTimePitch(progress: progress, outgoing: true, rate: rates.outgoing)
+        applyMashupTimePitch(progress: progress, outgoing: false, rate: rates.incoming)
+        applyMashupTransitionEQ(progress: progress)
     }
 
     /// Prefer MixPlanner + neural/lyric mixOut/mixIn (Apple word/phrase land),
@@ -3686,8 +3792,15 @@ final class PlayerCore {
                 if shouldBakeStems,
                    let outURL = outURLForBake,
                    let inURL = inURLForBake {
+                    // Local A/B are ready — pick up BPM/plan if analysis finished during lead-in
+                    // so stem bake and live rates are not stuck at provisional rate=1.
+                    _ = self.refreshMashupStyleFromAnalysis(
+                        outgoing: current,
+                        incoming: nextTrack,
+                        reason: "bake-start"
+                    )
                     var blend = self.transitionDuration
-                    let style = self.activeMashupStyle
+                    var style = self.activeMashupStyle
                     let duetBake = self.transitionMode == .duet || style.isDuet
                     // Window is the musical outro, not the playhead while we prepare.
                     var cueA = max(0, musicalOutgoingCue ?? cueAForBake)
@@ -3702,6 +3815,14 @@ final class PlayerCore {
                             cueA = heard.cueA
                             cueB = heard.cueB
                             blend = heard.blend
+                        }
+                        // Energy retarget can finish after analysis — refresh again.
+                        if self.refreshMashupStyleFromAnalysis(
+                            outgoing: current,
+                            incoming: nextTrack,
+                            reason: "mood-retarget"
+                        ) {
+                            style = self.activeMashupStyle
                         }
                     }
                     let handoffStyle = self.activeMashupStyle
@@ -3965,10 +4086,12 @@ final class PlayerCore {
                         // Enter at bake-lag progress so Automix snaps locked rates/pitch
                         // (not the old accel-from-1.000 that field logs mistook for no beatmatch).
                         let enterP = min(1, bakeLag / max(0.001, blend))
-                        let rates = self.activeMashupStyle.playbackRates(progress: enterP)
-                        self.applyMashupTimePitch(progress: enterP, outgoing: true, rate: rates.outgoing)
-                        self.applyMashupTimePitch(progress: enterP, outgoing: false, rate: rates.incoming)
-                        self.applyMashupTransitionEQ(progress: enterP)
+                        _ = self.refreshMashupStyleFromAnalysis(
+                            outgoing: current,
+                            incoming: nextTrack,
+                            reason: "bake-ready"
+                        )
+                        self.snapMashupRatesToActiveStyle(progress: enterP)
                         AutoMixDJEngine.shared.markMashupProgress(enterP)
                         AutoMixDJEngine.shared.currentBPM = Double(self.activeMashupStyle.targetBPM)
                         let sepLabel = HTDemucsMashupBake.lastBackend == "htdemucs"
@@ -4205,6 +4328,14 @@ final class PlayerCore {
         AutoMixDJEngine.shared.transitionProgress = p
 
         let mashup = isMashupTransitionMode
+        // Analysis often finishes after schedule — promote provisional bpm0 → beatmatch mid-mix.
+        if mashup, !activeMashupStyle.isBeatmatched || activeMashupStyle.targetBPM < 30,
+           let outgoing = currentTrack, let incoming = incomingTrack,
+           Int(elapsed * 2) != Int((elapsed - 1.0 / 60.0) * 2) {
+            if refreshMashupStyleFromAnalysis(outgoing: outgoing, incoming: incoming, reason: "live-tick") {
+                snapMashupRatesToActiveStyle(progress: p)
+            }
+        }
         // Offline A+B master already has volumes + stems summed — keep unity gain.
         if mashupPlayingMasterBake {
             clearLiveMixFX()

@@ -28,6 +28,8 @@ struct MarqueeText: View {
                 .onChange(of: geo.size.width) { _, newWidth in containerWidth = newWidth; restartAnimation() }
         }
         .frame(height: height).onChange(of: text) { _, _ in restartAnimation() }
+        // Scrolling glyphs must not steal taps from Favorite / More beside the title.
+        .allowsHitTesting(false)
         .onDisappear { animationTask?.cancel() }.accessibilityLabel(text)
     }
     private func restartAnimation() {

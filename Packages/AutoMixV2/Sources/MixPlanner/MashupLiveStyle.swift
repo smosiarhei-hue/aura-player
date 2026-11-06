@@ -390,6 +390,13 @@ public struct MashupLiveStyle: Sendable, Equatable {
         hpfDepth = max(1.0, hpfDepth)
         bassDepth = max(1.05, bassDepth)
         bodyLift = max(0.85, min(1.05, bodyLift))
+        // Without BPM lock the ear only hears volume — deepen EQ carve so Automix
+        // still reads as ONE BASS / filter-out rather than a plain crossfade.
+        if !isBeatmatched || targetBPM < 30 {
+            hpfDepth = max(1.35, hpfDepth)
+            bassDepth = max(1.45, bassDepth)
+            vocalPocketDepth = max(1.15, vocalPocketDepth)
+        }
         if !reason.uppercased().contains("APPLE AUTOMIX") {
             reason = "APPLE AUTOMIX · A vocal × B beat · \(reason)"
         }
