@@ -28,14 +28,22 @@ public actor TrackAnalyzer {
         let destination = profileURL(for: id)
         if let data = try? Data(contentsOf: destination),
            let cached = try? decoder.decode(TrackProfile.self, from: data),
-           cached.profileVersion == TrackProfile.currentVersion {
+           cached.profileVersion == TrackProfile.currentVersion,
+           // Field 1145: a prior bpm0 write poisoned every Automix pair forever.
+           cached.bpm > 30 {
             return cached
         }
+        // Drop stale bpm0 / unreadable cache so the next analyze can replace it.
+        try? FileManager.default.removeItem(at: destination)
         let profile = try await Task.detached(priority: .utility) {
             try Task.checkCancellation()
             return try TrackAnalysisComputer.analyze(id: id, fileURL: fileURL)
         }.value
         try Task.checkCancellation()
+        // Never persist a dead profile — Automix would lock rate=1 / bpm0 for good.
+        guard profile.bpm > 30 else {
+            throw TrackAnalysisError.noAudioSamples
+        }
         let data = try encoder.encode(profile)
         try data.write(to: destination, options: .atomic)
         return profile
@@ -128,6 +136,7 @@ private enum TrackAnalysisComputer {
     }
 
     /// Private copy so BPM analysis never races the live Automix deck on the same path.
+    /// Never falls back to the live URL — that throws GenericObjCError 0 under playback.
     private static func preparePrivateAnalysisURL(_ fileURL: URL) throws -> (URL, URL?) {
         let ext = fileURL.pathExtension.isEmpty ? "audio" : fileURL.pathExtension
         let copy = FileManager.default.temporaryDirectory
@@ -135,14 +144,16 @@ private enum TrackAnalysisComputer {
         do {
             try FileManager.default.copyItem(at: fileURL, to: copy)
         } catch {
-            // Copy can race a still-writing download — fall through to live open.
-            return (fileURL, nil)
+            try? FileManager.default.removeItem(at: copy)
+            throw TrackAnalysisError.conversionFailed(
+                "Private analysis copy failed: \(error.localizedDescription)"
+            )
         }
-        if (try? openAnalysisFile(copy)) != nil {
-            return (copy, copy)
+        guard (try? openAnalysisFile(copy)) != nil else {
+            try? FileManager.default.removeItem(at: copy)
+            throw TrackAnalysisError.invalidAudioFormat
         }
-        try? FileManager.default.removeItem(at: copy)
-        return (fileURL, nil)
+        return (copy, copy)
     }
 
     private static func openAnalysisFile(_ url: URL) throws -> AVAudioFile {

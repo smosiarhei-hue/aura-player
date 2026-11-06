@@ -485,13 +485,20 @@ public struct MashupLiveStyle: Sendable, Equatable {
             ? max(-300, min(300, plan.pitchShiftCentsB))
             : max(-100, min(100, plan.pitchShiftCentsB))
         style.targetBPM = plan.tempoTargetBPM > 30 ? plan.tempoTargetBPM : 0
-        // Field 1047: some beatmatch plans arrived with rateA=rateB=1.000 while
-        // profiles still disagree on BPM — rebuild the grid from profiles.
+        // Field 1047/1145: energyWash/tapeStop and stale plans can ship rateA=rateB=1
+        // while both profiles have BPM — always rebuild the mutual grid when possible.
         if abs(style.rateA - 1) < 0.002, abs(style.rateB - 1) < 0.002,
            let a = outgoing, let b = incoming,
            a.bpm > 30, b.bpm > 30,
-           abs(a.bpm - b.bpm) / max(a.bpm, 1) > 0.015,
            let tempo = BeatGridSynchronization.tempoMatch(aBPM: a.bpm, bBPM: b.bpm) {
+            style.rateA = clampRate(tempo.rateA)
+            style.rateB = clampRate(tempo.rateB)
+            style.targetBPM = tempo.targetBPM
+            style.isBeatmatched = true
+        } else if style.targetBPM < 30,
+                  let a = outgoing, let b = incoming,
+                  a.bpm > 30, b.bpm > 30,
+                  let tempo = BeatGridSynchronization.tempoMatch(aBPM: a.bpm, bBPM: b.bpm) {
             style.rateA = clampRate(tempo.rateA)
             style.rateB = clampRate(tempo.rateB)
             style.targetBPM = tempo.targetBPM

@@ -2753,10 +2753,21 @@ final class PlayerCore {
     }
 
     /// Keep enough runway after LAND so B cannot instantly finish and freeze.
+    /// Snap onto B's downbeat grid when a profile exists (DJ LAND, not wall-clock).
     private func safeAutomixHandoffPosition(for track: Track, proposed: Double) -> Double {
         let dur = track.duration
         let cue = mashupIncomingCueSec > 0 ? mashupIncomingCueSec : incomingStartPosition
-        let raw = proposed.isFinite ? max(0, proposed) : max(0, cue)
+        var raw = proposed.isFinite ? max(0, proposed) : max(0, cue)
+        if let profile = AutoMixV2AnalysisRuntime.shared.nextProfile,
+           mashupProfileMatches(profile, track: track),
+           profile.bpm > 30,
+           !profile.downbeatsSec.isEmpty {
+            let halfBar = 120.0 / Double(profile.bpm) // 2 beats ≈ ½ bar in 4/4
+            if let snapped = profile.downbeatsSec.min(by: { abs($0 - raw) < abs($1 - raw) }),
+               abs(snapped - raw) <= halfBar {
+                raw = snapped
+            }
+        }
         guard dur.isFinite, dur > 2 else { return raw }
         let runway = min(12, max(6, dur * 0.08))
         let maxPos = max(0, dur - runway)
@@ -3426,6 +3437,9 @@ final class PlayerCore {
             || (style.targetBPM > 30 && previous.targetBPM < 30)
             || style.isBeatmatched != previous.isBeatmatched
             || style.archetypeName != previous.archetypeName
+            // Profiles arrived with same rates but real BPM — still need EQ/loop/grid.
+            || (style.targetBPM > 30 && previous.targetBPM > 30
+                && abs(style.targetBPM - previous.targetBPM) >= 0.5)
         guard upgraded else { return false }
         if style.targetBPM > 30, !style.isDuet {
             style.snapLandToBarGrid(blendSec: max(4, transitionDuration))
@@ -3686,6 +3700,22 @@ final class PlayerCore {
             source = "\(placed.mood)+mixOut"
         }
 
+        // Never bake B from t=0 when a profile grid exists — cueB=0 lands mid-phrase.
+        if cueB < 0.05,
+           let inTrack = incomingTrack,
+           let inP = analysis.nextProfile,
+           mashupProfileMatches(inP, track: inTrack),
+           inP.bpm > 30 {
+            let musical = BeatGridSynchronization.incomingCue(profile: inP, duration: blend)
+            cueB = MashupBlendScheduler.clampAutomixIncomingCue(
+                preferred: max(musical, inP.mixInSec),
+                incomingDur: incomingDur
+            )
+            if !source.contains("+grid") {
+                source = "\(source)+grid"
+            }
+        }
+
         let room = max(MashupBlendScheduler.minimumBlendSec, totalDur - cueA)
         blend = clampMashupBlendDuration(min(blend, room))
         if cueA < live - 0.2 {
@@ -3895,6 +3925,23 @@ final class PlayerCore {
                             reason: "mood-retarget"
                         ) {
                             style = self.activeMashupStyle
+                            self.snapMashupRatesToActiveStyle(progress: 0)
+                        }
+                        // Final grid guard: never stem-bake B from silence/t=0 when profile exists.
+                        if cueB < 0.05,
+                           let inP = AutoMixV2AnalysisRuntime.shared.nextProfile,
+                           self.mashupProfileMatches(inP, track: nextTrack),
+                           inP.bpm > 30 {
+                            let musical = BeatGridSynchronization.incomingCue(profile: inP, duration: blend)
+                            cueB = MashupBlendScheduler.clampAutomixIncomingCue(
+                                preferred: max(musical, inP.mixInSec),
+                                incomingDur: nextTrack.duration > 1 ? nextTrack.duration : inP.durationSec
+                            )
+                            self.incomingStartPosition = cueB
+                            self.mashupIncomingCueSec = cueB
+                            AutoMixSessionLog.shared.event(
+                                String(format: "cueB.grid snap=%.1f bpm=%.0f", cueB, inP.bpm)
+                            )
                         }
                     }
                     // Snap LAND onto a whole bar so B's vocal hits the kick grid.
@@ -3909,18 +3956,18 @@ final class PlayerCore {
                     // Tail must outlive bake lag. A short slice used to end, fire
                     // track-finish, and restart the next song from the top.
                     let stemPadSec = 8.0
-                    let bpmForGrid = Double(
-                        style.targetBPM > 30
-                            ? style.targetBPM
-                            : (self.activeTransitionPlan?.tempoTargetBPM ?? 120)
-                    )
-                    let barSec = (4 * 60) / max(30, bpmForGrid)
+                    // Phrase loops only on a real BPM grid — fake 120 Hz tiles off-kick.
+                    let resolvedBPM = style.targetBPM > 30
+                        ? style.targetBPM
+                        : (self.activeTransitionPlan?.tempoTargetBPM ?? 0)
+                    let bpmForGrid = Double(resolvedBPM > 30 ? resolvedBPM : 0)
+                    let barSec = bpmForGrid > 30 ? (4 * 60) / bpmForGrid : 0
                     // Seamless-loop / plan loopBarsA → tile that many bars into the
                     // instrumental bed so vocals sit on a repeating groove (not a one-shot outro).
                     let planLoopBars = self.activeTransitionPlan.map { max(0, $0.loopBarsA) } ?? 0
-                    // Field 1137: bpm0 skipped loops entirely. Always tile a 2-bar
-                    // instrumental phrase for Automix (120 BPM grid when unknown).
-                    let loopBars = duetBake ? 0 : max(2, planLoopBars > 0 ? planLoopBars : 2)
+                    let loopBars = (!duetBake && bpmForGrid > 30)
+                        ? max(2, planLoopBars > 0 ? planLoopBars : 2)
+                        : 0
                     let loopSec = Double(loopBars) * barSec
                     if loopSec > 0.25 {
                         self.liveLoopNextBar = Double(loopBars)
@@ -3928,6 +3975,8 @@ final class PlayerCore {
                         AutoMixSessionLog.shared.event(
                             String(format: "loop.bake bars=%d sec=%.2f bpm=%.0f", loopBars, loopSec, bpmForGrid)
                         )
+                    } else if !duetBake {
+                        AutoMixSessionLog.shared.event("loop.bake skip=noBPM")
                     }
                     // Baked stems stay dry — live applyAutomixLandMixFX opens the
                     // tempo echo into LAND. Baking wet under live A+B sounds like "troits".

@@ -533,19 +533,23 @@ public enum MixPlanner {
         )
     }
 
-    // 4. Архетип Energy Wash: мягкий HPF кроссфейд при отсутствии ровной сетки (поп/рок)
+    // 4. Архетип Energy Wash: мягкий HPF кроссфейд — всё равно lock BPM when tempos exist.
     private static func planEnergyWash(from a: TrackProfile, to b: TrackProfile,
                                        settings: MixSettings,
                                        harmonic: HarmonicMatch) -> TransitionPlan {
         let bars = 8.0
-        let targetBPM: Float = a.bpm > 30 ? a.bpm : (b.bpm > 30 ? b.bpm : 120.0)
+        let tempo = BeatGridSynchronization.tempoMatch(aBPM: a.bpm, bBPM: b.bpm)
+        let targetBPM: Float = tempo?.targetBPM
+            ?? (a.bpm > 30 ? a.bpm : (b.bpm > 30 ? b.bpm : 120.0))
+        let rateA: Float = tempo.map { max(0.84, min(1.16, $0.rateA)) } ?? 1.0
+        let rateB: Float = tempo.map { max(0.84, min(1.16, $0.rateB)) } ?? 1.0
         let seconds = BeatGridSynchronization.duration(bars: bars, bpm: targetBPM)
         let rawOut = BeatGridSynchronization.outgoingCue(profile: a, duration: seconds)
         let out = a.downbeatsSec.min(by: { abs($0 - rawOut) < abs($1 - rawOut) }) ?? rawOut
         let rawIncoming = BeatGridSynchronization.incomingCue(profile: b, duration: seconds)
         let incoming = b.downbeatsSec.min(by: { abs($0 - rawIncoming) < abs($1 - rawIncoming) }) ?? rawIncoming
 
-        let events: [FxEvent] = [
+        var events: [FxEvent] = [
             FxEvent(target: .a, kind: .volume, startBar: 2.0, endBar: bars,
                     fromValue: 0, toValue: -60, curve: .sCurve),
             FxEvent(target: .b, kind: .volume, startBar: 0, endBar: 6.0,
@@ -557,25 +561,37 @@ public enum MixPlanner {
             FxEvent(target: .a, kind: .echoOut, startBar: 3.0, endBar: bars,
                     fromValue: 0, toValue: 50, curve: .sCurve, param: 45)
         ]
+        if tempo != nil {
+            events.append(
+                FxEvent(target: .b, kind: .rateRamp, startBar: max(0, bars - 1.5), endBar: bars,
+                        fromValue: rateB, toValue: 1, curve: .sCurve)
+            )
+        }
 
         return TransitionPlan(
             type: .filterEcho,
             archetype: .energyWash,
             aOutStartSec: out, bInStartSec: incoming, bars: bars,
-            tempoTargetBPM: targetBPM, rateA: 1.0, rateB: 1.0,
+            tempoTargetBPM: targetBPM, rateA: rateA, rateB: rateB,
             pitchShiftCentsB: harmonic.pitchShiftCents,
             gainOffsetBdB: normalizationGain(profile: b, settings: settings),
             loopBarsA: 0, fx: events,
-            reason: "Energy Wash (\(harmonic.description))"
+            reason: tempo != nil
+                ? "Energy Wash + beatmatch (\(Int(round(targetBPM))) BPM, \(harmonic.description))"
+                : "Energy Wash (\(harmonic.description))"
         )
     }
 
-    // 5. Архетип Tape Stop: виниловое замедление (колесо диджея) перед сильной долей
+    // 5. Архетип Tape Stop: виниловое замедление — B still locks to the shared grid.
     private static func planTapeStop(from a: TrackProfile, to b: TrackProfile,
                                      bars: Double = 4.0,
                                      settings: MixSettings,
                                      harmonic: HarmonicMatch) -> TransitionPlan {
-        let targetBPM: Float = b.bpm > 30 ? b.bpm : (a.bpm > 30 ? a.bpm : 120.0)
+        let tempo = BeatGridSynchronization.tempoMatch(aBPM: a.bpm, bBPM: b.bpm)
+        let targetBPM: Float = tempo?.targetBPM
+            ?? (b.bpm > 30 ? b.bpm : (a.bpm > 30 ? a.bpm : 120.0))
+        let rateA: Float = tempo.map { max(0.84, min(1.16, $0.rateA)) } ?? 1.0
+        let rateB: Float = tempo.map { max(0.84, min(1.16, $0.rateB)) } ?? 1.0
         let seconds = BeatGridSynchronization.duration(bars: bars, bpm: targetBPM)
         let rawOut = BeatGridSynchronization.outgoingCue(profile: a, duration: seconds)
         let out = a.downbeatsSec.min(by: { abs($0 - rawOut) < abs($1 - rawOut) }) ?? rawOut
@@ -599,11 +615,13 @@ public enum MixPlanner {
             type: .hardCut,
             archetype: .tapeStop,
             aOutStartSec: out, bInStartSec: incoming, bars: bars,
-            tempoTargetBPM: targetBPM, rateA: 1.0, rateB: 1.0,
+            tempoTargetBPM: targetBPM, rateA: rateA, rateB: rateB,
             pitchShiftCentsB: 0,
             gainOffsetBdB: normalizationGain(profile: b, settings: settings),
             loopBarsA: 0, fx: events,
-            reason: "Tape Stop (\(Int(round(a.bpm))) -> \(Int(round(b.bpm))) BPM, \(harmonic.description))"
+            reason: tempo != nil
+                ? "Tape Stop + beatmatch (\(Int(round(targetBPM))) BPM, \(harmonic.description))"
+                : "Tape Stop (\(Int(round(a.bpm))) -> \(Int(round(b.bpm))) BPM, \(harmonic.description))"
         )
     }
 

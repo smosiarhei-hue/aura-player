@@ -538,14 +538,27 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("Ease into stem decks", player)
         self.assertIn("mashupStemEntryDuration = fromStream ? 0.42 : (priorIn > 0.05 ? 0.55 : 0.32)", player)
         self.assertIn("stemFrom:", player)
-        # Field 1137: always tile phrase loops even when BPM is still provisional.
+        # Field 1145+: phrase loops only on a real BPM grid (fake 120 tiles off-kick).
         self.assertIn("loop.bake bars=", player)
-        self.assertNotIn("style.targetBPM > 30\n                        && (planLoopBars", player)
+        self.assertIn("loop.bake skip=noBPM", player)
+        self.assertIn("cueB.grid snap=", player)
+        self.assertIn("source)+grid", player)
         style_src = (
             ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupLiveStyle.swift"
         ).read_text()
         self.assertIn("Lead-in from unity so bake.ready", style_src)
         self.assertIn("snapLandToBarGrid", style_src)
+        # Always rebuild tempoMatch when plan rates are flat but profiles have BPM.
+        self.assertIn("always rebuild the mutual grid when possible", style_src)
+        planner = (ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MixPlanner.swift").read_text()
+        self.assertIn("Energy Wash + beatmatch", planner)
+        self.assertIn("Tape Stop + beatmatch", planner)
+        analyzer_bpm = (
+            ROOT / "Packages/AutoMixV2/Sources/TrackAnalysis/TrackAnalyzer.swift"
+        ).read_text()
+        self.assertIn("cached.bpm > 30", analyzer_bpm)
+        self.assertIn("Never persist a dead profile", analyzer_bpm)
+        self.assertIn("Never falls back to the live URL", analyzer_bpm)
         # Field: vocal on BPM + loops — bake tiles phrase, live seeks when not baked.
         self.assertIn("loop.bake bars=", player)
         self.assertIn("loop.phrase bar=", player)
