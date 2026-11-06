@@ -25,17 +25,23 @@ class NowPlayingCoverAppleMusicTests(unittest.TestCase):
     def test_cover_is_edge_to_edge_with_soft_dissolve(self):
         self.assertIn("reservedFirstScreenControls", PLAYER)
         self.assertIn("totalHeight - reservedFirstScreenControls", PLAYER)
+        # Square full-bleed: height capped at width — never taller (that upscales art).
+        geometry = PLAYER.split("GeometryReader { geo in", 1)[1].split(
+            "ZStack(alignment: .top)", 1
+        )[0]
+        self.assertIn("min(\n                    totalWidth,\n                    totalHeight - reservedFirstScreenControls\n                )", geometry)
+        self.assertNotIn("totalHeight * 0.58", geometry)
+        self.assertNotIn("max(totalWidth,", geometry)
         self.assertIn("coverAccentWash", PLAYER)
         self.assertIn("minHeight: totalHeight", PLAYER)
         self.assertIn("VStack(spacing: 8)", PLAYER)
-        # Full-bleed — not the temporary inset-square experiment.
-        self.assertNotIn("totalWidth - 40", PLAYER.split("GeometryReader { geo in", 1)[1].split("ZStack(alignment: .top)", 1)[0])
         self.assertNotIn("coverUpwardBlurMask", PLAYER)
         stage = PLAYER.split("private func artworkStage(", 1)[1].split(
             "private func inlineLyricsStage", 1
         )[0]
         self.assertIn(".mask(coverDissolveMask)", stage)
-        self.assertIn(".frame(width: width, height: height)", stage)
+        self.assertIn("let coverSide = min(width, height)", stage)
+        self.assertIn(".frame(width: coverSide, height: coverSide)", stage)
         self.assertNotIn("RoundedRectangle(cornerRadius: 18", stage)
         self.assertNotIn(".shadow(", stage)
         self.assertIn("playScale = player.isPlaying ? 1.0 : 0.97", stage)

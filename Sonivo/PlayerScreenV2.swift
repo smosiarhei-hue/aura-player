@@ -119,13 +119,12 @@ struct PlayerScreenV2: View {
                 let totalHeight = geo.size.height
                 let totalWidth = geo.size.width
                 let topInset = max(safeTop, 12)
-                // Apple Music: edge-to-edge cover (horizontal crop / aspect-fill),
-                // soft native dissolve into the frosted wash below. Height fills the
-                // top band so controls sit on the blurred continuation of the art.
+                // Apple Music: edge-to-edge square. Height == width — never taller.
+                // A taller stage made scaledToFill upscale the art and soften it.
                 let reservedFirstScreenControls: CGFloat = 298 + max(safeBottom, 8)
                 let standardArtworkStageHeight = min(
-                    totalHeight * 0.58,
-                    max(totalWidth, totalHeight - reservedFirstScreenControls)
+                    totalWidth,
+                    totalHeight - reservedFirstScreenControls
                 )
 
                 ZStack(alignment: .top) {
@@ -549,8 +548,8 @@ struct PlayerScreenV2: View {
     }
 
     private func artworkStage(width: CGFloat, height: CGFloat) -> some View {
-        // Full-bleed top art: aspect-fill + horizontal crop, soft dissolve into
-        // the native UIBlur atmosphere below (Apple Music Now Playing).
+        // Full-bleed square (width×width). Horizontal crop only — no scaleEffect > 1.
+        let coverSide = min(width, height)
         let tiltAngle = reduceMotion ? 0.0 : Double(coverDragX / width) * 3.0
         let dragScale = reduceMotion ? 1.0 : (1.0 - min(0.04, abs(coverDragX / width) * 0.04))
         let playScale = player.isPlaying ? 1.0 : 0.97
@@ -562,12 +561,12 @@ struct PlayerScreenV2: View {
                     .frame(width: width, height: height)
             } else {
                 artwork
-                    .frame(width: width, height: height)
+                    .frame(width: coverSide, height: coverSide)
                     .clipped()
                     .mask(coverDissolveMask)
             }
         }
-        .frame(width: width, height: height)
+        .frame(width: width, height: height, alignment: .top)
         .scaleEffect(playScale * dragScale)
         .offset(x: coverDragX)
         .rotationEffect(.degrees(tiltAngle))
