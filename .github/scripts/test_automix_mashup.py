@@ -462,7 +462,7 @@ class AutoMixMashupTests(unittest.TestCase):
             "private func writeBands", 1
         )[0]
         self.assertIn("mashupLive", apply_eq)
-        self.assertIn("isTransitionActive && isMashupTransitionMode", apply_eq)
+        self.assertIn("isTransitioning && isMashupTransitionMode", apply_eq)
         # Field 1130: provisional bpm0/rate=1 must upgrade when analysis lands.
         self.assertIn("refreshMashupStyleFromAnalysis", player)
         self.assertIn("style.upgrade", player)

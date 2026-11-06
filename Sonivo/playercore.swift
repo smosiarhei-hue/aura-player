@@ -1471,7 +1471,7 @@ final class PlayerCore {
         // Fixed headroom per curve; never modulate gain from the music envelope.
         outputLimiter.bypass = true
         // During live Automix, never start a multi-hundred-ms ramp — mashup ticks own the bands.
-        let mashupLive = isTransitionActive && isMashupTransitionMode
+        let mashupLive = isTransitioning && isMashupTransitionMode
         if mashupLive {
             for deck in nodes.indices {
                 writeBands(nodes[deck], targets[deck], globalGain: targetPreamp[deck])
