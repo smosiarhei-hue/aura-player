@@ -1205,19 +1205,15 @@ final class PlayerCore {
         applyEQ()
     }
 
-    /// Live FX sampler. Apple Automix is beatmatch + EQ carve + volumes — not a
-    /// delay/reverb soup. Echo/plate triples A + B + wet and wrecks quality.
+    /// Live FX sampler. Apple Automix stays dry mid-window (EQ + volumes only),
+    /// then opens a short tempo-synced echo-out into LAND — DJ tail, not delay soup.
     @discardableResult
     private func applyLivePlanFX(progress: Double, elapsed: Double, outgoingVolume: Float) -> Float {
         let isAppleAutomix = transitionMode == .automix
             && isMashupTransitionMode
             && !activeMashupStyle.isDuet
         if isAppleAutomix {
-            // Grammar: time-stretch / beat lock + ONE BASS/ONE VOCAL EQ + quiet bed → LAND.
-            // Producers analyzing Apple Automix hear a high-cut and tiny air — we do that
-            // with MashupLiveEQEnvelope, never with slap delay that doubles the vocal.
-            clearLiveMixFX()
-            return outgoingVolume
+            return applyAutomixLandMixFX(progress: progress, outgoingVolume: outgoingVolume)
         }
 
         let plan = activeTransitionPlan
@@ -1267,6 +1263,50 @@ final class PlayerCore {
         )
 
         _ = stutterIntensity
+        return outgoingVolume
+    }
+
+    /// Automix LAND FX: ½-beat echo + light plate only in the final phrase.
+    /// Mid-window stays dry so A vocal × B bed does not triple with wet.
+    @discardableResult
+    private func applyAutomixLandMixFX(progress: Double, outgoingVolume: Float) -> Float {
+        let style = activeMashupStyle
+        let land = style.automixLandProgress
+        let p = min(1, max(0, progress))
+        // Open echo ~1 bar before LAND so the outgoing vocal/instrumental trails
+        // into B on the grid (Apple Automix "air"/echo release), then clear after.
+        let bpm = style.targetBPM > 30
+            ? style.targetBPM
+            : (activeTransitionPlan?.tempoTargetBPM ?? 120)
+        let safeBPM = bpm > 30 ? bpm : 120
+        let barFrac = min(0.22, max(0.10, (4 * 60 / Double(safeBPM)) / max(4, transitionDuration)))
+        let echoStart = max(0.45, land - barFrac * 1.35)
+        let echoPeak = land
+        let echoEnd = min(1.0, land + barFrac * 0.55)
+
+        var amount: Float = 0
+        if p >= echoStart, p < echoPeak {
+            amount = MashupLiveStyle.smoothstep((p - echoStart) / max(0.04, echoPeak - echoStart))
+        } else if p >= echoPeak, p < echoEnd {
+            amount = 1 - MashupLiveStyle.smoothstep((p - echoPeak) / max(0.04, echoEnd - echoPeak))
+        }
+
+        if amount < 0.02 {
+            clearLiveMixFX()
+            return outgoingVolume
+        }
+
+        // Half-beat delay — tempo-locked, low feedback so it trails instead of doubling.
+        let delaySec = Float(min(0.75, max(0.12, 60 / Double(safeBPM) * 0.5)))
+        let echoWet = 0.10 + 0.16 * amount
+        let echoFb = 0.12 + 0.10 * amount
+        let plate = 0.06 + 0.10 * amount
+        publishLiveMixFX(
+            echoWet: echoWet,
+            echoFeedback: echoFb,
+            delaySec: delaySec,
+            reverbWet: plate
+        )
         return outgoingVolume
     }
 
@@ -3887,8 +3927,8 @@ final class PlayerCore {
                             String(format: "loop.bake bars=%d sec=%.2f bpm=%.0f", loopBars, loopSec, bpmForGrid)
                         )
                     }
-                    // Apple Automix stems stay dry (carve only). Baked echo/plate
-                    // is a third layer under live A+B and is what users hear as "troits".
+                    // Baked stems stay dry — live applyAutomixLandMixFX opens the
+                    // tempo echo into LAND. Baking wet under live A+B sounds like "troits".
                     let echoDelaySec = 0.0
                     let rateB = Double(style.rateB == 0 ? 1 : style.rateB)
                     // Bake in parallel with the cue wait. Waiting for HTDemucs first left

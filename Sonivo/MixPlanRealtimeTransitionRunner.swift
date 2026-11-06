@@ -159,33 +159,43 @@ enum MashupLiveEQEnvelope {
         return (out, inn)
     }
 
-    /// Stem-bake path: beds are already instrumental + vocal, so avoid ONE-VOCAL
-    /// bass-kill. Still run a light HPF / air dissolve into LAND so the DJ filter
-    /// is audible (flat EQ left stem Automix feeling like a plain overlay).
+    /// Stem-bake path: beds are already instrumental + vocal. Still run an audible
+    /// ONE BASS handoff + HPF dissolve into LAND (flat EQ left Automix feeling like
+    /// a karaoke overlay with no DJ filter / bass swap).
     static func stemBakeOffsets(
         progress: Double,
         style: MashupLiveStyle
     ) -> (outgoing: [Float], incoming: [Float]) {
         let p = min(1, max(0, progress))
         let land = min(0.94, max(0.58, style.automixLandProgress))
-        let hpfD = max(0.7, style.hpfDepth)
+        let bassAt = min(0.42, max(0.08, style.bassSwapAt))
+        let hpfD = max(0.85, style.hpfDepth)
+        let bassD = max(0.9, style.bassDepth)
         var out = Array(repeating: Float(0), count: bandCount)
         var inn = Array(repeating: Float(0), count: bandCount)
-        let exit = ramp(p, from: max(0.08, land - 0.18), to: land)
-        let bed = 1 - ramp(p, from: land - 0.04, to: min(1, land + 0.05))
+        // ONE BASS: cut A low end early so B kick owns the floor through the mashup.
+        let bassKill = ramp(p, from: 0.0, to: bassAt)
+        // HPF / air dissolve across the last ~1.5 bars into LAND.
+        let exit = ramp(p, from: max(0.12, land - 0.24), to: land)
+        let bed = 1 - ramp(p, from: land - 0.05, to: min(1, land + 0.06))
+        // Soft LPF invite on B early, then open to dry vocal at LAND.
+        let invite = 1 - ramp(p, from: 0.02, to: max(0.18, bassAt + 0.08))
         if out.count >= 10 {
-            out[0] = clampDB(-3.5 * exit)
-            out[1] = clampDB(-2.5 * exit)
-            out[3] = clampDB(-5.5 * hpfD * exit)
-            out[4] = clampDB(-7.5 * hpfD * exit)
-            out[8] = clampDB(-4 * exit)
-            out[9] = clampDB(-3 * exit)
+            out[0] = clampDB(-11 * bassD * bassKill - 4 * exit)
+            out[1] = clampDB(-9 * bassD * bassKill - 3 * exit)
+            out[2] = clampDB(-5 * bassD * bassKill)
+            out[3] = clampDB(-7.5 * hpfD * exit)
+            out[4] = clampDB(-9.5 * hpfD * exit)
+            out[8] = clampDB(-5.5 * exit)
+            out[9] = clampDB(-4.5 * exit)
         }
         if inn.count >= 10 {
-            inn[0] = clampDB(1.4 * bed)
-            inn[1] = clampDB(0.9 * bed)
-            inn[5] = clampDB(1.1 * bed)
-            inn[6] = clampDB(1.4 * bed)
+            inn[0] = clampDB(2.2 * bassD * bed)
+            inn[1] = clampDB(1.5 * bassD * bed)
+            inn[5] = clampDB(1.2 * bed)
+            inn[6] = clampDB(1.6 * bed)
+            inn[8] = clampDB(-7 * invite)
+            inn[9] = clampDB(-9 * invite)
         }
         return (out, inn)
     }
@@ -202,23 +212,23 @@ enum MashupLiveEQEnvelope {
     ) -> (outgoing: [Float], incoming: [Float]) {
         var out = shaped.outgoing
         var inn = shaped.incoming
-        // A: kill bass + HPF dissolve into LAND (must be audible as a DJ filter-out).
-        let outVocal = 1 - ramp(p, from: handoff, to: min(1, handoff + 0.08))
-        let outFilter = ramp(p, from: max(0.05, handoff - 0.22), to: handoff)
+        // A: ONE BASS early + HPF dissolve into LAND (audible DJ filter-out, not a cut).
+        let outVocal = 1 - ramp(p, from: max(0.05, handoff - 0.10), to: min(1, handoff + 0.12))
+        let outFilter = ramp(p, from: max(0.05, handoff - 0.28), to: handoff)
         if out.count >= 10 {
             out[0] = clampDB(min(out[0], -13 * ramp(p, from: 0, to: max(0.08, bassAt))))
             out[1] = clampDB(min(out[1], -11 * ramp(p, from: 0, to: max(0.08, bassAt))))
             out[2] = clampDB(min(out[2], -7 * ramp(p, from: 0.02, to: max(0.12, bassAt))))
-            out[3] = clampDB(min(out[3], -6 * hpfD * outFilter))
-            out[4] = clampDB(min(out[4], -8 * hpfD * outFilter))
+            out[3] = clampDB(min(out[3], -7 * hpfD * outFilter))
+            out[4] = clampDB(min(out[4], -9.5 * hpfD * outFilter))
             out[5] = clampDB(max(out[5], 1.3 * outVocal))
             out[6] = clampDB(max(out[6], 1.7 * outVocal))
             out[7] = clampDB(max(out[7], 1.1 * outVocal))
-            out[8] = clampDB(min(out[8], -5 * hpfD * (1 - outVocal)))
-            out[9] = clampDB(min(out[9], -4 * hpfD * (1 - outVocal)))
+            out[8] = clampDB(min(out[8], -6 * hpfD * (1 - outVocal)))
+            out[9] = clampDB(min(out[9], -5 * hpfD * (1 - outVocal)))
         }
-        // B: deeper instrumental carve until LAND, then release dry vocal.
-        let inInstr = 1 - ramp(p, from: handoff - 0.02, to: min(0.99, handoff + 0.05))
+        // B: instrumental carve until LAND, then release dry vocal across ~a bar.
+        let inInstr = 1 - ramp(p, from: handoff - 0.08, to: min(0.99, handoff + 0.08))
         let inLeadFloor = clampDB(-13 * max(1.0, pocketD) * inInstr)
         if inn.count >= 10 {
             inn[0] = clampDB(max(inn[0], 1.6 * inInstr))

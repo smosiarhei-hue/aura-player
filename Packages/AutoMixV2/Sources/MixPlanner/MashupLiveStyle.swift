@@ -292,16 +292,17 @@ public struct MashupLiveStyle: Sendable, Equatable {
         return (min(1, max(0, outgoing)), min(1, max(0, incoming)))
     }
 
-    /// Stem AutoMix: the ending instrumental is the bed under the next vocal.
-    /// The vocal is already up, so the cut does not leave a hole. The bed
-    /// leaves across one bar and the vocal is the dry song.
+    /// Stem AutoMix: ending instrumental bed under the next vocal.
+    /// Bed releases across ~1.5 bars with a soft LAND taper; vocal blooms on
+    /// the phrase (not a karaoke hard-cut of A vocal → paste B vocal).
     public func stemNeuralVolumes(progress: Double, blendSec: Double) -> (outgoing: Float, incoming: Float) {
         if isDuet { return duetVolumes(progress: progress) }
         let p = min(1, max(0, progress))
         let land = automixLandProgress
         let bpm = Double(targetBPM > 30 ? targetBPM : 120)
         let bar = min(0.22, max(0.07, (4 * 60 / bpm) / max(4, blendSec)))
-        let release = max(0, land - bar)
+        // Longer release so echo-out / HPF have room before A hits zero.
+        let release = max(0, land - bar * 1.45)
         // Quiet instrumental bed — A@0.88 + B@0.82 stacked two songs and muddied LAND.
         let bed: Float = 0.64
         // Lead-in from unity so bake.ready does not thump 1.0 → 0.64 (field 1133).
@@ -313,22 +314,24 @@ public struct MashupLiveStyle: Sendable, Equatable {
         } else if p <= release {
             outgoing = bed
         } else if p < land {
-            outgoing = Float(max(0, Double(bed) * (1 - (p - release) / max(0.08, bar))))
+            let t = Self.smoothstep((p - release) / max(0.08, land - release))
+            outgoing = bed * (1 - t)
         } else {
             outgoing = 0
         }
-        let bloom = max(0.12, land - 0.10)
+        // Vocal: soft bed → phrase bloom → unity at LAND (smoothstep, no cliff).
+        let bloom = max(0.18, land - 0.16)
         let vocal: Float
         if p >= land {
             vocal = 1
         } else if p < lead {
-            // Soft B bed under the unity→bed lead-in — no sudden 0.38 slap.
-            vocal = 0.18 + Float(Self.smoothstep(p / lead)) * 0.20
+            vocal = 0.18 + Self.smoothstep(p / lead) * 0.18
         } else if p < bloom {
-            vocal = 0.38 + Float(p / bloom) * 0.22
+            let t = Self.smoothstep((p - lead) / max(0.08, bloom - lead))
+            vocal = 0.36 + 0.22 * t
         } else {
-            let t = Float((p - bloom) / max(0.08, land - bloom))
-            vocal = 0.60 + 0.40 * t
+            let t = Self.smoothstep((p - bloom) / max(0.08, land - bloom))
+            vocal = 0.58 + 0.42 * t
         }
         return (outgoing, min(1, vocal))
     }
@@ -415,9 +418,13 @@ public struct MashupLiveStyle: Sendable, Equatable {
         // Without BPM lock the ear only hears volume — deepen EQ carve so Automix
         // still reads as ONE BASS / filter-out rather than a plain crossfade.
         if !isBeatmatched || targetBPM < 30 {
-            hpfDepth = max(1.35, hpfDepth)
-            bassDepth = max(1.45, bassDepth)
-            vocalPocketDepth = max(1.15, vocalPocketDepth)
+            hpfDepth = max(1.45, hpfDepth)
+            bassDepth = max(1.55, bassDepth)
+            vocalPocketDepth = max(1.20, vocalPocketDepth)
+        } else {
+            // Beatmatched pairs still need an audible filter ride into LAND.
+            hpfDepth = max(1.15, hpfDepth)
+            bassDepth = max(1.15, bassDepth)
         }
         if !reason.uppercased().contains("APPLE AUTOMIX") {
             reason = "APPLE AUTOMIX · A vocal × B beat · \(reason)"

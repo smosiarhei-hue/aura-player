@@ -362,9 +362,10 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("loopSec > 0.25", glue)
         self.assertIn("echoWet: 0.03", glue)
         player_fx = (ROOT / "Sonivo/playercore.swift").read_text()
-        # Apple Automix: beatmatch + EQ — never delay/reverb soup (that triples A+B+wet).
+        # Apple Automix: dry mid-window + LAND tempo echo (½-beat), baked stems stay dry.
         self.assertIn("isAppleAutomix", player_fx)
-        self.assertIn("never with slap delay that doubles the vocal", player_fx)
+        self.assertIn("applyAutomixLandMixFX", player_fx)
+        self.assertIn("Half-beat delay", player_fx)
         self.assertIn("let echoDelaySec = 0.0", player_fx)
         self.assertIn("node.overlap = 32.0", player_fx)
         self.assertIn("delay.bypass = true", player_fx)
@@ -384,8 +385,15 @@ class AutoMixMashupTests(unittest.TestCase):
         )[0]
         self.assertIn("automixLandProgress", stem_eq)
         self.assertIn("hpfD", stem_eq)
+        self.assertIn("bassKill", stem_eq)
+        self.assertIn("invite", stem_eq)
         self.assertIn("out[3]", stem_eq)
         self.assertIn("out[4]", stem_eq)
+        style_vol = (
+            ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupLiveStyle.swift"
+        ).read_text()
+        self.assertIn("bar * 1.45", style_vol)
+        self.assertIn("not a karaoke hard-cut", style_vol)
 
     def test_session_log_does_not_reenter_playercore_during_shared_init(self):
         """Launch SIGTRAP: mode didSet → AutoMixSessionLog.snapshot → PlayerCore.shared
@@ -542,7 +550,8 @@ class AutoMixMashupTests(unittest.TestCase):
             "public var transitionFingerprint", 1
         )[0]
         self.assertIn("!isBeatmatched || targetBPM < 30", automix_char)
-        self.assertIn("hpfDepth = max(1.35, hpfDepth)", automix_char)
+        self.assertIn("hpfDepth = max(1.45, hpfDepth)", automix_char)
+        self.assertIn("hpfDepth = max(1.15, hpfDepth)", automix_char)
         # Cue wait stays on MainActor (DispatchQueue asyncAfter) — no nonisolated
         # wait box (Build IPA 1127/1128 default-isolation compile failures).
         self.assertIn("DispatchQueue.main.asyncAfter", player)
