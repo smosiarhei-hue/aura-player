@@ -119,13 +119,12 @@ struct PlayerScreenV2: View {
                 let totalHeight = geo.size.height
                 let totalWidth = geo.size.width
                 let topInset = max(safeTop, 12)
-                // Reserve a tight first-screen control cluster at the bottom; cover fills the rest.
-                // (Spacer inside ScrollView does not expand — sizing the art is what pins the panel low.)
-                let reservedFirstScreenControls: CGFloat = 298 + max(safeBottom, 8)
-                let standardArtworkStageHeight = min(
-                    totalHeight * 0.68,
-                    max(totalWidth * 0.90, totalHeight - reservedFirstScreenControls)
-                )
+                // Standard inset square — never stretch the sharp cover edge-to-edge
+                // (that upscales and softens the art). Atmosphere + upward edge blur
+                // carry the native wash; the square stays at native display size.
+                let coverSide = min(totalWidth - 40, totalHeight * 0.44)
+                // Extra stage height so the blurred twin can bleed upward without clipping.
+                let standardArtworkStageHeight = coverSide + min(56, coverSide * 0.18)
 
                 ZStack(alignment: .top) {
                     // Blurred/color-matched wash under the dissolve — continues the cover.
@@ -548,7 +547,8 @@ struct PlayerScreenV2: View {
     }
 
     private func artworkStage(width: CGFloat, height: CGFloat) -> some View {
-        // Apple Music: edge-to-edge top art, soft dissolve into the frosted wash below.
+        // Standard square cover. Blurred twin bleeds upward — no upscale of the sharp art.
+        let coverSide = min(width - 40, height)
         let tiltAngle = reduceMotion ? 0.0 : Double(coverDragX / width) * 3.0
         let dragScale = reduceMotion ? 1.0 : (1.0 - min(0.04, abs(coverDragX / width) * 0.04))
         let playScale = player.isPlaying ? 1.0 : 0.97
@@ -559,10 +559,21 @@ struct PlayerScreenV2: View {
                 Color.clear
                     .frame(width: width, height: height)
             } else {
+                // Native upward edge wash: same-size blurred twin, offset up — never scaleEffect.
                 artwork
-                    .frame(width: width, height: height)
+                    .frame(width: coverSide, height: coverSide)
                     .clipped()
-                    .mask(coverDissolveMask)
+                    .blur(radius: 28)
+                    .opacity(0.62)
+                    .mask(coverUpwardBlurMask)
+                    .offset(y: -(coverSide * 0.14))
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+
+                artwork
+                    .frame(width: coverSide, height: coverSide)
+                    .clipped()
+                    .mask(coverUpwardEdgeMask)
             }
         }
         .frame(width: width, height: height)
@@ -591,14 +602,27 @@ struct PlayerScreenV2: View {
         .animation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion), value: showLyricsMode)
     }
 
-    /// Soft vertical dissolve so the sharp cover melts into the blurred atmosphere.
-    private var coverDissolveMask: some View {
+    /// Softens the top edge of the sharp cover into the atmosphere above.
+    private var coverUpwardEdgeMask: some View {
         LinearGradient(
             stops: [
-                .init(color: .black, location: 0.00),
-                .init(color: .black, location: 0.58),
-                .init(color: .black.opacity(0.82), location: 0.72),
-                .init(color: .black.opacity(0.35), location: 0.88),
+                .init(color: .clear, location: 0.00),
+                .init(color: .black.opacity(0.55), location: 0.08),
+                .init(color: .black, location: 0.18),
+                .init(color: .black, location: 1.00)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+
+    /// Blurred twin visibility — strongest above the cover, fades down into the sharp square.
+    private var coverUpwardBlurMask: some View {
+        LinearGradient(
+            stops: [
+                .init(color: .black.opacity(0.85), location: 0.00),
+                .init(color: .black.opacity(0.55), location: 0.35),
+                .init(color: .black.opacity(0.18), location: 0.62),
                 .init(color: .clear, location: 1.00)
             ],
             startPoint: .top,
@@ -682,7 +706,6 @@ struct PlayerScreenV2: View {
                     .scaledToFill()
                     .frame(width: side, height: side)
                     .blur(radius: 24)
-                    .scaleEffect(1.15)
                     .opacity(0.55)
                     .clipped()
 
@@ -830,16 +853,17 @@ struct PlayerScreenV2: View {
 
     @ViewBuilder
     private func coverLayer(for track: Track?, preferredImage: UIImage?) -> some View {
-        // Fill the square like Apple Music — letterboxing cropped the art and looked like a card.
+        // Fill the standard square. High interpolation — no soft upscale from forced full-bleed.
         Group {
             if let preferredImage {
                 Image(uiImage: preferredImage)
                     .resizable()
+                    .interpolation(.high)
                     .scaledToFill()
             } else if let raw = track?.coverURL, let url = URL(string: raw) {
                 AsyncImage(url: url) { phase in
                     if let image = phase.image {
-                        image.resizable().scaledToFill()
+                        image.resizable().interpolation(.high).scaledToFill()
                     } else {
                         fallbackArtwork
                     }
@@ -856,7 +880,9 @@ struct PlayerScreenV2: View {
 
     private func lowerDeck(safeAreaBottom: CGFloat) -> some View {
         VStack(spacing: 0) {
-            // Compact cluster — art height already pins this block to the bottom.
+            // Standard cover leaves room above — Spacer drops the compact cluster low.
+            Spacer(minLength: 12)
+
             VStack(spacing: 6) {
                 metadataRow
                 PlayerTimelineSection(player: player) { centerStatusLabel }
@@ -2560,9 +2586,9 @@ struct PlayerQualityModalView: View {
 
 // MARK: - Now Playing atmosphere (Apple Music style)
 //
-// Full-bleed color-matched wash behind the dissolving sharp cover. Top stays
-// relatively clear so the sharp art reads; bottom darkens into frosted controls.
-// https://developer.apple.com/documentation/swiftui/applying-liquid-glass-to-custom-views
+// Full-bleed UIBlur wash behind the standard inset cover. Soft top fog lets the
+// upward edge blur of the sharp square melt into the atmosphere; bottom darkens
+// into frosted controls.
 
 private struct NowPlayingAtmosphere: UIViewRepresentable {
     var primary: UIImage?
@@ -2615,9 +2641,9 @@ private final class NowPlayingAtmosphereView: UIView {
         dimView.isUserInteractionEnabled = false
         dimView.backgroundColor = UIColor.black.withAlphaComponent(0.14)
         addSubview(dimView)
-        // Keep the upper third less fogged — sharp cover owns that region.
+        // Soft top fog — inset cover melts upward into the native blur, not a hard cut.
         topClear.colors = [
-            UIColor.black.withAlphaComponent(0.22).cgColor,
+            UIColor.black.withAlphaComponent(0.12).cgColor,
             UIColor.clear.cgColor
         ]
         topClear.locations = [0.0, 1.0]
