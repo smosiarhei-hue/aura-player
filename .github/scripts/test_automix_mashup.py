@@ -432,8 +432,18 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("addingTimeInterval(-bakeLag)", player)
         self.assertNotIn("mashupBakeOutgoingBaseCue = cueA + bakeLag", player)
         self.assertIn("mashupBakeOutgoingBaseCue + elapsed", player)
-        # Bake 22s before the cue. Wall-clock lag used to start the slice 13s in.
-        self.assertIn("automixBakeLeadSec: Double = 22", player)
+        # Bake well before the cue (field 1148: 22s still left bake.upgrade mid-mix).
+        self.assertIn("automixBakeLeadSec: Double = 34", player)
+        self.assertIn("automixBakeGraceSec: Double = 3.5", player)
+        self.assertIn("bake.hold grace=", player)
+        self.assertIn("bake.late-drop lag=", player)
+        # LAND: match dry to stem level — equal-power from 0 bumped correlated decks.
+        self.assertIn("dry.volume = from", player)
+        land_glide = player.split("private func startLandGlide(", 1)[1].split(
+            "private var isMashupTransitionMode", 1
+        )[0]
+        self.assertIn("from + (1 - from) * Float(ease)", land_glide)
+        self.assertNotIn("Float(sin(ease * Double.pi * 0.5))", land_glide)
         # Bake lead must not light Mixing chrome. Field: "Сведение" shimmered from
         # cue−22s (~32s) while audio was still A alone; isTransitionActive flips
         # only for plain crossfade at schedule, mashup waits for markMashupProgress.

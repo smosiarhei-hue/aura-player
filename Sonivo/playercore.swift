@@ -106,6 +106,8 @@ fileprivate final class PendingMashupLiveArm: @unchecked Sendable {
     let bakeTask: Task<(outgoing: URL, incoming: URL), Error>
     var prearmed: Bool
     var fired = false
+    /// Field 1148: one-shot log while we hold past the cue for stem bake.
+    var graceLogged = false
 
     init(
         cueA: Double,
@@ -2949,7 +2951,11 @@ final class PlayerCore {
         return scheduled + Double(playerTime.sampleTime) / rate
     }
 
-    /// Short equal-power overlap so the dry song replaces the baked vocal in place.
+    /// Short overlap so the dry song replaces the baked vocal in place.
+    /// Field 1148: stem and dry are the same musical content at LAND — equal-power
+    /// (sin/cos from 0) summed to a loudness bump (volA+volB ≫ 1). Match dry to
+    /// the live stem level immediately, then only fade the stem out while dry
+    /// eases the rest of the way to unity.
     private func startLandGlide(
         stem: AVAudioPlayerNode,
         dry: AVAudioPlayerNode,
@@ -2959,23 +2965,22 @@ final class PlayerCore {
         landOverlapTimer?.invalidate()
         let token = UUID()
         landOverlapToken = token
-        let overlap = min(1.05, max(0.55, requested))
+        let overlap = min(0.72, max(0.32, requested))
         let started = Date()
         // Player nodes are not Sendable. Remember which deck is the bake and
         // touch both only on the main actor, or Swift 6 rejects the timer hop.
         guard dry !== stem else { return }
         let stemIsA = stem === playerA
-        let from = min(1, max(0.2, stemFrom))
-        // First sample keeps the audible stem level — no 0.77→1.0 slap.
+        let from = min(1, max(0.35, stemFrom))
+        // First sample: dry already matches the audible stem — no hole, no bump.
         stem.volume = from
-        dry.volume = 0
-        let timer = Timer(timeInterval: overlap / 28.0, repeats: true) { [weak self] timer in
+        dry.volume = from
+        let timer = Timer(timeInterval: overlap / 24.0, repeats: true) { [weak self] timer in
             let elapsed = -started.timeIntervalSinceNow
             let u = min(1, max(0, elapsed / overlap))
             let ease = u * u * (3 - 2 * u)
-            let stemGain = from * Float(cos(ease * Double.pi * 0.5))
-            // Rise dry toward full while stem falls from its live level.
-            let dryGain = Float(sin(ease * Double.pi * 0.5))
+            let stemGain = from * Float(1 - ease)
+            let dryGain = from + (1 - from) * Float(ease)
             let done = u >= 1
             if done { timer.invalidate() }
             Task { @MainActor [weak self] in
@@ -3042,8 +3047,10 @@ final class PlayerCore {
         return false
     }
 
-    /// Start live Automix the instant the playhead crosses the musical cue —
+    /// Start live Automix when the playhead crosses the musical cue —
     /// independent of whether the prep Task's wait/bakeProbe woke up (field 1077).
+    /// Field 1148: hold a short grace past the cue so stem bake can win before
+    /// we open live Automix (and later bake.upgrade mid-MIXING).
     private func firePendingMashupLiveArmIfNeeded() {
         guard let arm = pendingMashupLiveArm, !arm.fired else { return }
         guard isTransitioning, !incomingLaneReady else { return }
@@ -3055,10 +3062,26 @@ final class PlayerCore {
 
         let pos = playbackProgress
         let dur = max(playbackDuration, duration)
+        let nearEOF = dur > 1 && pos >= dur - 0.5
         let atCue = pos + 0.15 >= arm.cueA
-            || (dur > 1 && pos >= dur - 0.35)
+            || nearEOF
             || (dur > 1 && arm.cueA >= dur - 0.75)
         guard atCue else { return }
+
+        // Keep A solo briefly past the cue while HTDemucs finishes — prep Task's
+        // bakeProbe shares this window. Cap grace on short blends so LAND still
+        // has runway. Skip the hold when A is about to EOF.
+        let pastCue = pos - arm.cueA
+        let grace = min(Self.automixBakeGraceSec, max(1.2, arm.blend * 0.4))
+        if !nearEOF, pastCue < grace - 0.05 {
+            if !arm.graceLogged {
+                arm.graceLogged = true
+                AutoMixSessionLog.shared.event(
+                    String(format: "bake.hold grace=%.1fs at cue", grace)
+                )
+            }
+            return
+        }
 
         arm.fired = true
         beginLiveAutomixAtCue(arm: arm)
@@ -3210,7 +3233,9 @@ final class PlayerCore {
             let live = self.playbackProgress
             let heard = max(0, live - cueA)
             let landAt = blend * handoff
-            if heard >= landAt - 1.5 {
+            // Field 1148: once live Automix has been audible for >~1.2s, swapping
+            // onto stems mid-window (volA 1.00→0.64) is worse than finishing live.
+            if heard >= 1.2 || heard >= landAt - 1.5 {
                 MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
                 AutoMixSessionLog.shared.event(
                     String(format: "bake.late-drop lag=%.2fs", heard)
@@ -3619,7 +3644,13 @@ final class PlayerCore {
     /// Materialize + separate this long before the musical cue. Baking at the
     /// cue spent the whole outro on HTDemucs, then the slice ended and the
     /// next song hard-cut a few seconds in.
-    private static let automixBakeLeadSec: Double = 22
+    /// Start HTDemucs ~this many seconds before the musical cue. Field 1148:
+    /// 22s still left bake.pending + bake.upgrade mid-MIXING (lag≈4s) — stems
+    /// need ~26–30s on device, so lead past that window.
+    private static let automixBakeLeadSec: Double = 34
+    /// After the cue, keep A solo this long while bake finishes before falling
+    /// back to live Automix (avoids mid-window stem swap stutter).
+    private static let automixBakeGraceSec: Double = 3.5
 
     /// Read the outro and the intro, then refine blend length / LAND from mood.
     /// Never replace MixPlanner / neural lyric mixOut·mixIn with a raw energy entry —
@@ -4109,8 +4140,12 @@ final class PlayerCore {
                                 cont.resume(returning: value)
                             }
                         }
+                        // Field 1148: share the post-cue grace with firePending so
+                        // HTDemucs can still win before we fall back to live Automix.
+                        let holdSec = min(Self.automixBakeGraceSec, max(1.2, blend * 0.4))
+                        let graceMs = Int(holdSec * 1000)
                         Task.detached {
-                            try? await Task.sleep(for: .milliseconds(80))
+                            try? await Task.sleep(for: .milliseconds(graceMs))
                             finish(.pending)
                         }
                         Task.detached {
