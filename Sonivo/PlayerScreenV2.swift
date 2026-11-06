@@ -1319,9 +1319,7 @@ struct PlayerScreenV2: View {
                 Button {
                     // Same Menu→chrome race as sheets: wait for the menu to dismiss first.
                     scheduleAfterMenuDismiss {
-                        withAnimation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion)) {
-                            showLyricsMode.toggle()
-                        }
+                        withAnimation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion)) { showLyricsMode.toggle() }
                     }
                 } label: {
                     Label("Текст песни", systemImage: "quote.bubble")
