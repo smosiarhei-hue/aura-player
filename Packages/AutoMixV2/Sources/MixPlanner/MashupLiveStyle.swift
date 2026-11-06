@@ -290,8 +290,13 @@ public struct MashupLiveStyle: Sendable, Equatable {
         let release = max(0, land - bar)
         // Quiet instrumental bed — A@0.88 + B@0.82 stacked two songs and muddied LAND.
         let bed: Float = 0.64
+        // Lead-in from unity so bake.ready does not thump 1.0 → 0.64 (field 1133).
+        let lead = min(0.12, max(0.06, bar))
         let outgoing: Float
-        if p <= release {
+        if p < lead {
+            let t = Self.smoothstep(p / lead)
+            outgoing = 1 - (1 - bed) * t
+        } else if p <= release {
             outgoing = bed
         } else if p < land {
             outgoing = Float(max(0, Double(bed) * (1 - (p - release) / max(0.08, bar))))
@@ -302,6 +307,9 @@ public struct MashupLiveStyle: Sendable, Equatable {
         let vocal: Float
         if p >= land {
             vocal = 1
+        } else if p < lead {
+            // Soft B bed under the unity→bed lead-in — no sudden 0.38 slap.
+            vocal = 0.18 + Float(Self.smoothstep(p / lead)) * 0.20
         } else if p < bloom {
             vocal = 0.38 + Float(p / bloom) * 0.22
         } else {

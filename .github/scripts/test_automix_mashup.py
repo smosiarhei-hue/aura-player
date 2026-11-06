@@ -493,6 +493,19 @@ class AutoMixMashupTests(unittest.TestCase):
         analysis = (ROOT / "Sonivo/AutoMixV2AnalysisRuntime.swift").read_text()
         self.assertIn("func ingestBakeLocalPair", analysis)
         self.assertIn("Анализ bake-local пары", analysis)
+        # Field 1133: LAND must not kill the audible B stem before the dry glide,
+        # and bake.ready must ease into stem beds (not snap 1.0 → 0.64).
+        land_fn = player.split("private func landAutomixOntoDryB", 1)[1].split(
+            "private func renderedFileSeconds", 1
+        )[0]
+        self.assertIn("never zero the other deck here", land_fn)
+        self.assertNotIn("playerB.volume = 0", land_fn)
+        self.assertIn("Ease into stem decks", player)
+        self.assertIn("mashupStemEntryDuration = fromStream ? 0.38 : 0.28", player)
+        style_src = (
+            ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupLiveStyle.swift"
+        ).read_text()
+        self.assertIn("Lead-in from unity so bake.ready", style_src)
         style = (
             ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupLiveStyle.swift"
         ).read_text()
