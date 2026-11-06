@@ -279,7 +279,7 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("mashupBakeFailedUseCrossfade", player)
         self.assertIn("live Automix FX fallback", player)
         self.assertIn("bake.pending → live Automix at cue", player)
-        self.assertIn("liveAutomix", player)
+        self.assertIn("isAppleAutomix", player)
         # After bake.fail, arm local materialized B (not hybrid stream).
         self.assertIn("localIncomingURL = inURLForBake ?? nextURL", player)
         self.assertIn("openAutomixPlaybackFile", player)
@@ -353,16 +353,20 @@ class AutoMixMashupTests(unittest.TestCase):
         glue = (
             ROOT / "Packages/AutoMixV2/Sources/AudioEngineCore/StemMashupGlue.swift"
         ).read_text()
-        # Stem wash must stay light — live MixFX is off on neural stems to avoid doubling.
-        self.assertIn("echoWet: 0.12", glue)
-        self.assertIn("reverbWet: 0.22", glue)
-        self.assertIn("echoWet: 0.04", glue)
+        self.assertIn("echoWet: 0.10", glue)
+        self.assertIn("echoWet: 0.03", glue)
         player_fx = (ROOT / "Sonivo/playercore.swift").read_text()
-        self.assertIn("Stem CAF already carries StemMashupGlue wash", player_fx)
-        self.assertIn("leftover MixFX delay/plate made the next song double", player_fx)
-        self.assertIn("outDelay.wetDryMix = min(28", player_fx)
+        # Apple Automix: beatmatch + EQ — never delay/reverb soup (that triples A+B+wet).
+        self.assertIn("isAppleAutomix", player_fx)
+        self.assertIn("never with slap delay that doubles the vocal", player_fx)
+        self.assertIn("let echoDelaySec = 0.0", player_fx)
+        self.assertIn("node.overlap = 32.0", player_fx)
         self.assertIn("delay.bypass = true", player_fx)
         self.assertIn("B must stay dry", player_fx)
+        style = (
+            ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupLiveStyle.swift"
+        ).read_text()
+        self.assertIn("max(0.92, min(1.08, rate))", style)
         stream = (ROOT / "Sonivo/streambeat.swift").read_text()
         self.assertIn("Always reset taps", stream)
         clear_fx = stream.split("func clearItemMixFX()", 1)[1].split("func ", 1)[0]

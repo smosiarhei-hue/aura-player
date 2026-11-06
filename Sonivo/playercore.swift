@@ -968,7 +968,8 @@ final class PlayerCore {
     private func configureTimePitch(_ node: AVAudioUnitTimePitch) {
         node.rate = 1.0
         node.pitch = 0
-        node.overlap = 8.0
+        // Max overlap → fewer TimePitch artefacts (Apple Automix quality path).
+        node.overlap = 32.0
     }
 
     private func loadSettings() {
@@ -1151,20 +1152,24 @@ final class PlayerCore {
         applyEQ()
     }
 
-    /// Sample MixPlanner `plan.fx` on the live path (echo / reverb / stutter / loop).
-    /// Automix always keeps a lab-style echo+plate wash, even when the stem bake
-    /// failed and we are riding dry decks — clearing FX made those mixes feel empty.
+    /// Live FX sampler. Apple Automix is beatmatch + EQ carve + volumes — not a
+    /// delay/reverb soup. Echo/plate triples A + B + wet and wrecks quality.
     @discardableResult
     private func applyLivePlanFX(progress: Double, elapsed: Double, outgoingVolume: Float) -> Float {
-        let neuralAutomix = mashupBakeRealIncomingURL != nil
-            && !mashupPlayingMasterBake
-            && !activeMashupStyle.isDuet
-        let liveAutomix = transitionMode == .automix
+        let isAppleAutomix = transitionMode == .automix
             && isMashupTransitionMode
             && !activeMashupStyle.isDuet
+        if isAppleAutomix {
+            // Grammar: time-stretch / beat lock + ONE BASS/ONE VOCAL EQ + quiet bed → LAND.
+            // Producers analyzing Apple Automix hear a high-cut and tiny air — we do that
+            // with MashupLiveEQEnvelope, never with slap delay that doubles the vocal.
+            clearLiveMixFX()
+            return outgoingVolume
+        }
+
         let plan = activeTransitionPlan
         let hasPlanFX = plan.map { $0.type != .none && !$0.fx.isEmpty } ?? false
-        if !hasPlanFX && !neuralAutomix && !liveAutomix {
+        if !hasPlanFX {
             clearLiveMixFX()
             return outgoingVolume
         }
@@ -1172,29 +1177,15 @@ final class PlayerCore {
             ? (plan?.tempoTargetBPM ?? 120)
             : activeMashupStyle.targetBPM
         let safeBPM = bpm > 30 ? bpm : 120
-        let bar: Double
-        if neuralAutomix || liveAutomix || (plan?.tempoTargetBPM ?? 0) > 30 {
-            bar = EffectAutomation.bar(atSeconds: elapsed, bpm: safeBPM)
-        } else {
-            bar = elapsed
-        }
+        let bar = EffectAutomation.bar(atSeconds: elapsed, bpm: safeBPM)
 
-        // A seek back to the phrase restarts the decoder and the next song stutters.
-        // The bed plays forward; echo and plate are already in the stem slice.
+        // Phrase-loop seeks restart the decoder and stutter the next song — keep off.
         let loopBars = 0
-        let barSec = 4 * 60 / Double(safeBPM)
-        let barFrac = barSec / max(4, transitionDuration)
-        let loopUntil = (neuralAutomix || liveAutomix)
-            ? activeMashupStyle.automixLandProgress - barFrac
-            : 0.72
-        if loopBars > 0, bar + 0.001 >= liveLoopNextBar, progress < loopUntil {
-            if neuralAutomix { mashupPhraseLoopCueSec = 0 }
-            seekOutgoingPhraseLoop()
-            liveLoopNextBar += Double(loopBars)
-        }
+        _ = progress
+        _ = loopBars
 
         var echoWet: Float = 0
-        var echoFb: Float = 30
+        var echoFb: Float = 20
         var reverbWet: Float = 0
         var stutterIntensity: Float = 0
         if let plan, hasPlanFX {
@@ -1202,10 +1193,10 @@ final class PlayerCore {
                 guard event.target == .a, let value = EffectAutomation.value(for: event, atBar: bar) else { continue }
                 switch event.kind {
                 case .echoOut:
-                    echoWet = max(echoWet, min(75, max(0, value)))
-                    echoFb = event.param ?? echoFb
+                    echoWet = max(echoWet, min(40, max(0, value)))
+                    echoFb = min(25, event.param ?? echoFb)
                 case .reverbWash:
-                    reverbWet = max(reverbWet, min(55, max(0, value)))
+                    reverbWet = max(reverbWet, min(28, max(0, value)))
                 case .stutter:
                     stutterIntensity = max(stutterIntensity, min(1, max(0, value)))
                 default:
@@ -1214,48 +1205,16 @@ final class PlayerCore {
             }
         }
 
-        if neuralAutomix {
-            // Stem CAF already carries StemMashupGlue wash. Live MixFX on top
-            // doubles the next vocal into echo/reverb and sounds muddy/stuttery.
-            clearLiveMixFX()
-            _ = stutterIntensity
-            return outgoingVolume
-        }
-
-        if liveAutomix {
-            let land = activeMashupStyle.automixLandProgress
-            let release = max(0, land - barFrac)
-            let exit = progress <= release ? 0 : min(1, (progress - release) / max(0.08, barFrac * 1.45))
-            let entry = min(1, progress / 0.22)
-            let open = Float(entry * (1 - exit))
-            // Dry-deck wash only — keep it light so B does not sound doubled.
-            var echoBase: Float = 16 + 18 * 0.40
-            var plateBase: Float = 18
-            if activeMashupStyle.archetypeName == "echoFreeze"
-                || activeMashupStyle.archetypeName == "spaceReverb"
-                || activeMashupStyle.archetypeName == "tapeStop" {
-                echoBase = 22 + 16 * 0.40
-                plateBase = 24
-            }
-            echoWet = max(echoWet, echoBase * open)
-            reverbWet = max(reverbWet, plateBase * open)
-            // Kill sends before LAND so the next song starts dry and clean.
-            let dryGate = Float(max(0, min(1, (land - progress) / max(0.06, barFrac))))
-            echoWet *= dryGate
-            reverbWet *= dryGate
-        }
-
         let delaySec: Float = safeBPM > 0
-            ? Float(min(1.2, max(0.08, 60 / Double(safeBPM) * 0.5)))
+            ? Float(min(1.0, max(0.08, 60 / Double(safeBPM) * 0.5)))
             : 0.35
         publishLiveMixFX(
             echoWet: echoWet / 75,
-            echoFeedback: min(0.45, max(0, echoFb / 100)),
+            echoFeedback: min(0.35, max(0, echoFb / 100)),
             delaySec: delaySec,
             reverbWet: reverbWet / 55
         )
 
-        // Chopping the bed to silence is the stutter at the start of the next song.
         _ = stutterIntensity
         return outgoingVolume
     }
@@ -3428,8 +3387,9 @@ final class PlayerCore {
                     let stemPadSec = 8.0
                     let barSec = (4 * 60) / max(30, Double(style.targetBPM))
                     let loopSec = 0.0
-                    // Light tempo glue in the stem CAF only — live MixFX stays off on stems.
-                    let echoDelaySec = duetBake ? 0 : min(0.42, max(0.16, 60 / max(30, Double(style.targetBPM)) * 0.5))
+                    // Apple Automix stems stay dry (carve only). Baked echo/plate
+                    // is a third layer under live A+B and is what users hear as "troits".
+                    let echoDelaySec = 0.0
                     let rateB = Double(style.rateB == 0 ? 1 : style.rateB)
                     // Bake in parallel with the cue wait. Waiting for HTDemucs first left
                     // 20s of silence after schedule, then a late abrupt land.

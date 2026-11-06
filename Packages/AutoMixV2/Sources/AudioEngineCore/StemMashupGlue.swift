@@ -19,8 +19,9 @@ public enum StemMashupGlue {
             &left, &right,
             rate: rate,
             delaySec: delaySec,
-            echoWet: 0.12,
-            reverbWet: 0.22,
+            // Optional lab glue only — PlayerCore Automix passes echoDelaySec=0.
+            echoWet: 0.10,
+            reverbWet: 0.18,
             until: left.count
         )
     }
@@ -37,16 +38,16 @@ public enum StemMashupGlue {
         let until = min(max(0, untilFrame), left.count)
         guard until > 8 else { return }
         for i in 0..<until {
-            left[i] *= 1.08
-            right[i] *= 1.08
+            left[i] *= 1.05
+            right[i] *= 1.05
         }
-        // Keep the incoming vocal nearly dry — heavy wash doubled the next song.
+        // Nearly dry — any real wash under a live vocal is heard as a third copy.
         wash(
             &left, &right,
             rate: rate,
             delaySec: delaySec,
-            echoWet: 0.04,
-            reverbWet: 0.12,
+            echoWet: 0.03,
+            reverbWet: 0.08,
             until: until
         )
     }

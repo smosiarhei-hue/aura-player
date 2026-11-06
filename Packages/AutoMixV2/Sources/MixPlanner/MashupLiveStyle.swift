@@ -189,9 +189,10 @@ public struct MashupLiveStyle: Sendable, Equatable {
                 inn = rateB + (1 - rateB) * t
             }
         }
+        // Keep rate near natural — wide TimePitch stretches destroy Automix quality.
         return (
-            max(0.84, min(1.16, out)),
-            max(0.84, min(1.16, inn))
+            max(0.92, min(1.08, out)),
+            max(0.92, min(1.08, inn))
         )
     }
 
@@ -777,7 +778,8 @@ public struct MashupLiveStyle: Sendable, Equatable {
 
     private static func clampRate(_ rate: Float) -> Float {
         guard rate.isFinite, rate > 0 else { return 1 }
-        return max(0.84, min(1.16, rate))
+        // ±8% is enough for beatmatch without the TimePitch grit users hear as "lossy".
+        return max(0.92, min(1.08, rate))
     }
 
     private static func meanTail(_ values: [Float]) -> Float? {
