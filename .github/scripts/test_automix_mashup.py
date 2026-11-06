@@ -486,6 +486,13 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn('reason: "bake-start"', player)
         self.assertIn('reason: "live-cue"', player)
         self.assertIn('reason: "bake-upgrade"', player)
+        # Field 1133: provisional bpm0/mood.scan must re-profile bake-local A/B
+        # so style.upgrade can lock rates before MIXING, not after LAND.
+        self.assertIn("ingestBakeLocalPair", player)
+        self.assertIn("analysis.bake-local ok", player)
+        analysis = (ROOT / "Sonivo/AutoMixV2AnalysisRuntime.swift").read_text()
+        self.assertIn("func ingestBakeLocalPair", analysis)
+        self.assertIn("Анализ bake-local пары", analysis)
         style = (
             ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupLiveStyle.swift"
         ).read_text()

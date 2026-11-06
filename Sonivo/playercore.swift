@@ -3797,6 +3797,19 @@ final class PlayerCore {
                 if shouldBakeStems,
                    let outURL = outURLForBake,
                    let inURL = inURLForBake {
+                    // Field 1133: bake had local A/B while observer still reported bpm0 /
+                    // mood.scan — profile those same URLs before stem work so rates lock.
+                    if !self.activeMashupStyle.isBeatmatched || self.activeMashupStyle.targetBPM < 30 {
+                        let ingested = await AutoMixV2AnalysisRuntime.shared.ingestBakeLocalPair(
+                            outgoing: current,
+                            incoming: nextTrack,
+                            outgoingFile: outURL,
+                            incomingFile: inURL
+                        )
+                        if ingested {
+                            AutoMixSessionLog.shared.event("analysis.bake-local ok")
+                        }
+                    }
                     // Local A/B are ready — pick up BPM/plan if analysis finished during lead-in
                     // so stem bake and live rates are not stuck at provisional rate=1.
                     _ = self.refreshMashupStyleFromAnalysis(
