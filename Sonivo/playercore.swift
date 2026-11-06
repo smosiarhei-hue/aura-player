@@ -91,6 +91,53 @@ nonisolated private final class RemoteFavoriteSnapshot: @unchecked Sendable {
     func read() -> Track? { lock.lock(); defer { lock.unlock() }; return track }
 }
 
+/// Resumes a mashup-cue wait from timer / cancel without MainActor isolation
+/// (nested types inside `@MainActor` PlayerCore inherit the actor and break
+/// `withTaskCancellationHandler` onCancel — Build IPA 1127).
+fileprivate final class MashupCueWaitBox: @unchecked Sendable {
+    private var resumed = false
+    private var timer: Timer?
+    private var continuation: CheckedContinuation<Bool, Never>?
+    private let lock = NSLock()
+
+    func setContinuation(_ continuation: CheckedContinuation<Bool, Never>) {
+        lock.lock()
+        self.continuation = continuation
+        lock.unlock()
+    }
+
+    func setTimer(_ timer: Timer) {
+        lock.lock()
+        self.timer = timer
+        lock.unlock()
+    }
+
+    nonisolated func finish(_ value: Bool) {
+        lock.lock()
+        let cont: CheckedContinuation<Bool, Never>?
+        let t: Timer?
+        if resumed {
+            cont = nil
+            t = nil
+        } else {
+            resumed = true
+            cont = continuation
+            continuation = nil
+            t = timer
+            timer = nil
+        }
+        lock.unlock()
+        if let t {
+            if Thread.isMainThread {
+                t.invalidate()
+            } else {
+                DispatchQueue.main.async { t.invalidate() }
+            }
+        }
+        cont?.resume(returning: value)
+    }
+}
+
 /// Armed Automix handoff waiting for the musical cue on A.
 /// Kept outside `PlayerCore` so the bake Task handle is not an @Observable field.
 fileprivate final class PendingMashupLiveArm: @unchecked Sendable {
@@ -2940,31 +2987,11 @@ final class PlayerCore {
 
         let waitStarted = Date()
         let deadline = waitStarted.addingTimeInterval(max(0.05, safeCue - posAtStart - 0.2))
-
-        final class WaitBox: @unchecked Sendable {
-            var resumed = false
-            var timer: Timer?
-            var continuation: CheckedContinuation<Bool, Never>?
-            let lock = NSLock()
-
-            func finish(_ value: Bool) {
-                lock.lock()
-                defer { lock.unlock() }
-                guard !resumed, let cont = continuation else { return }
-                resumed = true
-                continuation = nil
-                timer?.invalidate()
-                timer = nil
-                cont.resume(returning: value)
-            }
-        }
-        let box = WaitBox()
+        let box = MashupCueWaitBox()
 
         return await withTaskCancellationHandler {
             await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-                box.lock.lock()
-                box.continuation = continuation
-                box.lock.unlock()
+                box.setContinuation(continuation)
                 // 20 Hz — same RunLoop.common as Automix session TICK / transition fader.
                 let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
                     guard let self else {
@@ -3017,7 +3044,7 @@ final class PlayerCore {
                         }
                     }
                 }
-                box.timer = timer
+                box.setTimer(timer)
                 RunLoop.main.add(timer, forMode: .common)
             }
         } onCancel: {

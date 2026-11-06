@@ -436,6 +436,8 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("firePendingMashupLiveArmIfNeeded", player)
         self.assertIn("pendingMashupLiveArm", player)
         self.assertIn("PendingMashupLiveArm", player)
+        self.assertIn("MashupCueWaitBox", player)
+        self.assertIn("nonisolated func finish", player)
         self.assertIn("beginLiveAutomixAtCue", player)
         self.assertIn("RunLoop.main.add(timer, forMode: .common)", player)
         self.assertIn("MUST NOT use a MainActor-isolated TaskGroup", player)
