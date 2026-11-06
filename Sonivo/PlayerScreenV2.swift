@@ -548,12 +548,11 @@ struct PlayerScreenV2: View {
     }
 
     private func artworkStage(width: CGFloat, height: CGFloat) -> some View {
-        // Sharp full-bleed square — never re-blur the artwork pixels (that
-        // pixelated / "ate" the cover). Top+bottom use system Material so the
-        // native UIBlur softens edges without resampling the image.
+        // Full-bleed square (width×width). Horizontal crop only — no scaleEffect > 1.
         let coverSide = min(width, height)
         let tiltAngle = reduceMotion ? 0.0 : Double(coverDragX / width) * 3.0
         let dragScale = reduceMotion ? 1.0 : (1.0 - min(0.04, abs(coverDragX / width) * 0.04))
+        let playScale = player.isPlaying ? 1.0 : 0.97
 
         return ZStack {
             if isFullScreenVideoShot {
@@ -564,26 +563,11 @@ struct PlayerScreenV2: View {
                 artwork
                     .frame(width: coverSide, height: coverSide)
                     .clipped()
-
-                // Native edge frost — Material blurs what's behind, leaves pixels intact.
-                VStack(spacing: 0) {
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                        .frame(height: coverSide * 0.14)
-                        .mask(coverTopEdgeBlurMask)
-                    Spacer(minLength: 0)
-                    Rectangle()
-                        .fill(.thinMaterial)
-                        .frame(height: coverSide * 0.22)
-                        .mask(coverBottomEdgeBlurMask)
-                }
-                .frame(width: coverSide, height: coverSide)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
+                    .mask(coverDissolveMask)
             }
         }
         .frame(width: width, height: height, alignment: .top)
-        .scaleEffect(dragScale)
+        .scaleEffect(playScale * dragScale)
         .offset(x: coverDragX)
         .rotationEffect(.degrees(tiltAngle))
         .contentShape(Rectangle())
@@ -608,26 +592,15 @@ struct PlayerScreenV2: View {
         .animation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion), value: showLyricsMode)
     }
 
-    /// Fades the top Material band into the sharp cover.
-    private var coverTopEdgeBlurMask: some View {
+    /// Soft vertical dissolve so the sharp cover melts into the blurred atmosphere.
+    private var coverDissolveMask: some View {
         LinearGradient(
             stops: [
-                .init(color: .black.opacity(0.85), location: 0.00),
-                .init(color: .black.opacity(0.35), location: 0.55),
+                .init(color: .black, location: 0.00),
+                .init(color: .black, location: 0.52),
+                .init(color: .black.opacity(0.78), location: 0.70),
+                .init(color: .black.opacity(0.28), location: 0.88),
                 .init(color: .clear, location: 1.00)
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-    }
-
-    /// Fades the bottom Material band into the accented panel wash.
-    private var coverBottomEdgeBlurMask: some View {
-        LinearGradient(
-            stops: [
-                .init(color: .clear, location: 0.00),
-                .init(color: .black.opacity(0.40), location: 0.45),
-                .init(color: .black.opacity(0.90), location: 1.00)
             ],
             startPoint: .top,
             endPoint: .bottom
@@ -927,7 +900,7 @@ struct PlayerScreenV2: View {
         .frame(maxWidth: .infinity)
     }
 
-    /// Accented palette under the control panel — dominant cover tone, not flat black.
+    /// Soft palette bloom under the dissolving cover — gives the control deck its color.
     private var coverAccentWash: some View {
         let tone = (resolvedArtworkPaletteTrackID == track?.id ? dominantArtworkColor : nil)
             ?? artworkPaletteColors.first
@@ -935,11 +908,11 @@ struct PlayerScreenV2: View {
             ?? Color.black
         return LinearGradient(
             stops: [
-                .init(color: .clear, location: 0.38),
-                .init(color: tone.opacity(0.28), location: 0.52),
-                .init(color: tone.opacity(0.52), location: 0.68),
-                .init(color: tone.opacity(0.72), location: 0.86),
-                .init(color: tone.opacity(0.82), location: 1.00)
+                .init(color: .clear, location: 0.28),
+                .init(color: tone.opacity(0.22), location: 0.48),
+                .init(color: tone.opacity(0.42), location: 0.68),
+                .init(color: tone.opacity(0.55), location: 0.88),
+                .init(color: tone.opacity(0.62), location: 1.00)
             ],
             startPoint: .top,
             endPoint: .bottom
@@ -2579,8 +2552,8 @@ struct PlayerQualityModalView: View {
 
 // MARK: - Now Playing atmosphere (Apple Music style)
 //
-// Full-bleed UIBlur wash behind the edge-to-edge cover. Sharp art owns the
-// middle; top/bottom edge blur + accented bottom panel sit on this atmosphere.
+// Full-bleed UIBlur wash behind the dissolving edge-to-edge cover. Top stays
+// relatively clear so the sharp art reads; bottom darkens into frosted controls.
 
 private struct NowPlayingAtmosphere: UIViewRepresentable {
     var primary: UIImage?
