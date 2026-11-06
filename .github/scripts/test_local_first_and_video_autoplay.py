@@ -126,12 +126,11 @@ class VideoShotLayoutStabilityTests(unittest.TestCase):
     def test_video_readiness_and_setting_cannot_change_artwork_stage_height(self):
         player = source('PlayerScreenV2.swift')
         geometry = player.split('GeometryReader { geo in', 1)[1].split('ZStack(alignment: .top)', 1)[0]
-        self.assertIn('totalWidth - 40', geometry)
-        self.assertIn('totalHeight * 0.44', geometry)
-        self.assertIn('coverSide + min(56, coverSide * 0.18)', geometry)
+        self.assertIn('reservedFirstScreenControls', geometry)
+        self.assertIn('totalHeight - reservedFirstScreenControls', geometry)
         self.assertIn('NowPlayingAtmosphere', player)
         self.assertNotIn('DownwardCoverWash', player)
-        self.assertNotIn('reservedFirstScreenControls', geometry)
+        self.assertIn('coverDissolveMask', player)
         for condition in ['isFullScreenVideoShot', 'isVideoShotEnabled', 'videoPlayback', 'videoShotURL']:
             self.assertNotIn(condition, geometry)
         stage = player.split('private func artworkStage(', 1)[1].split('private func', 1)[0]

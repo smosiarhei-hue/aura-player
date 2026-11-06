@@ -119,12 +119,14 @@ struct PlayerScreenV2: View {
                 let totalHeight = geo.size.height
                 let totalWidth = geo.size.width
                 let topInset = max(safeTop, 12)
-                // Standard inset square — never stretch the sharp cover edge-to-edge
-                // (that upscales and softens the art). Atmosphere + upward edge blur
-                // carry the native wash; the square stays at native display size.
-                let coverSide = min(totalWidth - 40, totalHeight * 0.44)
-                // Extra stage height so the blurred twin can bleed upward without clipping.
-                let standardArtworkStageHeight = coverSide + min(56, coverSide * 0.18)
+                // Apple Music: edge-to-edge cover (horizontal crop / aspect-fill),
+                // soft native dissolve into the frosted wash below. Height fills the
+                // top band so controls sit on the blurred continuation of the art.
+                let reservedFirstScreenControls: CGFloat = 298 + max(safeBottom, 8)
+                let standardArtworkStageHeight = min(
+                    totalHeight * 0.58,
+                    max(totalWidth, totalHeight - reservedFirstScreenControls)
+                )
 
                 ZStack(alignment: .top) {
                     // Blurred/color-matched wash under the dissolve — continues the cover.
@@ -547,8 +549,8 @@ struct PlayerScreenV2: View {
     }
 
     private func artworkStage(width: CGFloat, height: CGFloat) -> some View {
-        // Standard square cover. Blurred twin bleeds upward — no upscale of the sharp art.
-        let coverSide = min(width - 40, height)
+        // Full-bleed top art: aspect-fill + horizontal crop, soft dissolve into
+        // the native UIBlur atmosphere below (Apple Music Now Playing).
         let tiltAngle = reduceMotion ? 0.0 : Double(coverDragX / width) * 3.0
         let dragScale = reduceMotion ? 1.0 : (1.0 - min(0.04, abs(coverDragX / width) * 0.04))
         let playScale = player.isPlaying ? 1.0 : 0.97
@@ -559,21 +561,10 @@ struct PlayerScreenV2: View {
                 Color.clear
                     .frame(width: width, height: height)
             } else {
-                // Native upward edge wash: same-size blurred twin, offset up — never scaleEffect.
                 artwork
-                    .frame(width: coverSide, height: coverSide)
+                    .frame(width: width, height: height)
                     .clipped()
-                    .blur(radius: 28)
-                    .opacity(0.62)
-                    .mask(coverUpwardBlurMask)
-                    .offset(y: -(coverSide * 0.14))
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-
-                artwork
-                    .frame(width: coverSide, height: coverSide)
-                    .clipped()
-                    .mask(coverUpwardEdgeMask)
+                    .mask(coverDissolveMask)
             }
         }
         .frame(width: width, height: height)
@@ -602,27 +593,14 @@ struct PlayerScreenV2: View {
         .animation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion), value: showLyricsMode)
     }
 
-    /// Softens the top edge of the sharp cover into the atmosphere above.
-    private var coverUpwardEdgeMask: some View {
+    /// Soft vertical dissolve so the sharp cover melts into the blurred atmosphere.
+    private var coverDissolveMask: some View {
         LinearGradient(
             stops: [
-                .init(color: .clear, location: 0.00),
-                .init(color: .black.opacity(0.55), location: 0.08),
-                .init(color: .black, location: 0.18),
-                .init(color: .black, location: 1.00)
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-    }
-
-    /// Blurred twin visibility — strongest above the cover, fades down into the sharp square.
-    private var coverUpwardBlurMask: some View {
-        LinearGradient(
-            stops: [
-                .init(color: .black.opacity(0.85), location: 0.00),
-                .init(color: .black.opacity(0.55), location: 0.35),
-                .init(color: .black.opacity(0.18), location: 0.62),
+                .init(color: .black, location: 0.00),
+                .init(color: .black, location: 0.52),
+                .init(color: .black.opacity(0.78), location: 0.70),
+                .init(color: .black.opacity(0.28), location: 0.88),
                 .init(color: .clear, location: 1.00)
             ],
             startPoint: .top,
@@ -880,10 +858,8 @@ struct PlayerScreenV2: View {
 
     private func lowerDeck(safeAreaBottom: CGFloat) -> some View {
         VStack(spacing: 0) {
-            // Standard cover leaves room above — Spacer drops the compact cluster low.
-            Spacer(minLength: 12)
-
-            VStack(spacing: 6) {
+            // Full-bleed art already pins this cluster low on the first screen.
+            VStack(spacing: 8) {
                 metadataRow
                 PlayerTimelineSection(player: player) { centerStatusLabel }
                 transportControls
@@ -1962,17 +1938,18 @@ struct PlayerTimelineSection<Center: View>: View {
                 let fraction = barFraction
                 let width = geo.size.width * fraction
                 // Scrub stays live during Automix; seek cancels the mashup.
-                let trackHeight: CGFloat = isScrubbing ? 7 : (mixing ? 3.0 : 2.5)
-                let thumbSize: CGFloat = 15
+                // Apple Music: thin seek capsule; thumb only while scrubbing.
+                let trackHeight: CGFloat = isScrubbing ? 6 : 3
+                let thumbSize: CGFloat = 14
 
                 ZStack(alignment: .leading) {
                     Capsule(style: .continuous)
-                        .fill(SN.ink.opacity(isScrubbing ? 0.20 : (mixing ? 0.18 : 0.14)))
+                        .fill(Color.white.opacity(isScrubbing ? 0.28 : 0.22))
                         .frame(height: trackHeight)
 
                     if let bufferFraction = player.bufferedProgress, bufferFraction > 0.005, !mixing {
                         Capsule(style: .continuous)
-                            .fill(SN.ink.opacity(isScrubbing ? 0.38 : 0.28))
+                            .fill(Color.white.opacity(isScrubbing ? 0.40 : 0.32))
                             .frame(
                                 width: max(trackHeight, geo.size.width * min(1.0, CGFloat(bufferFraction))),
                                 height: trackHeight
@@ -1981,7 +1958,7 @@ struct PlayerTimelineSection<Center: View>: View {
                     }
 
                     Capsule(style: .continuous)
-                        .fill(SN.ink.opacity(mixing ? 1.0 : 0.96))
+                        .fill(Color.white.opacity(mixing ? 1.0 : 0.92))
                         .frame(width: max(0, width), height: trackHeight)
                         // Hard snap on Automix handoff (display track / duration change) — no morph.
                         .transaction { tx in
@@ -1990,10 +1967,10 @@ struct PlayerTimelineSection<Center: View>: View {
 
                     if isScrubbing {
                         Circle()
-                            .fill(SN.ink)
+                            .fill(Color.white)
                             .frame(width: thumbSize, height: thumbSize)
                             .offset(x: max(0, min(width - thumbSize / 2, geo.size.width - thumbSize)))
-                            .shadow(color: .black.opacity(0.26), radius: 3, y: 1)
+                            .shadow(color: .black.opacity(0.22), radius: 2, y: 1)
                     }
                 }
                 .animation(.smooth(duration: 0.18), value: isScrubbing)
@@ -2064,14 +2041,14 @@ struct PlayerTimelineSection<Center: View>: View {
             HStack {
                 Text(player.formatted(effectiveProgress))
                     .font(SN.text(.caption2, .medium).monospacedDigit())
-                    .foregroundStyle(SN.inkMuted)
+                    .foregroundStyle(Color.white.opacity(0.62))
                     .contentTransition(.numericText())
                 Spacer()
                 center
                 Spacer()
                 Text("-" + player.formatted(max(0, timelineDuration - effectiveProgress)))
                     .font(SN.text(.caption2, .medium).monospacedDigit())
-                    .foregroundStyle(SN.inkMuted)
+                    .foregroundStyle(Color.white.opacity(0.62))
                     .contentTransition(.numericText())
             }
         }
@@ -2270,40 +2247,30 @@ struct FluidVolumeSlider: View {
     @GestureState private var volumeContact = false
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
+        // Apple Music: thicker pill volume, no resting thumb — fill only.
+        HStack(alignment: .center, spacing: 12) {
             Image(systemName: "speaker.fill")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(SN.inkMuted)
-                .frame(width: 16, height: 16, alignment: .center)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.72))
+                .frame(width: 18, height: 18, alignment: .center)
 
             GeometryReader { geo in
                 let width = geo.size.width
                 let currentVol = volumeManager.volume
                 let progress = CGFloat(max(0.0, min(1.0, currentVol)))
                 let filledWidth = width * progress
-                let trackHeight: CGFloat = isDragging ? 7 : 2.5
-                let thumbSize: CGFloat = isDragging ? 15 : 6
+                let trackHeight: CGFloat = isDragging ? 10 : 7
 
                 ZStack(alignment: .leading) {
                     Capsule(style: .continuous)
-                        .fill(SN.ink.opacity(isDragging ? 0.20 : 0.14))
+                        .fill(Color.white.opacity(isDragging ? 0.28 : 0.22))
                         .frame(height: trackHeight)
 
                     Capsule(style: .continuous)
-                        .fill(SN.ink.opacity(0.94))
-                        .frame(width: max(0, filledWidth), height: trackHeight)
-
-                    Circle()
-                        .fill(SN.ink)
-                        .frame(width: thumbSize, height: thumbSize)
-                        .shadow(
-                            color: .black.opacity(isDragging ? 0.26 : 0.16),
-                            radius: isDragging ? 3 : 1,
-                            y: 1
-                        )
-                        .offset(x: max(0, min(filledWidth - thumbSize / 2, width - thumbSize)))
+                        .fill(Color.white.opacity(0.92))
+                        .frame(width: max(trackHeight, filledWidth), height: trackHeight)
                 }
-                .animation(.smooth(duration: 0.18), value: isDragging)
+                .animation(.smooth(duration: 0.16), value: isDragging)
                 .frame(maxHeight: .infinity, alignment: .center)
                 .contentShape(Rectangle())
                 .gesture(
@@ -2336,9 +2303,9 @@ struct FluidVolumeSlider: View {
             .background(InvisibleVolumeView().frame(width: 60, height: 20).opacity(0.01).allowsHitTesting(false).accessibilityHidden(true))
 
             Image(systemName: "speaker.wave.3.fill")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(SN.inkMuted)
-                .frame(width: 16, height: 16, alignment: .center)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.72))
+                .frame(width: 20, height: 18, alignment: .center)
         }
         .frame(height: 44)
         .accessibilityElement(children: .combine)
@@ -2586,9 +2553,8 @@ struct PlayerQualityModalView: View {
 
 // MARK: - Now Playing atmosphere (Apple Music style)
 //
-// Full-bleed UIBlur wash behind the standard inset cover. Soft top fog lets the
-// upward edge blur of the sharp square melt into the atmosphere; bottom darkens
-// into frosted controls.
+// Full-bleed UIBlur wash behind the dissolving edge-to-edge cover. Top stays
+// relatively clear so the sharp art reads; bottom darkens into frosted controls.
 
 private struct NowPlayingAtmosphere: UIViewRepresentable {
     var primary: UIImage?
@@ -2641,9 +2607,9 @@ private final class NowPlayingAtmosphereView: UIView {
         dimView.isUserInteractionEnabled = false
         dimView.backgroundColor = UIColor.black.withAlphaComponent(0.14)
         addSubview(dimView)
-        // Soft top fog — inset cover melts upward into the native blur, not a hard cut.
+        // Keep the upper third less fogged — sharp full-bleed cover owns that region.
         topClear.colors = [
-            UIColor.black.withAlphaComponent(0.12).cgColor,
+            UIColor.black.withAlphaComponent(0.18).cgColor,
             UIColor.clear.cgColor
         ]
         topClear.locations = [0.0, 1.0]
