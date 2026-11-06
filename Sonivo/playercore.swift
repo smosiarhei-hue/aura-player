@@ -2878,13 +2878,16 @@ final class PlayerCore {
     ///
     /// Field log (starve): stream `progress` can stall under MainActor load while
     /// audio keeps moving — wall-clock from the wait start still trips the cue so
-    /// live Automix arms before A ends.
+    /// live Automix arms before A ends. Sleep runs off MainActor so HTDemucs /
+    /// UI work cannot stall the deadline past EOF (field 1076 ~10s late arm).
     private func waitUntilMashupCue(_ cue: Double) async -> Bool {
         let safeCue = cue.isFinite ? max(0, cue) : 0
         let waitStarted = Date()
         let posAtStart = playbackProgress
+        let deadline = waitStarted.addingTimeInterval(max(0, safeCue - posAtStart - 0.2))
         while !Task.isCancelled {
             if !isTransitioning { return false }
+            let now = Date()
             let pos = playbackProgress
             let dur = max(playbackDuration, duration)
             if isPlaying || pos + 0.05 >= posAtStart {
@@ -2894,11 +2897,15 @@ final class PlayerCore {
                 if dur > 1, safeCue >= dur - 0.75 { return true }
             }
             if isPlaying {
-                let estimated = posAtStart + Date().timeIntervalSince(waitStarted)
+                let estimated = posAtStart + now.timeIntervalSince(waitStarted)
                 if estimated + 0.25 >= safeCue { return true }
                 if dur > 1, estimated >= dur - 0.35 { return true }
+                if now >= deadline { return true }
             }
-            try? await Task.sleep(for: .milliseconds(100))
+            let remainingMs = max(20, min(100, deadline.timeIntervalSince(now) * 1000))
+            await Task.detached {
+                try? await Task.sleep(for: .milliseconds(UInt64(remainingMs)))
+            }.value
         }
         return false
     }
@@ -3304,6 +3311,14 @@ final class PlayerCore {
         mashupStyle: MashupLiveStyle?,
         outgoingCue: Double?
     ) {
+        // Drop any leftover prep / MIXING timer from a prior land (field zombie badge).
+        transitionPreparationTask?.cancel()
+        transitionPreparationTask = nil
+        transitionTimer?.invalidate()
+        transitionTimer = nil
+        transitionStartTime = nil
+        incomingLaneReady = false
+
         transitionScheduled = true
         isTransitioning = true
         mashupBakeFailedUseCrossfade = false
@@ -3485,11 +3500,25 @@ final class PlayerCore {
                             echoDelaySec: echoDelaySec
                         )
                     }
-                    // Decode B during lead-in so cue-time live Automix is instant.
+                    // Decode + silent-arm B during lead-in so cue-time live Automix
+                    // is instant and starve can hard-complete an already-playing B.
                     // Field starve: openAutomixPlaybackFile at the cue raced EOF.
                     let preparedIncoming = self.prepareMashupIncomingFile(inURL)
-                    if preparedIncoming != nil {
+                    var prearmedIncoming = false
+                    if let prepared = preparedIncoming {
                         AutoMixSessionLog.shared.event("lane.prepare ready before cue")
+                        do {
+                            try self.armPreparedMashupIncoming(
+                                file: prepared,
+                                on: targetNode,
+                                at: cueB
+                            )
+                            prearmedIncoming = true
+                        } catch {
+                            AutoMixSessionLog.shared.fault(
+                                "lane.arm \(error.localizedDescription)"
+                            )
+                        }
                     }
                     let reachedCue = await self.waitUntilMashupCue(cueA)
                     guard reachedCue, !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
@@ -3501,6 +3530,8 @@ final class PlayerCore {
                         return
                     }
                     // At the cue: take stems if ready, else start the live Automix now.
+                    // Timeout race MUST run off MainActor — field 1076 waited ~10s for
+                    // HTDemucs because Task.sleep on MainActor resumed after bake.
                     enum BakeProbe {
                         case ready(Result<(outgoing: URL, incoming: URL), Error>)
                         case pending
@@ -3511,12 +3542,26 @@ final class PlayerCore {
                             catch { return .ready(.failure(error)) }
                         }
                         group.addTask {
-                            try? await Task.sleep(for: .milliseconds(120))
+                            await Task.detached {
+                                try? await Task.sleep(for: .milliseconds(80))
+                            }.value
                             return .pending
                         }
                         let first = await group.next() ?? .pending
                         group.cancelAll()
                         return first
+                    }
+                    // Land / cancel may have finished while we raced bake — never
+                    // resurrect MIXING on a completed transition (field zombie badge).
+                    guard !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
+                          self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else {
+                        bakeTask.cancel()
+                        if case .ready(.success(let pair)) = bakeProbe {
+                            MidSideStemBaker.removeTempFiles([pair.outgoing, pair.incoming])
+                        } else if let stemPair = try? await bakeTask.value {
+                            MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
+                        }
+                        return
                     }
                     let bakeResult: Result<(outgoing: URL, incoming: URL), Error>
                     var bakePendingAtCue = false
@@ -3528,10 +3573,9 @@ final class PlayerCore {
                         bakeResult = .failure(CocoaError(.fileReadUnknown))
                         self.mashupBakeFailedUseCrossfade = true
                         AutoMixSessionLog.shared.event("bake.pending → live Automix at cue")
-                        // Arm silent B NOW — do not await bake or a slow re-open.
-                        // Field: waiting here left txReady=0 until EOF → transition.starve.
-                        var liveArmed = false
-                        if let prepared = preparedIncoming ?? self.incomingAudioFile {
+                        // Arm silent B NOW if lead-in arm missed — do not await bake.
+                        var liveArmed = prearmedIncoming
+                        if !liveArmed, let prepared = preparedIncoming ?? self.incomingAudioFile {
                             do {
                                 try self.armPreparedMashupIncoming(
                                     file: prepared,
@@ -4272,6 +4316,13 @@ final class PlayerCore {
         guard isTransitioning, !isCompletingTransition else { return }
         isCompletingTransition = true
         defer { isCompletingTransition = false }
+
+        // Field 1076: starve→complete armed B, then the prep Task kept running and
+        // logged bake.pending AFTER land — restarted MIXING with tx=0 / B=- and
+        // left a zombie transitionTimer that hard-cut the next song 50ms in.
+        transitionPreparationTask?.cancel()
+        transitionPreparationTask = nil
+        transitionRequestID = UUID()
 
         let elapsed = max(0, -(transitionStartTime ?? Date()).timeIntervalSinceNow)
         let usedBake = mashupBakeRealIncomingURL != nil

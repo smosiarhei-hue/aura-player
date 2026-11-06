@@ -427,8 +427,15 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("let bakeLag = min(heardPastCue, max(0, blend - 1.5))", player)
         self.assertIn("waitUntilMashupCue", player)
         # Wall-clock + cue-past-tail so live Automix arms before A EOF (field starve).
-        self.assertIn("posAtStart + Date().timeIntervalSince(waitStarted)", player)
+        self.assertIn("posAtStart + now.timeIntervalSince(waitStarted)", player)
         self.assertIn("safeCue >= dur - 0.75", player)
+        # Cue wait / bake probe sleep off MainActor (field 1076 late arm).
+        self.assertIn("await Task.detached", player)
+        self.assertIn("now >= deadline", player)
+        # Silent-arm B during lead-in; re-guard after bake probe so land cannot
+        # leave a zombie MIXING badge.
+        self.assertIn("prearmedIncoming", player)
+        self.assertIn("resurrect MIXING", player)
         self.assertIn("mashupGiveUpTrackID", player)
         self.assertIn("giveUpMashupAndKeepPlaying", player)
         self.assertIn("fallback.file", player)

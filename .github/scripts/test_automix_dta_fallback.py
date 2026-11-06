@@ -98,6 +98,20 @@ class AutomixDtaFallbackTests(unittest.TestCase):
         self.assertIn("nativeSilent", give_up)
         self.assertIn("streamSilent", give_up)
         self.assertIn("isPlaying = true", give_up)
+        # Field 1076: completeTransition must kill prep so bake.pending cannot
+        # resurrect MIXING after land.hardcut (zombie badge / cascade hardcut).
+        complete = PLAYER.split("private func completeTransition(to nextTrack: Track)", 1)[1].split(
+            "private func releaseActiveTimePitchToUnity", 1
+        )[0]
+        self.assertIn("transitionPreparationTask?.cancel()", complete)
+        self.assertIn("transitionRequestID = UUID()", complete)
+        # New schedule must clear leftover MIXING timer from a zombie arm.
+        schedule = PLAYER.split("private func scheduleSimpleTransition(", 1)[1].split(
+            "transitionPreparationTask = Task", 1
+        )[0]
+        self.assertIn("transitionTimer?.invalidate()", schedule)
+        self.assertIn("transitionStartTime = nil", schedule)
+        self.assertIn("incomingLaneReady = false", schedule)
 
     def test_provisional_scan_not_thirty_second_silent_prep(self):
         # User log had blend windows 16–26s with mood.scan miss — provisional

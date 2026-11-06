@@ -110,6 +110,9 @@ class PlaybackStabilityTests(unittest.TestCase):
         self.assertNotIn('if nextTrack.isStream || incomingIsStream', complete)
         self.assertIn('nativeIncomingPosition', complete)
         self.assertIn('startTimer()', complete)
+        # Starve/land must cancel prep — same contract as cancelTransition.
+        self.assertIn('transitionPreparationTask?.cancel()', complete)
+        self.assertIn('transitionRequestID = UUID()', complete)
 
     def test_background_does_not_claim_focus_when_paused(self):
         center = source('AutoMixV2NowPlayingCenter.swift').split('func setApplicationSceneActive', 1)[1].split('func install()', 1)[0]
