@@ -105,6 +105,7 @@ class AutomixDtaFallbackTests(unittest.TestCase):
         )[0]
         self.assertIn("transitionPreparationTask?.cancel()", complete)
         self.assertIn("transitionRequestID = UUID()", complete)
+        self.assertIn("pendingMashupLiveArm = nil", complete)
         # New schedule must clear leftover MIXING timer from a zombie arm.
         schedule = PLAYER.split("private func scheduleSimpleTransition(", 1)[1].split(
             "transitionPreparationTask = Task", 1
@@ -112,6 +113,7 @@ class AutomixDtaFallbackTests(unittest.TestCase):
         self.assertIn("transitionTimer?.invalidate()", schedule)
         self.assertIn("transitionStartTime = nil", schedule)
         self.assertIn("incomingLaneReady = false", schedule)
+        self.assertIn("pendingMashupLiveArm = nil", schedule)
 
     def test_provisional_scan_not_thirty_second_silent_prep(self):
         # User log had blend windows 16–26s with mood.scan miss — provisional

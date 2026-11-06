@@ -91,6 +91,46 @@ nonisolated private final class RemoteFavoriteSnapshot: @unchecked Sendable {
     func read() -> Track? { lock.lock(); defer { lock.unlock() }; return track }
 }
 
+/// Armed Automix handoff waiting for the musical cue on A.
+/// Kept outside `PlayerCore` so the bake Task handle is not an @Observable field.
+fileprivate final class PendingMashupLiveArm: @unchecked Sendable {
+    let cueA: Double
+    let cueB: Double
+    let blend: Double
+    let handoff: Double
+    let transitionID: UUID
+    let generation: Int
+    let currentTrackID: UUID
+    let inURL: URL
+    let bakeTask: Task<(outgoing: URL, incoming: URL), Error>
+    var prearmed: Bool
+    var fired = false
+
+    init(
+        cueA: Double,
+        cueB: Double,
+        blend: Double,
+        handoff: Double,
+        transitionID: UUID,
+        generation: Int,
+        currentTrackID: UUID,
+        inURL: URL,
+        bakeTask: Task<(outgoing: URL, incoming: URL), Error>,
+        prearmed: Bool
+    ) {
+        self.cueA = cueA
+        self.cueB = cueB
+        self.blend = blend
+        self.handoff = handoff
+        self.transitionID = transitionID
+        self.generation = generation
+        self.currentTrackID = currentTrackID
+        self.inURL = inURL
+        self.bakeTask = bakeTask
+        self.prearmed = prearmed
+    }
+}
+
 @Observable
 @MainActor
 final class PlayerCore {
@@ -529,6 +569,10 @@ final class PlayerCore {
     private var incomingLaneReady: Bool = false
     private var transitionScheduledAt: Date? = nil
     private var transitionPausedAt: Date? = nil
+    /// Musical cue on A for live Automix. Field 1077: prep Task parked on
+    /// `waitUntilMashupCue` / MainActor TaskGroup and never reached bake.pending —
+    /// playhead ticks fire the mix here so we do not starve into hardcut.
+    @ObservationIgnored private var pendingMashupLiveArm: PendingMashupLiveArm?
 
     @ObservationIgnored private var engine = AVAudioEngine()
     @ObservationIgnored private var playerA = AVAudioPlayerNode()
@@ -843,6 +887,7 @@ final class PlayerCore {
                         self.recordWavePlaybackTick()
                         self.checkpointPlaybackProgress()
                         self.syncNowPlayingElapsedIfNeeded()
+                        self.firePendingMashupLiveArmIfNeeded()
                         self.scheduleTransitionIfNeeded()
                         self.refillQueueIfNeeded()
                     }
@@ -2876,38 +2921,255 @@ final class PlayerCore {
     /// Park until the musical cue. Pause does not cancel the mix; the playhead
     /// just sits, and we continue when playback resumes.
     ///
-    /// Field log (starve): stream `progress` can stall under MainActor load while
-    /// audio keeps moving — wall-clock from the wait start still trips the cue so
-    /// live Automix arms before A ends. Sleep runs off MainActor so HTDemucs /
-    /// UI work cannot stall the deadline past EOF (field 1076 ~10s late arm).
+    /// Field 1077: a `Task.detached` sleep loop parked inside the prep Task never
+    /// resumed to bake.pending while TICK still advanced past the cue — use a
+    /// RunLoop timer (same path as session TICK) plus playhead-driven
+    /// `firePendingMashupLiveArmIfNeeded` so the mix starts at the cue.
     private func waitUntilMashupCue(_ cue: Double) async -> Bool {
         let safeCue = cue.isFinite ? max(0, cue) : 0
-        let waitStarted = Date()
         let posAtStart = playbackProgress
-        let deadline = waitStarted.addingTimeInterval(max(0, safeCue - posAtStart - 0.2))
-        while !Task.isCancelled {
-            if !isTransitioning { return false }
-            let now = Date()
-            let pos = playbackProgress
-            let dur = max(playbackDuration, duration)
-            if isPlaying || pos + 0.05 >= posAtStart {
-                if pos + 0.25 >= safeCue { return true }
-                if dur > 1, pos >= dur - 0.35 { return true }
-                // Cue past the tail — start the mix now rather than wait for EOF.
-                if dur > 1, safeCue >= dur - 0.75 { return true }
-            }
-            if isPlaying {
-                let estimated = posAtStart + now.timeIntervalSince(waitStarted)
-                if estimated + 0.25 >= safeCue { return true }
-                if dur > 1, estimated >= dur - 0.35 { return true }
-                if now >= deadline { return true }
-            }
-            let remainingMs = max(20, min(100, deadline.timeIntervalSince(now) * 1000))
-            await Task.detached {
-                try? await Task.sleep(for: .milliseconds(UInt64(remainingMs)))
-            }.value
+        let durAtStart = max(playbackDuration, duration)
+        if isTransitioning {
+            if posAtStart + 0.25 >= safeCue { return true }
+            if durAtStart > 1, posAtStart >= durAtStart - 0.35 { return true }
+            if durAtStart > 1, safeCue >= durAtStart - 0.75 { return true }
+            if incomingLaneReady { return true }
+        } else {
+            return false
         }
-        return false
+
+        let waitStarted = Date()
+        let deadline = waitStarted.addingTimeInterval(max(0.05, safeCue - posAtStart - 0.2))
+
+        final class WaitBox: @unchecked Sendable {
+            var resumed = false
+            var timer: Timer?
+            var continuation: CheckedContinuation<Bool, Never>?
+            let lock = NSLock()
+
+            func finish(_ value: Bool) {
+                lock.lock()
+                defer { lock.unlock() }
+                guard !resumed, let cont = continuation else { return }
+                resumed = true
+                continuation = nil
+                timer?.invalidate()
+                timer = nil
+                cont.resume(returning: value)
+            }
+        }
+        let box = WaitBox()
+
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                box.lock.lock()
+                box.continuation = continuation
+                box.lock.unlock()
+                // 20 Hz — same RunLoop.common as Automix session TICK / transition fader.
+                let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+                    guard let self else {
+                        box.finish(false)
+                        return
+                    }
+                    Task { @MainActor in
+                        // Prep cancel clears isTransitioning — do not trust
+                        // Task.isCancelled on this nested Timer Task.
+                        if !self.isTransitioning {
+                            box.finish(false)
+                            return
+                        }
+                        if self.incomingLaneReady {
+                            box.finish(true)
+                            return
+                        }
+                        let now = Date()
+                        let pos = self.playbackProgress
+                        let dur = max(self.playbackDuration, self.duration)
+                        if self.isPlaying || pos + 0.05 >= posAtStart {
+                            if pos + 0.25 >= safeCue {
+                                box.finish(true)
+                                return
+                            }
+                            if dur > 1, pos >= dur - 0.35 {
+                                box.finish(true)
+                                return
+                            }
+                            // Cue past the tail — start the mix now rather than wait for EOF.
+                            if dur > 1, safeCue >= dur - 0.75 {
+                                box.finish(true)
+                                return
+                            }
+                        }
+                        if self.isPlaying {
+                            let estimated = posAtStart + now.timeIntervalSince(waitStarted)
+                            if estimated + 0.25 >= safeCue {
+                                box.finish(true)
+                                return
+                            }
+                            if dur > 1, estimated >= dur - 0.35 {
+                                box.finish(true)
+                                return
+                            }
+                            if now >= deadline {
+                                box.finish(true)
+                                return
+                            }
+                        }
+                    }
+                }
+                box.timer = timer
+                RunLoop.main.add(timer, forMode: .common)
+            }
+        } onCancel: {
+            box.finish(false)
+        }
+    }
+
+    /// Start live Automix the instant the playhead crosses the musical cue —
+    /// independent of whether the prep Task's wait/bakeProbe woke up (field 1077).
+    private func firePendingMashupLiveArmIfNeeded() {
+        guard let arm = pendingMashupLiveArm, !arm.fired else { return }
+        guard isTransitioning, !incomingLaneReady else { return }
+        guard transitionRequestID == arm.transitionID, generation == arm.generation else {
+            pendingMashupLiveArm = nil
+            return
+        }
+        guard isPlaying, currentTrack?.id == arm.currentTrackID else { return }
+
+        let pos = playbackProgress
+        let dur = max(playbackDuration, duration)
+        let atCue = pos + 0.15 >= arm.cueA
+            || (dur > 1 && pos >= dur - 0.35)
+            || (dur > 1 && arm.cueA >= dur - 0.75)
+        guard atCue else { return }
+
+        arm.fired = true
+        beginLiveAutomixAtCue(arm: arm)
+    }
+
+    /// Audible Automix fader at the cue while bake may still be cooking.
+    private func beginLiveAutomixAtCue(arm: PendingMashupLiveArm) {
+        guard isTransitioning, !incomingLaneReady else { return }
+        guard transitionRequestID == arm.transitionID, generation == arm.generation else { return }
+
+        mashupBakeFailedUseCrossfade = true
+        AutoMixSessionLog.shared.event("bake.pending → live Automix at cue")
+
+        var liveArmed = arm.prearmed
+        if !liveArmed {
+            let prepared = incomingAudioFile ?? prepareMashupIncomingFile(arm.inURL)
+            if let prepared {
+                do {
+                    try armPreparedMashupIncoming(
+                        file: prepared,
+                        on: idlePlayer,
+                        at: arm.cueB
+                    )
+                    liveArmed = true
+                    arm.prearmed = true
+                } catch {
+                    AutoMixSessionLog.shared.fault(
+                        "lane.arm \(error.localizedDescription)"
+                    )
+                }
+            }
+        }
+        guard liveArmed else {
+            AutoMixSessionLog.shared.fault("lane.arm missing at cue → keep waiting")
+            arm.fired = false
+            return
+        }
+
+        let transitionID = arm.transitionID
+        let cueA = arm.cueA
+        let cueB = arm.cueB
+        let blend = arm.blend
+        let handoff = arm.handoff
+        let inURL = arm.inURL
+        let bakeTask = arm.bakeTask
+
+        incomingLaneReady = true
+        transitionStartTime = Date()
+        if isMashupTransitionMode {
+            if isUsingStreamPlayer, let item = activeStreamingPlayer.currentItem {
+                StreamBeatTap.shared.attach(to: item)
+            }
+            let rates = activeMashupStyle.playbackRates(progress: 0)
+            if isUsingStreamPlayer {
+                activeStreamingPlayer.rate = rates.outgoing
+            } else {
+                applyMashupTimePitch(progress: 0, outgoing: true, rate: rates.outgoing)
+            }
+            applyMashupTimePitch(progress: 0, outgoing: false, rate: rates.incoming)
+            applyMashupTransitionEQ(progress: 0)
+            AutoMixDJEngine.shared.markMashupProgress(0)
+            AutoMixDJEngine.shared.currentBPM = Double(activeMashupStyle.targetBPM)
+            AutoMixDJEngine.shared.statusBadge = activeMashupStyle.phaseLabel(progress: 0)
+        }
+        startTransitionTimer()
+
+        // Late stem upgrade — same contract as the former bake.pending block.
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let late = await bakeTask.result
+            guard self.transitionRequestID == transitionID, self.isTransitioning else {
+                if case .success(let pair) = late {
+                    MidSideStemBaker.removeTempFiles([pair.outgoing, pair.incoming])
+                }
+                return
+            }
+            guard case .success(let stemPair) = late else { return }
+            let live = self.playbackProgress
+            let heard = max(0, live - cueA)
+            let landAt = blend * handoff
+            if heard >= landAt - 1.5 {
+                MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
+                AutoMixSessionLog.shared.event(
+                    String(format: "bake.late-drop lag=%.2fs", heard)
+                )
+                return
+            }
+            do {
+                self.mashupBakeFailedUseCrossfade = false
+                self.clearMashupBakeTemps()
+                self.mashupBakeTempURLs = [stemPair.outgoing, stemPair.incoming]
+                self.mashupBakeRealIncomingURL = inURL
+                self.mashupBakeIncomingBaseCue = cueB
+                self.mashupBakeOutgoingBaseCue = cueA
+                self.mashupIncomingCueSec = cueB
+                self.incomingStartPosition = cueB
+                let wasStream = self.isUsingStreamPlayer
+                try self.playMashupStemPair(
+                    outgoingURL: stemPair.outgoing,
+                    incomingURL: stemPair.incoming,
+                    startOffsetSec: heard
+                )
+                if wasStream {
+                    self.mashupStemEntryStartedAt = Date()
+                    self.mashupStemEntryDuration = 0.35
+                    self.mashupStemEntryFromStream = true
+                }
+                let enterP = min(1, heard / max(0.001, blend))
+                let rates = self.activeMashupStyle.playbackRates(progress: enterP)
+                self.applyMashupTimePitch(progress: enterP, outgoing: true, rate: rates.outgoing)
+                self.applyMashupTimePitch(progress: enterP, outgoing: false, rate: rates.incoming)
+                self.applyMashupTransitionEQ(progress: enterP)
+                let mixClock = Date()
+                self.transitionStartTime = mixClock.addingTimeInterval(-heard)
+                self.anchorDate = mixClock
+                let heardA = cueA + heard
+                self.anchorOffset = heardA
+                self.pausedProgress = heardA
+                self.progress = heardA
+                self.startTimer()
+                AutoMixSessionLog.shared.event(
+                    String(format: "bake.upgrade lag=%.2fs", heard)
+                )
+            } catch {
+                MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
+                self.mashupBakeFailedUseCrossfade = true
+            }
+        }
     }
 
     /// Pre-open B during bake lead-in so cue-time arm is instant (no decode stall).
@@ -3318,6 +3580,7 @@ final class PlayerCore {
         transitionTimer = nil
         transitionStartTime = nil
         incomingLaneReady = false
+        pendingMashupLiveArm = nil
 
         transitionScheduled = true
         isTransitioning = true
@@ -3520,9 +3783,38 @@ final class PlayerCore {
                             )
                         }
                     }
+                    // Register cue for playhead ticks BEFORE waiting — field 1077
+                    // never reached bake.pending because the prep wait never resumed.
+                    self.pendingMashupLiveArm = PendingMashupLiveArm(
+                        cueA: cueA,
+                        cueB: cueB,
+                        blend: blend,
+                        handoff: handoff,
+                        transitionID: transitionID,
+                        generation: token,
+                        currentTrackID: current.id,
+                        inURL: inURL,
+                        bakeTask: bakeTask,
+                        prearmed: prearmedIncoming
+                    )
+                    self.firePendingMashupLiveArmIfNeeded()
+                    if self.incomingLaneReady {
+                        // Seek landed us already at/past the cue — mix is live.
+                        self.transitionPreparationTask = nil
+                        return
+                    }
                     let reachedCue = await self.waitUntilMashupCue(cueA)
+                    // Playhead tick may have started the mix while we waited.
+                    if self.incomingLaneReady {
+                        self.transitionPreparationTask = nil
+                        return
+                    }
                     guard reachedCue, !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
                           self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else {
+                        AutoMixSessionLog.shared.event(
+                            "cue.wait abort reached=\(reachedCue) cancel=\(Task.isCancelled)"
+                        )
+                        self.pendingMashupLiveArm = nil
                         bakeTask.cancel()
                         if let stemPair = try? await bakeTask.value {
                             MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
@@ -3530,26 +3822,35 @@ final class PlayerCore {
                         return
                     }
                     // At the cue: take stems if ready, else start the live Automix now.
-                    // Timeout race MUST run off MainActor — field 1076 waited ~10s for
-                    // HTDemucs because Task.sleep on MainActor resumed after bake.
+                    // Probe MUST NOT use a MainActor-isolated TaskGroup — both children
+                    // serialized on MainActor and the 80ms timeout never won (field 1077).
                     enum BakeProbe {
                         case ready(Result<(outgoing: URL, incoming: URL), Error>)
                         case pending
                     }
-                    let bakeProbe = await withTaskGroup(of: BakeProbe.self) { group in
-                        group.addTask {
-                            do { return .ready(.success(try await bakeTask.value)) }
-                            catch { return .ready(.failure(error)) }
+                    let bakeProbe: BakeProbe = await withCheckedContinuation { cont in
+                        final class ProbeBox: @unchecked Sendable {
+                            var done = false
                         }
-                        group.addTask {
-                            await Task.detached {
-                                try? await Task.sleep(for: .milliseconds(80))
-                            }.value
-                            return .pending
+                        let box = ProbeBox()
+                        let finish: @Sendable (BakeProbe) -> Void = { value in
+                            Task { @MainActor in
+                                guard !box.done else { return }
+                                box.done = true
+                                cont.resume(returning: value)
+                            }
                         }
-                        let first = await group.next() ?? .pending
-                        group.cancelAll()
-                        return first
+                        Task.detached {
+                            try? await Task.sleep(for: .milliseconds(80))
+                            finish(.pending)
+                        }
+                        Task.detached {
+                            do {
+                                finish(.ready(.success(try await bakeTask.value)))
+                            } catch {
+                                finish(.ready(.failure(error)))
+                            }
+                        }
                     }
                     // Land / cancel may have finished while we raced bake — never
                     // resurrect MIXING on a completed transition (field zombie badge).
@@ -3571,161 +3872,22 @@ final class PlayerCore {
                     case .pending:
                         bakePendingAtCue = true
                         bakeResult = .failure(CocoaError(.fileReadUnknown))
-                        self.mashupBakeFailedUseCrossfade = true
-                        AutoMixSessionLog.shared.event("bake.pending → live Automix at cue")
-                        // Arm silent B NOW if lead-in arm missed — do not await bake.
-                        var liveArmed = prearmedIncoming
-                        if !liveArmed, let prepared = preparedIncoming ?? self.incomingAudioFile {
-                            do {
-                                try self.armPreparedMashupIncoming(
-                                    file: prepared,
-                                    on: targetNode,
-                                    at: cueB
-                                )
-                                liveArmed = true
-                            } catch {
-                                AutoMixSessionLog.shared.fault(
-                                    "lane.arm \(error.localizedDescription)"
-                                )
+                        // Prefer the shared playhead-fired path (idempotent).
+                        if !self.incomingLaneReady {
+                            if let arm = self.pendingMashupLiveArm {
+                                arm.prearmed = prearmedIncoming || arm.prearmed
+                                arm.fired = true
+                                self.beginLiveAutomixAtCue(arm: arm)
+                            } else {
+                                self.mashupBakeFailedUseCrossfade = true
+                                AutoMixSessionLog.shared.event("bake.pending → live Automix at cue")
                             }
                         }
-                        if liveArmed {
-                            self.incomingLaneReady = true
-                            self.transitionStartTime = Date()
-                            if self.isMashupTransitionMode {
-                                if self.isUsingStreamPlayer, let item = self.activeStreamingPlayer.currentItem {
-                                    StreamBeatTap.shared.attach(to: item)
-                                }
-                                let rates = self.activeMashupStyle.playbackRates(progress: 0)
-                                if self.isUsingStreamPlayer {
-                                    self.activeStreamingPlayer.rate = rates.outgoing
-                                } else {
-                                    self.applyMashupTimePitch(progress: 0, outgoing: true, rate: rates.outgoing)
-                                }
-                                self.applyMashupTimePitch(progress: 0, outgoing: false, rate: rates.incoming)
-                                self.applyMashupTransitionEQ(progress: 0)
-                                AutoMixDJEngine.shared.markMashupProgress(0)
-                                AutoMixDJEngine.shared.currentBPM = Double(self.activeMashupStyle.targetBPM)
-                                AutoMixDJEngine.shared.statusBadge = self.activeMashupStyle.phaseLabel(progress: 0)
-                            }
-                            self.startTransitionTimer()
+                        if self.incomingLaneReady {
                             self.transitionPreparationTask = nil
-                            Task { @MainActor [weak self] in
-                                guard let self else { return }
-                                let late = await bakeTask.result
-                                guard self.transitionRequestID == transitionID, self.isTransitioning else {
-                                    if case .success(let pair) = late {
-                                        MidSideStemBaker.removeTempFiles([pair.outgoing, pair.incoming])
-                                    }
-                                    return
-                                }
-                                guard case .success(let stemPair) = late else { return }
-                                let live = self.playbackProgress
-                                let heard = max(0, live - cueA)
-                                let landAt = blend * handoff
-                                if heard >= landAt - 1.5 {
-                                    MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
-                                    AutoMixSessionLog.shared.event(
-                                        String(format: "bake.late-drop lag=%.2fs", heard)
-                                    )
-                                    return
-                                }
-                                do {
-                                    self.mashupBakeFailedUseCrossfade = false
-                                    self.clearMashupBakeTemps()
-                                    self.mashupBakeTempURLs = [stemPair.outgoing, stemPair.incoming]
-                                    self.mashupBakeRealIncomingURL = inURL
-                                    self.mashupBakeIncomingBaseCue = cueB
-                                    self.mashupBakeOutgoingBaseCue = cueA
-                                    self.mashupIncomingCueSec = cueB
-                                    self.incomingStartPosition = cueB
-                                    let wasStream = self.isUsingStreamPlayer
-                                    try self.playMashupStemPair(
-                                        outgoingURL: stemPair.outgoing,
-                                        incomingURL: stemPair.incoming,
-                                        startOffsetSec: heard
-                                    )
-                                    if wasStream {
-                                        self.mashupStemEntryStartedAt = Date()
-                                        self.mashupStemEntryDuration = 0.35
-                                        self.mashupStemEntryFromStream = true
-                                    }
-                                    let enterP = min(1, heard / max(0.001, blend))
-                                    let rates = self.activeMashupStyle.playbackRates(progress: enterP)
-                                    self.applyMashupTimePitch(progress: enterP, outgoing: true, rate: rates.outgoing)
-                                    self.applyMashupTimePitch(progress: enterP, outgoing: false, rate: rates.incoming)
-                                    self.applyMashupTransitionEQ(progress: enterP)
-                                    let mixClock = Date()
-                                    self.transitionStartTime = mixClock.addingTimeInterval(-heard)
-                                    self.anchorDate = mixClock
-                                    let heardA = cueA + heard
-                                    self.anchorOffset = heardA
-                                    self.pausedProgress = heardA
-                                    self.progress = heardA
-                                    self.startTimer()
-                                    AutoMixSessionLog.shared.event(
-                                        String(format: "bake.upgrade lag=%.2fs", heard)
-                                    )
-                                } catch {
-                                    MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
-                                    self.mashupBakeFailedUseCrossfade = true
-                                }
-                            }
                             return
                         }
-                        Task { @MainActor [weak self] in
-                            guard let self else { return }
-                            let late = await bakeTask.result
-                            guard self.transitionRequestID == transitionID, self.isTransitioning else {
-                                if case .success(let pair) = late {
-                                    MidSideStemBaker.removeTempFiles([pair.outgoing, pair.incoming])
-                                }
-                                return
-                            }
-                            guard case .success(let stemPair) = late else { return }
-                            let live = self.playbackProgress
-                            let heard = max(0, live - cueA)
-                            let landAt = blend * handoff
-                            if heard >= landAt - 1.5 {
-                                MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
-                                AutoMixSessionLog.shared.event(
-                                    String(format: "bake.late-drop lag=%.2fs", heard)
-                                )
-                                return
-                            }
-                            do {
-                                self.mashupBakeFailedUseCrossfade = false
-                                self.clearMashupBakeTemps()
-                                self.mashupBakeTempURLs = [stemPair.outgoing, stemPair.incoming]
-                                self.mashupBakeRealIncomingURL = inURL
-                                self.mashupBakeIncomingBaseCue = cueB
-                                self.mashupBakeOutgoingBaseCue = cueA
-                                self.mashupIncomingCueSec = cueB
-                                self.incomingStartPosition = cueB
-                                let wasStream = self.isUsingStreamPlayer
-                                try self.playMashupStemPair(
-                                    outgoingURL: stemPair.outgoing,
-                                    incomingURL: stemPair.incoming,
-                                    startOffsetSec: heard
-                                )
-                                if wasStream {
-                                    self.mashupStemEntryStartedAt = Date()
-                                    self.mashupStemEntryDuration = 0.35
-                                    self.mashupStemEntryFromStream = true
-                                }
-                                let enterP = min(1, heard / max(0.001, blend))
-                                let rates = self.activeMashupStyle.playbackRates(progress: enterP)
-                                self.applyMashupTimePitch(progress: enterP, outgoing: true, rate: rates.outgoing)
-                                self.applyMashupTimePitch(progress: enterP, outgoing: false, rate: rates.incoming)
-                                self.applyMashupTransitionEQ(progress: enterP)
-                                AutoMixSessionLog.shared.event(
-                                    String(format: "bake.upgrade lag=%.2fs", heard)
-                                )
-                            } catch {
-                                MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
-                                self.mashupBakeFailedUseCrossfade = true
-                            }
-                        }
+                        // Arm failed — fall through to live FX fallback below.
                     }
                     let liveAfter = self.isUsingStreamPlayer ? self.progress : self.liveProgress()
                     // Only the time already past the cue belongs in the slice. Wall-clock
@@ -4322,6 +4484,7 @@ final class PlayerCore {
         // left a zombie transitionTimer that hard-cut the next song 50ms in.
         transitionPreparationTask?.cancel()
         transitionPreparationTask = nil
+        pendingMashupLiveArm = nil
         transitionRequestID = UUID()
 
         let elapsed = max(0, -(transitionStartTime ?? Date()).timeIntervalSinceNow)
@@ -4758,6 +4921,7 @@ final class PlayerCore {
         transitionRequestID = UUID()
         transitionPreparationTask?.cancel()
         transitionPreparationTask = nil
+        pendingMashupLiveArm = nil
         localSegmentTokens.removeValue(forKey: ObjectIdentifier(idlePlayer))
         transitionScheduled = false
         isTransitioning = false
@@ -5189,6 +5353,7 @@ final class PlayerCore {
         recordWavePlaybackTick()
         checkpointPlaybackProgress()
         syncNowPlayingElapsedIfNeeded()
+        firePendingMashupLiveArmIfNeeded()
         scheduleTransitionIfNeeded()
         refillQueueIfNeeded()
     }

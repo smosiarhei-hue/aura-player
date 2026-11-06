@@ -429,9 +429,17 @@ class AutoMixMashupTests(unittest.TestCase):
         # Wall-clock + cue-past-tail so live Automix arms before A EOF (field starve).
         self.assertIn("posAtStart + now.timeIntervalSince(waitStarted)", player)
         self.assertIn("safeCue >= dur - 0.75", player)
-        # Cue wait / bake probe sleep off MainActor (field 1076 late arm).
-        self.assertIn("await Task.detached", player)
         self.assertIn("now >= deadline", player)
+        # Field 1077: playhead ticks fire live Automix at the musical cue even if
+        # the prep Task's wait never resumed; bake probe is unstructured (not a
+        # MainActor-isolated TaskGroup that serialized the 80ms timeout).
+        self.assertIn("firePendingMashupLiveArmIfNeeded", player)
+        self.assertIn("pendingMashupLiveArm", player)
+        self.assertIn("PendingMashupLiveArm", player)
+        self.assertIn("beginLiveAutomixAtCue", player)
+        self.assertIn("RunLoop.main.add(timer, forMode: .common)", player)
+        self.assertIn("MUST NOT use a MainActor-isolated TaskGroup", player)
+        self.assertIn("Task.detached", player)
         # Silent-arm B during lead-in; re-guard after bake probe so land cannot
         # leave a zombie MIXING badge.
         self.assertIn("prearmedIncoming", player)
