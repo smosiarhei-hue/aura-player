@@ -19,8 +19,8 @@ public enum StemMashupGlue {
             &left, &right,
             rate: rate,
             delaySec: delaySec,
-            echoWet: 0.14,
-            reverbWet: 0.28,
+            echoWet: 0.24,
+            reverbWet: 0.40,
             until: left.count
         )
     }
@@ -44,8 +44,8 @@ public enum StemMashupGlue {
             &left, &right,
             rate: rate,
             delaySec: delaySec,
-            echoWet: 0.06,
-            reverbWet: 0.20,
+            echoWet: 0.12,
+            reverbWet: 0.30,
             until: until
         )
     }

@@ -327,10 +327,43 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("clampAutomixIncomingCue", scheduler_pref)
         player_blend = (ROOT / "Sonivo/playercore.swift").read_text()
         self.assertIn("MoodAutomix.placed", player_blend)
+        self.assertIn("MoodAutomix.window", player_blend)
         self.assertIn("mood.pick", player_blend)
         self.assertIn("startLandGlide", player_blend)
         self.assertNotIn("automixStemMaxBlendSec: Double = 16", player_blend)
         self.assertIn("MashupBlendScheduler.reanchorOutgoingCue", player_blend)
+        # Automix must prefer MixPlanner / lyric mixOut over raw MoodAutomix energy entry.
+        blend_fn = player_blend.split("private func resolveMashupBlend", 1)[1].split(
+            "private static let automixBakeLeadSec", 1
+        )[0]
+        self.assertLess(
+            blend_fn.index("analysis.transitionPlan"),
+            blend_fn.index("MoodAutomix.placed"),
+            "MixPlanner / profile cues must win before MoodAutomix cold-start",
+        )
+        self.assertIn('source = "\\(placed.mood)+plan"', player_blend)
+        self.assertIn('source = "\\(placed.mood)+mixOut"', player_blend)
+        # Stem / local Automix needs audible native MixFX (stream tap never reaches AVAudioEngine).
+        self.assertIn("mixFXDelayA", player_blend)
+        self.assertIn("mixFXPlateA", player_blend)
+        self.assertIn("publishNativeMixFX", player_blend)
+        self.assertIn("configureNativeMixFX", player_blend)
+        self.assertIn("Not system Spatial Audio / HRTF", player_blend)
+
+        glue = (
+            ROOT / "Packages/AutoMixV2/Sources/AudioEngineCore/StemMashupGlue.swift"
+        ).read_text()
+        self.assertIn("echoWet: 0.24", glue)
+        self.assertIn("reverbWet: 0.40", glue)
+
+        eq_env = (ROOT / "Sonivo/MixPlanRealtimeTransitionRunner.swift").read_text()
+        stem_eq = eq_env.split("static func stemBakeOffsets", 1)[1].split(
+            "private static func applyOneVocalGate", 1
+        )[0]
+        self.assertIn("automixLandProgress", stem_eq)
+        self.assertIn("hpfD", stem_eq)
+        self.assertIn("out[3]", stem_eq)
+        self.assertIn("out[4]", stem_eq)
 
     def test_session_log_does_not_reenter_playercore_during_shared_init(self):
         """Launch SIGTRAP: mode didSet → AutoMixSessionLog.snapshot → PlayerCore.shared

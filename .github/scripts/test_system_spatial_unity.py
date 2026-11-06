@@ -18,12 +18,15 @@ class SystemSpatialUnityTests(unittest.TestCase):
         self.assertNotIn('isTrueDolbyAtmos',ui)
         self.assertNotIn('codec.contains("atmos")',ui)
         self.assertIn('режим выбирает iOS',core)
+        # Legacy room nodes stay banned; musical Automix MixFX uses mixFX* names.
         for name in ['reverbA','reverbB','looperReverb','configureReverb','applyReverbPreset']:
             self.assertNotIn(name,core)
-        for eq in ['eqNodeA','eqNodeB','looperEQ']:
-            self.assertIn(f'engine.connect({eq}, to: engine.mainMixerNode, format: nil)',core)
+        self.assertIn('engine.connect(looperEQ, to: engine.mainMixerNode, format: nil)',core)
+        self.assertIn('engine.connect(eqNodeA, to: mixFXDelayA, format: nil)',core)
+        self.assertIn('engine.connect(mixFXPlateA, to: engine.mainMixerNode, format: nil)',core)
+        self.assertIn('Not system Spatial Audio / HRTF',core)
     def test_dj_reverb_wash_is_dualdeck_only_not_system_spatial(self):
-        """Musical DualDeck + stream MixFX wash is allowed; PlayerCore room nodes and Spatial claims are not."""
+        """Musical DualDeck + stream/native MixFX wash is allowed; Spatial claims are not."""
         planner=(ROOT/'Packages/AutoMixV2/Sources/MixPlanner/MixPlanner.swift').read_text()
         engine=(ROOT/'Packages/AutoMixV2/Sources/AudioEngineCore/DualDeckAudioEngine.swift').read_text()
         core=(ROOT/'Sonivo/playercore.swift').read_text()
@@ -40,6 +43,9 @@ class SystemSpatialUnityTests(unittest.TestCase):
         self.assertIn('Not system Spatial',handler)
         for name in ['reverbA','reverbB','looperReverb','configureReverb','applyReverbPreset']:
             self.assertNotIn(name,core)
+        self.assertIn('mixFXDelayA',core)
+        self.assertIn('mixFXPlateA',core)
+        self.assertIn('publishNativeMixFX',core)
         self.assertIn('applyLivePlanFX',core)
         self.assertIn('SonivoMixFXProcess',probe)
         self.assertIn('not HRTF',mixfx)

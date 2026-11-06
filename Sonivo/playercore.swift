@@ -538,6 +538,13 @@ final class PlayerCore {
     @ObservationIgnored private var timePitchB = AVAudioUnitTimePitch()
     @ObservationIgnored private var eqNodeA = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
     @ObservationIgnored private var eqNodeB = AVAudioUnitEQ(numberOfBands: bandFrequencies.count)
+    /// Musical Automix MixFX on native decks (tempo echo + light plate).
+    /// Not system Spatial Audio / HRTF — DualDeck owns the richer palette; this
+    /// mirrors stream `SonivoMixFX` so stem/local mashups are not dry.
+    @ObservationIgnored private var mixFXDelayA = AVAudioUnitDelay()
+    @ObservationIgnored private var mixFXDelayB = AVAudioUnitDelay()
+    @ObservationIgnored private var mixFXPlateA = AVAudioUnitReverb()
+    @ObservationIgnored private var mixFXPlateB = AVAudioUnitReverb()
 
     @ObservationIgnored private var looperPlayer = AVAudioPlayerNode()
     @ObservationIgnored private var looperTimePitch = AVAudioUnitTimePitch()
@@ -887,14 +894,25 @@ final class PlayerCore {
         configureTimePitch(timePitchA)
         configureTimePitch(timePitchB)
         configureTimePitch(looperTimePitch)
+        configureNativeMixFX(delay: mixFXDelayA, reverb: mixFXPlateA)
+        configureNativeMixFX(delay: mixFXDelayB, reverb: mixFXPlateB)
+
+        engine.attach(mixFXDelayA)
+        engine.attach(mixFXDelayB)
+        engine.attach(mixFXPlateA)
+        engine.attach(mixFXPlateB)
 
         engine.connect(playerA, to: timePitchA, format: nil)
         engine.connect(timePitchA, to: eqNodeA, format: nil)
-        engine.connect(eqNodeA, to: engine.mainMixerNode, format: nil)
+        engine.connect(eqNodeA, to: mixFXDelayA, format: nil)
+        engine.connect(mixFXDelayA, to: mixFXPlateA, format: nil)
+        engine.connect(mixFXPlateA, to: engine.mainMixerNode, format: nil)
 
         engine.connect(playerB, to: timePitchB, format: nil)
         engine.connect(timePitchB, to: eqNodeB, format: nil)
-        engine.connect(eqNodeB, to: engine.mainMixerNode, format: nil)
+        engine.connect(eqNodeB, to: mixFXDelayB, format: nil)
+        engine.connect(mixFXDelayB, to: mixFXPlateB, format: nil)
+        engine.connect(mixFXPlateB, to: engine.mainMixerNode, format: nil)
 
         engine.connect(looperPlayer, to: looperTimePitch, format: nil)
         engine.connect(looperTimePitch, to: looperEQ, format: nil)
@@ -934,6 +952,15 @@ final class PlayerCore {
             band.bypass = false
             band.gain = 0
         }
+    }
+
+    private func configureNativeMixFX(delay: AVAudioUnitDelay, reverb: AVAudioUnitReverb) {
+        delay.delayTime = 0.375
+        delay.feedback = 0
+        delay.lowPassCutoff = 14_000
+        delay.wetDryMix = 0
+        reverb.loadFactoryPreset(.mediumHall)
+        reverb.wetDryMix = 0
     }
 
     private func configureTimePitch(_ node: AVAudioUnitTimePitch) {
@@ -1191,11 +1218,18 @@ final class PlayerCore {
             let exit = progress <= release ? 0 : min(1, (progress - release) / max(0.08, barFrac * 1.45))
             let entry = min(1, progress / 0.18)
             let open = Float(entry * (1 - exit))
-            // Dry-deck Automix needs a louder wash; stems already carry echo/plate in the CAF.
-            let echoBase: Float = neuralAutomix ? (18 + 28 * 0.35) : (28 + 34 * 0.45)
-            let plateBase: Float = neuralAutomix ? 24 : 36
+            // DJ wash must be audible on dry decks; stem CAF already carries a lighter glue wash.
+            let echoBase: Float = neuralAutomix ? (30 + 28 * 0.45) : (40 + 36 * 0.55)
+            let plateBase: Float = neuralAutomix ? 36 : 52
             echoWet = max(echoWet, echoBase * open)
             reverbWet = max(reverbWet, plateBase * open)
+            // EchoFreeze / spaceReverb: hold a stronger plate through LAND.
+            if activeMashupStyle.archetypeName == "echoFreeze"
+                || activeMashupStyle.archetypeName == "spaceReverb"
+                || activeMashupStyle.archetypeName == "tapeStop" {
+                echoWet = max(echoWet, (neuralAutomix ? 42 : 58) * open)
+                reverbWet = max(reverbWet, (neuralAutomix ? 44 : 60) * open)
+            }
         }
 
         let delaySec: Float = safeBPM > 0
@@ -1236,10 +1270,48 @@ final class PlayerCore {
                 for: item, echoWet: nil, echoFeedback: nil, delaySec: nil, reverbWet: nil
             )
         }
+        // Stem / local Automix plays on AVAudioEngine — stream MixFX never reaches it.
+        publishNativeMixFX(
+            echoWet: echoWet,
+            echoFeedback: echoFeedback,
+            delaySec: delaySec,
+            reverbWet: reverbWet,
+            silent: silent
+        )
+    }
+
+    private func publishNativeMixFX(
+        echoWet: Float,
+        echoFeedback: Float,
+        delaySec: Float,
+        reverbWet: Float,
+        silent: Bool
+    ) {
+        let outDelay = activePlayer === playerA ? mixFXDelayA : mixFXDelayB
+        let outPlate = activePlayer === playerA ? mixFXPlateA : mixFXPlateB
+        let idleDelay = activePlayer === playerA ? mixFXDelayB : mixFXDelayA
+        let idlePlate = activePlayer === playerA ? mixFXPlateB : mixFXPlateA
+        idleDelay.wetDryMix = 0
+        idlePlate.wetDryMix = 0
+        if silent {
+            outDelay.wetDryMix = 0
+            outPlate.wetDryMix = 0
+            return
+        }
+        outDelay.delayTime = TimeInterval(min(2, max(0.05, delaySec)))
+        outDelay.feedback = min(85, max(0, echoFeedback * 70))
+        outDelay.lowPassCutoff = 12_500
+        // wetDryMix is 0…100 — map 0…1 MixFX into an audible DJ send.
+        outDelay.wetDryMix = min(70, max(0, echoWet * 62))
+        outPlate.wetDryMix = min(55, max(0, reverbWet * 48))
     }
 
     private func clearLiveMixFX() {
         StreamBeatTap.shared.clearItemMixFX()
+        mixFXDelayA.wetDryMix = 0
+        mixFXDelayB.wetDryMix = 0
+        mixFXPlateA.wetDryMix = 0
+        mixFXPlateB.wetDryMix = 0
     }
 
     private func seekOutgoingPhraseLoop() {
@@ -1278,8 +1350,8 @@ final class PlayerCore {
     /// Writes immediately (no multi-hundred-ms ramp) so 30 Hz transition ticks stay click-free.
     private func applyMashupTransitionEQ(progress: Double) {
         let style = activeMashupStyle
-        // Stem bake: mid-side CAF already carved — apply reduced bass-swap + B lead
-        // duck only (audit: flat EQ left ONE VOCAL incomplete on device).
+        // Stem bake: mid-side CAF already carved — light HPF dissolve into LAND
+        // (flat EQ made stem Automix feel like a plain overlay with no DJ filter).
         let shaped: (outgoing: [Float], incoming: [Float])
         if mashupBakeRealIncomingURL != nil || mashupPlayingMasterBake {
             if style.isDuet {
@@ -2937,8 +3009,9 @@ final class PlayerCore {
         return style
     }
 
-    /// Prefer analysed TrackProfile cues from AutoMixV2 analysis when present;
-    /// otherwise structural heuristics (outro ≥75%, intro lead).
+    /// Prefer MixPlanner + neural/lyric mixOut/mixIn (Apple word/phrase land),
+    /// then profile downbeat grid. MoodAutomix only shapes blend length / LAND —
+    /// it must not replace a musical cue with a raw energy entry.
     /// Blend length auto-adjusts from detection — the crossfade slider is unused here.
     private func resolveMashupBlend(outgoing: Track, incoming: Track, duration totalDur: Double) -> LiveMashupBlend {
         let preferred = MashupBlendScheduler.defaultPreferredBlendSec
@@ -2946,6 +3019,104 @@ final class PlayerCore {
         let outProfile = analysis.currentProfile.flatMap { mashupProfileMatches($0, track: outgoing) ? $0 : nil }
         let inProfile = analysis.nextProfile.flatMap { mashupProfileMatches($0, track: incoming) ? $0 : nil }
         let incomingDur = incoming.duration > 0 ? incoming.duration : totalDur
+
+        if outProfile != nil, inProfile != nil,
+           let plan = analysis.transitionPlan,
+           plan.type != .none,
+           MashupTransitionExecutor.durationSeconds(for: plan) >= MashupBlendScheduler.minimumBlendSec {
+            var blend = clampMashupBlendDuration(MashupTransitionExecutor.durationSeconds(for: plan))
+            var cue = MashupBlendScheduler.reanchorOutgoingCue(
+                preferredCue: plan.aOutStartSec,
+                totalDur: totalDur,
+                blend: blend
+            )
+            let inCue = MashupBlendScheduler.clampAutomixIncomingCue(
+                preferred: max(0, plan.bInStartSec),
+                incomingDur: incomingDur
+            )
+            var land = 0.86
+            var reason = plan.reason
+            if transitionMode == .automix {
+                let mood = MoodAutomix.window(
+                    outgoingDuration: totalDur,
+                    incomingDuration: incomingDur,
+                    outgoing: outProfile,
+                    incoming: inProfile
+                )
+                land = mood.landProgress
+                if mood.mood == "tight" {
+                    blend = clampMashupBlendDuration(min(blend, mood.blendSec))
+                    cue = MashupBlendScheduler.reanchorOutgoingCue(
+                        preferredCue: plan.aOutStartSec,
+                        totalDur: totalDur,
+                        blend: blend
+                    )
+                } else if mood.mood == "wash" {
+                    blend = clampMashupBlendDuration(max(blend, mood.blendSec))
+                    cue = MashupBlendScheduler.reanchorOutgoingCue(
+                        preferredCue: min(plan.aOutStartSec, max(0, totalDur - blend)),
+                        totalDur: totalDur,
+                        blend: blend
+                    )
+                }
+                reason = "\(plan.reason) · \(mood.mood)"
+            }
+            return LiveMashupBlend(
+                outgoingCueSec: cue,
+                blendDurationSec: blend,
+                incomingStartSec: inCue,
+                reason: reason,
+                landProgress: land
+            )
+        }
+
+        if outProfile != nil || inProfile != nil {
+            let scheduled = MashupBlendScheduler.schedule(
+                outgoingDuration: totalDur,
+                incomingDuration: incomingDur,
+                preferredBlendSec: preferred,
+                outgoing: outProfile,
+                incoming: inProfile
+            )
+            if transitionMode == .automix {
+                let mood = MoodAutomix.window(
+                    outgoingDuration: totalDur,
+                    incomingDuration: incomingDur,
+                    outgoing: outProfile,
+                    incoming: inProfile
+                )
+                var blend = scheduled.blendDurationSec
+                var cue = scheduled.outgoingCueSec
+                if mood.mood == "tight" {
+                    blend = clampMashupBlendDuration(min(blend, mood.blendSec))
+                    cue = MashupBlendScheduler.reanchorOutgoingCue(
+                        preferredCue: outProfile?.mixOutSec ?? cue,
+                        totalDur: totalDur,
+                        blend: blend
+                    )
+                } else if mood.mood == "wash" {
+                    blend = clampMashupBlendDuration(max(blend, mood.blendSec))
+                    cue = MashupBlendScheduler.reanchorOutgoingCue(
+                        preferredCue: outProfile?.mixOutSec ?? cue,
+                        totalDur: totalDur,
+                        blend: blend
+                    )
+                }
+                let inCue = MashupBlendScheduler.clampAutomixIncomingCue(
+                    preferred: scheduled.incomingStartSec,
+                    incomingDur: incomingDur
+                )
+                return LiveMashupBlend(
+                    outgoingCueSec: cue,
+                    blendDurationSec: blend,
+                    incomingStartSec: inCue,
+                    reason: "\(scheduled.reason) · \(mood.mood)",
+                    landProgress: mood.landProgress
+                )
+            }
+            return scheduled
+        }
+
         if transitionMode == .automix {
             let placed = MoodAutomix.placed(
                 outgoingDuration: totalDur,
@@ -2961,31 +3132,13 @@ final class PlayerCore {
                 landProgress: placed.landProgress
             )
         }
-        if outProfile != nil, inProfile != nil,
-           let plan = analysis.transitionPlan,
-           plan.type != .none,
-           MashupTransitionExecutor.durationSeconds(for: plan) >= MashupBlendScheduler.minimumBlendSec {
-            let blend = clampMashupBlendDuration(MashupTransitionExecutor.durationSeconds(for: plan))
-            let cue = MashupBlendScheduler.reanchorOutgoingCue(
-                preferredCue: plan.aOutStartSec,
-                totalDur: totalDur,
-                blend: blend
-            )
-            return LiveMashupBlend(
-                outgoingCueSec: cue,
-                blendDurationSec: blend,
-                incomingStartSec: max(0, plan.bInStartSec),
-                reason: plan.reason
-            )
-        }
-        let scheduled = MashupBlendScheduler.schedule(
+        return MashupBlendScheduler.schedule(
             outgoingDuration: totalDur,
             incomingDuration: incomingDur,
             preferredBlendSec: preferred,
             outgoing: outProfile,
             incoming: inProfile
         )
-        return scheduled
     }
 
     /// Materialize + separate this long before the musical cue. Baking at the
@@ -2993,8 +3146,9 @@ final class PlayerCore {
     /// next song hard-cut a few seconds in.
     private static let automixBakeLeadSec: Double = 22
 
-    /// Read the outro and the intro, then replace the preparation window with
-    /// the mood the files actually have. A failed read keeps the runway.
+    /// Read the outro and the intro, then refine blend length / LAND from mood.
+    /// Never replace MixPlanner / neural lyric mixOut·mixIn with a raw energy entry —
+    /// that is what made Automix miss Apple-style word land and BPM handoff.
     private func retargetAutomixFromEnergy(
         outgoingURL: URL,
         incomingURL: URL,
@@ -3008,32 +3162,92 @@ final class PlayerCore {
             return nil
         }
         let live = isUsingStreamPlayer ? progress : liveProgress()
+        let totalDur = playerDuration > 1 ? playerDuration : bins.outgoingDuration
         let incomingDur = bins.incomingDuration > 1
             ? bins.incomingDuration
             : (incomingTrack?.duration ?? bins.incomingDuration)
         let placed = MoodAutomix.placed(
-            outgoingDuration: playerDuration > 1 ? playerDuration : bins.outgoingDuration,
+            outgoingDuration: totalDur,
             incomingDuration: incomingDur,
             outgoingTail: bins.outgoingTail,
             incomingHead: bins.incomingHead,
             notBefore: max(0, live - 0.2)
         )
-        transitionDuration = placed.blendSec
-        incomingStartPosition = placed.incomingStartSec
-        mashupIncomingCueSec = placed.incomingStartSec
+        let analysis = AutoMixV2AnalysisRuntime.shared
+        var blend = placed.blendSec
+        var cueA = placed.outgoingCueSec
+        var cueB = placed.incomingStartSec
+        var source = placed.mood
+
+        if let plan = analysis.transitionPlan,
+           plan.type != .none,
+           let outTrack = currentTrack,
+           let inTrack = incomingTrack,
+           let outP = analysis.currentProfile, mashupProfileMatches(outP, track: outTrack),
+           let inP = analysis.nextProfile, mashupProfileMatches(inP, track: inTrack) {
+            if placed.mood == "tight" {
+                blend = clampMashupBlendDuration(min(blend, placed.blendSec))
+            } else if placed.mood == "wash" {
+                blend = clampMashupBlendDuration(max(blend, placed.blendSec))
+            }
+            cueA = MashupBlendScheduler.reanchorOutgoingCue(
+                preferredCue: plan.aOutStartSec,
+                totalDur: totalDur,
+                blend: blend
+            )
+            cueB = MashupBlendScheduler.clampAutomixIncomingCue(
+                preferred: max(0, plan.bInStartSec),
+                incomingDur: incomingDur
+            )
+            source = "\(placed.mood)+plan"
+        } else if let outTrack = currentTrack,
+                  let outP = analysis.currentProfile,
+                  mashupProfileMatches(outP, track: outTrack),
+                  outP.mixOutSec > 1 {
+            if placed.mood == "tight" {
+                blend = clampMashupBlendDuration(min(blend, placed.blendSec))
+            } else if placed.mood == "wash" {
+                blend = clampMashupBlendDuration(max(blend, placed.blendSec))
+            }
+            cueA = MashupBlendScheduler.reanchorOutgoingCue(
+                preferredCue: outP.mixOutSec,
+                totalDur: totalDur,
+                blend: blend
+            )
+            if let inTrack = incomingTrack,
+               let inP = analysis.nextProfile,
+               mashupProfileMatches(inP, track: inTrack) {
+                cueB = MashupBlendScheduler.clampAutomixIncomingCue(
+                    preferred: inP.mixInSec,
+                    incomingDur: incomingDur
+                )
+            }
+            source = "\(placed.mood)+mixOut"
+        }
+
+        let room = max(MashupBlendScheduler.minimumBlendSec, totalDur - cueA)
+        blend = clampMashupBlendDuration(min(blend, room))
+        if cueA < live - 0.2 {
+            cueA = min(max(live - 0.2, totalDur * MashupBlendScheduler.minimumPlayedFraction), max(0, totalDur - MashupBlendScheduler.minimumBlendSec))
+            blend = clampMashupBlendDuration(min(blend, max(MashupBlendScheduler.minimumBlendSec, totalDur - cueA)))
+        }
+
+        transitionDuration = blend
+        incomingStartPosition = cueB
+        mashupIncomingCueSec = cueB
         activeMashupStyle.moodLand = placed.landProgress
         activeMashupStyle.handoffAt = placed.landProgress
         AutoMixSessionLog.shared.event(
             String(
                 format: "mood.pick %@ blend=%.1f inCue=%.1f land=%.2f cueA=%.1f",
-                placed.mood,
-                placed.blendSec,
-                placed.incomingStartSec,
+                source,
+                blend,
+                cueB,
                 placed.landProgress,
-                placed.outgoingCueSec
+                cueA
             )
         )
-        return (placed.outgoingCueSec, placed.incomingStartSec, placed.blendSec)
+        return (cueA, cueB, blend)
     }
 
     private func mashupProfileMatches(_ profile: TrackProfile, track: Track) -> Bool {
@@ -3186,7 +3400,8 @@ final class PlayerCore {
                     let stemPadSec = 8.0
                     let barSec = (4 * 60) / max(30, Double(style.targetBPM))
                     let loopSec = 0.0
-                    let echoDelaySec = duetBake ? 0 : min(0.5, max(0.18, 60 / max(30, Double(style.targetBPM)) * 0.5))
+                    // Tempo-synced echo glued into the stem CAF (DJ wash, not Spatial Audio).
+                    let echoDelaySec = duetBake ? 0 : min(0.58, max(0.22, 60 / max(30, Double(style.targetBPM)) * 0.75))
                     let rateB = Double(style.rateB == 0 ? 1 : style.rateB)
                     // Bake in parallel with the cue wait. Waiting for HTDemucs first left
                     // 20s of silence after schedule, then a late abrupt land.

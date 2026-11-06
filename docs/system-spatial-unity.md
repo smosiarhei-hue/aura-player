@@ -4,7 +4,7 @@
 
 Sonivo does not contain an HRTF/binaural renderer, AVAudioEnvironmentNode, or a general stereo widening/pan effect. System spatialization stays with AVPlayerItem.allowedAudioSpatializationFormats and the playback audio session. Fixed/head-tracked mode and the personalized profile remain system/user choices, not app-made effects.
 
-Removed unused legacy PlayerCore AVAudioUnitReverb nodes (`reverbA` / `reverbB` / `looperReverb`), their preset loader, and hall graph connections. EQ on the live PlayerCore path connects directly to the master mixer. Musical Automix FX on the **live streaming path** use the MTAudioProcessingTap MixFX send (tempo echo + light plate) plus phrase-loop seeks and 1/16 stutter gates — never claimed as Spatial Audio. DualDeck AutoMix V2 mirrors the same vocabulary with per-deck `AVAudioUnitDelay` / `AVAudioUnitReverb` when that engine owns playback. Other musical features (tempo, filters, echo), EQ, and optional karaoke are likewise not disguised as Spatial Audio.
+Legacy PlayerCore room nodes (`reverbA` / `reverbB` / `looperReverb`) stay removed. Musical Automix FX use dedicated MixFX sends — never claimed as Spatial Audio: stream path via MTAudioProcessingTap MixFX (tempo echo + light plate); native/stem path via `mixFXDelay*` / `mixFXPlate*` (`AVAudioUnitDelay` / `AVAudioUnitReverb`) so baked mashups are not dry. DualDeck AutoMix V2 mirrors the same vocabulary when that engine owns playback. Other musical features (tempo, filters, echo), EQ, and optional karaoke are likewise not disguised as Spatial Audio.
 
 `isSpatialAudioEnabled` on the output port is treated as a capability, not proof of active rendering/head tracking. Removed codec-string-inferred Atmos/active Atmos badges. UI and logs describe permission/capability only. AC3/E-AC3 stream bypass stays intact; no conversion solely to apply EQ. Deployment target is unchanged; no iOS 27-only symbols added.
 
@@ -27,7 +27,7 @@ Device output volume remains controlled by MPVolumeView and AVAudioSession.outpu
 
 - Actual portable C EQ bypass/channel/format/level tests remain green.
 - Native Swift fixture compiles actual PlaybackGainState, production wave fader (AV/UI dependencies replaced only by a test player), CrossfadeCurve and MixSettings. Exercises unity, independent envelopes, stale tokens, NaN/range rejection, cancellation, awaited callback overlap, sleep coexistence and constant-power mathematics.
-- Source guards check direct graph wiring, no PlayerCore room nodes, DualDeck musical reverb wash only (not Spatial), no false active/Atmos inference, original-loudness defaults and no duplicate vocal processing.
+- Source guards check MixFX graph wiring (no legacy room nodes), DualDeck + native/stream musical wash (not Spatial), no false active/Atmos inference, original-loudness defaults and no duplicate vocal processing.
 - iOS archive is validated in the existing macOS Build IPA workflow. No physical AirPods listening or head tracking is claimed by CI. Compare the same source at the same device volume with EQ flat/off, karaoke off and the same Control Center Spatial Audio mode; then test route changes, pause/resume, wave switch and sleep cancellation.
 
 Apple references: [spatialization preference](https://developer.apple.com/documentation/avfoundation/avplayeritem/allowedaudiospatializationformats), [port capability](https://developer.apple.com/documentation/avfaudio/avaudiosessionportdescription/isspatialaudioenabled), [user controls](https://support.apple.com/en-us/102469).
