@@ -102,19 +102,35 @@ final class AutoMixV2AnalysisRuntime {
             )
             return true
         }
-        // Cancel background pair work, but keep bake results even if observer restarts.
+        // Cancel background pair work and wait so it releases any live AVAudioFile
+        // handle before we re-open the same caches (field 1145 GenericObjCError 0).
+        let previous = analysisTask
         analysisTask?.cancel()
+        analysisTask = nil
+        _ = await previous?.value
         let bakeToken = key
         observedPair = key
         plannedPair = ""
         lastError = nil
         pipelineStatus = "Анализ bake-local пары"
+        var cleanup: [URL] = []
+        defer {
+            for url in cleanup {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
         do {
-            let rawA = try await analyzer.profile(for: currentID, fileURL: outgoingFile)
-            var a = await TrackProfileEnricher.enrich(rawA, fileURL: outgoingFile)
+            // Float32 CAF / private copy — never fight the live Automix deck.
+            let safeOut = try Self.analysisSafeURL(outgoingFile)
+            if let scratch = safeOut.cleanup { cleanup.append(scratch) }
+            let safeIn = try Self.analysisSafeURL(incomingFile)
+            if let scratch = safeIn.cleanup { cleanup.append(scratch) }
+
+            let rawA = try await analyzer.profile(for: currentID, fileURL: safeOut.url)
+            var a = await TrackProfileEnricher.enrich(rawA, fileURL: safeOut.url)
             a = await applyNeuralCue(to: a, track: outgoing, role: .outgoing)
-            let rawB = try await analyzer.profile(for: nextID, fileURL: incomingFile)
-            var b = await TrackProfileEnricher.enrich(rawB, fileURL: incomingFile)
+            let rawB = try await analyzer.profile(for: nextID, fileURL: safeIn.url)
+            var b = await TrackProfileEnricher.enrich(rawB, fileURL: safeIn.url)
             b = await applyNeuralCue(to: b, track: incoming, role: .incoming)
             // Publish profiles even if the observer raced — PlayerCore reads these next.
             currentProfile = a
@@ -142,8 +158,8 @@ final class AutoMixV2AnalysisRuntime {
             let ok = a.bpm > 30 && b.bpm > 30
             AutoMixSessionLog.shared.event(
                 String(
-                    format: "analysis.bake-local bpmA=%.0f bpmB=%.0f plan=%@ ok=%d",
-                    a.bpm, b.bpm, plan.archetype.rawValue, ok ? 1 : 0
+                    format: "analysis.bake-local bpmA=%.0f bpmB=%.0f rateA=%.3f rateB=%.3f plan=%@ ok=%d",
+                    a.bpm, b.bpm, plan.rateA, plan.rateB, plan.archetype.rawValue, ok ? 1 : 0
                 )
             )
             // Profiles with BPM still unlock beatmatch even when MixPlanner declines.
@@ -155,10 +171,34 @@ final class AutoMixV2AnalysisRuntime {
             }
             lastError = String(describing: error)
             pipelineStatus = "Эвристика mashup (bake-local анализ недоступен)"
+            let ns = error as NSError
             AutoMixSessionLog.shared.event(
-                "analysis.bake-local fail \(error.localizedDescription)"
+                "analysis.bake-local fail \(error.localizedDescription) domain=\(ns.domain) code=\(ns.code)"
             )
             return false
+        }
+    }
+
+    /// CAF / private copy for BPM analysis while the live deck holds the cache.
+    private static func analysisSafeURL(_ fileURL: URL) throws -> (url: URL, cleanup: URL?) {
+        let ext = fileURL.pathExtension.lowercased()
+        let compressed = ["m4a", "mp3", "aac", "m4b", "mp4"].contains(ext)
+        if compressed {
+            // AVAssetReader path survives live-deck locks that kill AVAudioFile.
+            let caf = try MidSideStemBaker.decodeCompressedToFloat32CAF(fileURL)
+            return (caf, caf)
+        }
+        let copyExt = fileURL.pathExtension.isEmpty ? "caf" : fileURL.pathExtension
+        let copy = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sonivo-bake-analyze-\(UUID().uuidString).\(copyExt)")
+        do {
+            try FileManager.default.copyItem(at: fileURL, to: copy)
+            return (copy, copy)
+        } catch {
+            try? FileManager.default.removeItem(at: copy)
+            // Last resort: openFloat32Source may still materialize a scratch CAF.
+            let opened = try MidSideStemBaker.openFloat32Source(fileURL)
+            return (opened.file.url, opened.scratch)
         }
     }
 
@@ -271,8 +311,11 @@ final class AutoMixV2AnalysisRuntime {
             }
             do {
                 let currentFile = try await self.resolveFile(for: current, id: currentID, allowDownload: allowDownload)
-                let rawA = try await analyzer.profile(for: currentID, fileURL: currentFile)
-                var a = await TrackProfileEnricher.enrich(rawA, fileURL: currentFile)
+                // Same live-deck lock as bake-local — profile a private CAF/copy.
+                let safeOut = try Self.analysisSafeURL(currentFile)
+                defer { if let scratch = safeOut.cleanup { try? FileManager.default.removeItem(at: scratch) } }
+                let rawA = try await analyzer.profile(for: currentID, fileURL: safeOut.url)
+                var a = await TrackProfileEnricher.enrich(rawA, fileURL: safeOut.url)
                 // LRC / synced lyrics refine mixOut while the song plays (lab neuralAutomix).
                 pipelineStatus = planMode == .duet ? "Duet · текст / neural cue…" : "Automix · текст / neural cue…"
                 a = await self.applyNeuralCue(to: a, track: current, role: .outgoing)
@@ -284,8 +327,10 @@ final class AutoMixV2AnalysisRuntime {
                 }
                 pipelineStatus = "Анализ следующего трека"
                 let nextFile = try await self.resolveFile(for: next, id: nextID, allowDownload: allowDownload)
-                let rawB = try await analyzer.profile(for: nextID, fileURL: nextFile)
-                var b = await TrackProfileEnricher.enrich(rawB, fileURL: nextFile)
+                let safeIn = try Self.analysisSafeURL(nextFile)
+                defer { if let scratch = safeIn.cleanup { try? FileManager.default.removeItem(at: scratch) } }
+                let rawB = try await analyzer.profile(for: nextID, fileURL: safeIn.url)
+                var b = await TrackProfileEnricher.enrich(rawB, fileURL: safeIn.url)
                 b = await self.applyNeuralCue(to: b, track: next, role: .incoming)
                 guard !Task.isCancelled, observedPair == key else { return }
                 nextProfile = b
@@ -309,6 +354,12 @@ final class AutoMixV2AnalysisRuntime {
                 pipelineStatus = plan.type == .none
                     ? "План запретил музыкальный переход; будет кроссфейд"
                     : "План перехода готов · \(plan.archetype.rawValue) · A@\(String(format: "%.0f", a.mixOutSec))s"
+                AutoMixSessionLog.shared.event(
+                    String(
+                        format: "analysis.pair bpmA=%.0f bpmB=%.0f rateA=%.3f rateB=%.3f plan=%@",
+                        a.bpm, b.bpm, plan.rateA, plan.rateB, plan.archetype.rawValue
+                    )
+                )
                 if plan.type != .none {
                     let outFile = currentFile
                     let inFile = nextFile

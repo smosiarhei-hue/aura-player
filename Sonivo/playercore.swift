@@ -3854,21 +3854,23 @@ final class PlayerCore {
                    let inURL = inURLForBake {
                     // Field 1133: bake had local A/B while observer still reported bpm0 /
                     // mood.scan — profile those same URLs before stem work so rates lock.
-                    if !self.activeMashupStyle.isBeatmatched || self.activeMashupStyle.targetBPM < 30 {
-                        _ = await AutoMixV2AnalysisRuntime.shared.ingestBakeLocalPair(
-                            outgoing: current,
-                            incoming: nextTrack,
-                            outgoingFile: outURL,
-                            incomingFile: inURL
-                        )
-                    }
-                    // Local A/B are ready — pick up BPM/plan if analysis finished during lead-in
-                    // so stem bake and live rates are not stuck at provisional rate=1.
-                    _ = self.refreshMashupStyleFromAnalysis(
+                    // Always re-profile local A/B at bake — field 1145 left bpm0 when the
+                    // background observer could not open the live deck cache.
+                    let ingested = await AutoMixV2AnalysisRuntime.shared.ingestBakeLocalPair(
                         outgoing: current,
                         incoming: nextTrack,
-                        reason: "bake-start"
+                        outgoingFile: outURL,
+                        incomingFile: inURL
                     )
+                    // Local A/B are ready — pick up BPM/plan if analysis finished during lead-in
+                    // so stem bake and live rates are not stuck at provisional rate=1.
+                    if self.refreshMashupStyleFromAnalysis(
+                        outgoing: current,
+                        incoming: nextTrack,
+                        reason: ingested ? "bake-start+bpm" : "bake-start"
+                    ) {
+                        self.snapMashupRatesToActiveStyle(progress: 0)
+                    }
                     var blend = self.transitionDuration
                     var style = self.activeMashupStyle
                     let duetBake = self.transitionMode == .duet || style.isDuet

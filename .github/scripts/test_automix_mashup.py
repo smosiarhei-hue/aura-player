@@ -494,7 +494,8 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("refreshMashupStyleFromAnalysis", player)
         self.assertIn("style.upgrade", player)
         self.assertIn("snapMashupRatesToActiveStyle", player)
-        self.assertIn('reason: "bake-start"', player)
+        self.assertIn('"bake-start+bpm"', player)
+        self.assertIn('"bake-start"', player)
         self.assertIn('reason: "live-cue"', player)
         self.assertIn('reason: "bake-upgrade"', player)
         # Field 1133: provisional bpm0/mood.scan must re-profile bake-local A/B
@@ -512,6 +513,21 @@ class AutoMixMashupTests(unittest.TestCase):
         analysis = (ROOT / "Sonivo/AutoMixV2AnalysisRuntime.swift").read_text()
         self.assertIn("func ingestBakeLocalPair", analysis)
         self.assertIn("Анализ bake-local пары", analysis)
+        # Field 1145: live-deck AVAudioFile open → GenericObjCError 0 / bpm0 forever.
+        self.assertIn("analysisSafeURL", analysis)
+        self.assertIn("decodeCompressedToFloat32CAF", analysis)
+        self.assertIn("await previous?.value", analysis)
+        self.assertIn("rateA=%.3f rateB=%.3f", analysis)
+        self.assertIn("analysis.pair bpmA=", analysis)
+        player_ingest = (ROOT / "Sonivo/playercore.swift").read_text()
+        self.assertIn("bake-start+bpm", player_ingest)
+        self.assertIn("snapMashupRatesToActiveStyle(progress: 0)", player_ingest)
+        analyzer = (
+            ROOT / "Packages/AutoMixV2/Sources/TrackAnalysis/TrackAnalyzer.swift"
+        ).read_text()
+        self.assertIn("preparePrivateAnalysisURL", analyzer)
+        self.assertIn("sonivo-analyze-", analyzer)
+        self.assertIn("_GenericObjCError", analyzer)
         # Field 1133: LAND must not kill the audible B stem before the dry glide,
         # and bake.ready must ease into stem beds (not snap 1.0 → 0.64).
         land_fn = player.split("private func landAutomixOntoDryB", 1)[1].split(

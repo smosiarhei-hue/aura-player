@@ -70,15 +70,23 @@ public enum TrackAnalysisAlgorithms {
 private enum TrackAnalysisComputer {
     static func analyze(id: TrackID, fileURL: URL) throws -> TrackProfile {
         try Task.checkCancellation()
-        let source = try AVAudioFile(forReading: fileURL)
+        // Never open the live playback URL — AVAudioEngine / AVPlayer holding the
+        // same cache throws Foundation._GenericObjCError 0 and leaves Automix on bpm0.
+        let (analysisURL, scratch) = try preparePrivateAnalysisURL(fileURL)
+        defer {
+            if let scratch {
+                try? FileManager.default.removeItem(at: scratch)
+            }
+        }
+        let source = try openAnalysisFile(analysisURL)
         let sourceRate = source.processingFormat.sampleRate
         guard sourceRate > 0 else { throw TrackAnalysisError.invalidAudioFormat }
         let duration = Double(source.length) / sourceRate
 
         let analysisSampleRate = 22_050.0
-        let rhythm = try AudioDecoder.decodeMono(fileURL: fileURL, sampleRate: analysisSampleRate)
+        let rhythm = try AudioDecoder.decodeMono(fileURL: analysisURL, sampleRate: analysisSampleRate)
         try Task.checkCancellation()
-        let loudness = try AudioDecoder.decodeMono(fileURL: fileURL, sampleRate: analysisSampleRate)
+        let loudness = try AudioDecoder.decodeMono(fileURL: analysisURL, sampleRate: analysisSampleRate)
         try Task.checkCancellation()
         guard !rhythm.isEmpty, !loudness.isEmpty else { throw TrackAnalysisError.noAudioSamples }
 
@@ -118,11 +126,51 @@ private enum TrackAnalysisComputer {
                             mixInSec: cues.mixIn, mixOutSec: cues.mixOut,
                             mixable: mixable, confidence: confidence)
     }
+
+    /// Private copy so BPM analysis never races the live Automix deck on the same path.
+    private static func preparePrivateAnalysisURL(_ fileURL: URL) throws -> (URL, URL?) {
+        let ext = fileURL.pathExtension.isEmpty ? "audio" : fileURL.pathExtension
+        let copy = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sonivo-analyze-\(UUID().uuidString).\(ext)")
+        do {
+            try FileManager.default.copyItem(at: fileURL, to: copy)
+        } catch {
+            // Copy can race a still-writing download — fall through to live open.
+            return (fileURL, nil)
+        }
+        if (try? openAnalysisFile(copy)) != nil {
+            return (copy, copy)
+        }
+        try? FileManager.default.removeItem(at: copy)
+        return (fileURL, nil)
+    }
+
+    private static func openAnalysisFile(_ url: URL) throws -> AVAudioFile {
+        if let converting = try? AVAudioFile(
+            forReading: url,
+            commonFormat: .pcmFormatFloat32,
+            interleaved: false
+        ), converting.length > 0 {
+            return converting
+        }
+        let plain = try AVAudioFile(forReading: url)
+        guard plain.length > 0 else { throw TrackAnalysisError.invalidAudioFormat }
+        return plain
+    }
 }
 
 private enum AudioDecoder {
     static func decodeMono(fileURL: URL, sampleRate: Double) throws -> [Float] {
-        let file = try AVAudioFile(forReading: fileURL)
+        let file: AVAudioFile
+        if let converting = try? AVAudioFile(
+            forReading: fileURL,
+            commonFormat: .pcmFormatFloat32,
+            interleaved: false
+        ), converting.length > 0 {
+            file = converting
+        } else {
+            file = try AVAudioFile(forReading: fileURL)
+        }
         guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32,
                                          sampleRate: sampleRate, channels: 1,
                                          interleaved: false),
