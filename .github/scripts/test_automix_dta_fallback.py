@@ -106,6 +106,12 @@ class AutomixDtaFallbackTests(unittest.TestCase):
         self.assertIn("transitionPreparationTask?.cancel()", complete)
         self.assertIn("transitionRequestID = UUID()", complete)
         self.assertIn("pendingMashupLiveArm = nil", complete)
+        # Field 1129: session log must not hard-zero volB when stream A + local B.
+        probe = PLAYER.split("var idleDeckVolumePublic: Float", 1)[1].split(
+            "var mashupLockedRateAPublic", 1
+        )[0]
+        self.assertIn("return idlePlayer.volume", probe)
+        self.assertNotIn("if isUsingStreamPlayer { return 0 }", probe)
         # New schedule must clear leftover MIXING timer from a zombie arm.
         schedule = PLAYER.split("private func scheduleSimpleTransition(", 1)[1].split(
             "transitionPreparationTask = Task", 1

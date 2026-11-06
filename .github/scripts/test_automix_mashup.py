@@ -437,6 +437,11 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("pendingMashupLiveArm", player)
         self.assertIn("PendingMashupLiveArm", player)
         self.assertIn("beginLiveAutomixAtCue", player)
+        # Field 1129: live Automix must mount A+B on AVAudioEngine — stream AVPlayer
+        # never mixed with idlePlayer (volB stayed 0 through MIXING).
+        self.assertIn("mountLiveAutomixNativeDecks", player)
+        self.assertIn("lane.native dual-deck", player)
+        self.assertIn("Apple Automix live grammar", player)
         # Cue wait stays on MainActor (DispatchQueue asyncAfter) — no nonisolated
         # wait box (Build IPA 1127/1128 default-isolation compile failures).
         self.assertIn("DispatchQueue.main.asyncAfter", player)

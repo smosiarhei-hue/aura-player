@@ -101,6 +101,7 @@ fileprivate final class PendingMashupLiveArm: @unchecked Sendable {
     let transitionID: UUID
     let generation: Int
     let currentTrackID: UUID
+    let outURL: URL
     let inURL: URL
     let bakeTask: Task<(outgoing: URL, incoming: URL), Error>
     var prearmed: Bool
@@ -114,6 +115,7 @@ fileprivate final class PendingMashupLiveArm: @unchecked Sendable {
         transitionID: UUID,
         generation: Int,
         currentTrackID: UUID,
+        outURL: URL,
         inURL: URL,
         bakeTask: Task<(outgoing: URL, incoming: URL), Error>,
         prearmed: Bool
@@ -125,6 +127,7 @@ fileprivate final class PendingMashupLiveArm: @unchecked Sendable {
         self.transitionID = transitionID
         self.generation = generation
         self.currentTrackID = currentTrackID
+        self.outURL = outURL
         self.inURL = inURL
         self.bakeTask = bakeTask
         self.prearmed = prearmed
@@ -524,8 +527,9 @@ final class PlayerCore {
     var idleDeckVolumePublic: Float {
         // Hybrid Automix (native A + stream B) must report the stream deck volume —
         // field log 1045 showed volB=0 while B lived on idleStreamingPlayer.
+        // Field 1129: stream A + local B used to hard-return 0 and hid a silent
+        // idlePlayer during MIXING — report the real local deck when B is armed.
         if incomingIsStream { return idleStreamingPlayer.volume }
-        if isUsingStreamPlayer { return 0 }
         return idlePlayer.volume
     }
     /// Locked Automix style rates/pitch for session-log honesty (not live accel).
@@ -2983,37 +2987,107 @@ final class PlayerCore {
         beginLiveAutomixAtCue(arm: arm)
     }
 
+    /// Mount A+B on AVAudioEngine so live Automix is audible.
+    /// Field 1129: stream AVPlayer + silent idlePlayer never mixed — volB stayed 0
+    /// and LAND hard-cut into B. Apple Automix needs both decks on one engine.
+    private func mountLiveAutomixNativeDecks(
+        outURL: URL,
+        inURL: URL,
+        positionA: Double,
+        cueB: Double
+    ) throws {
+        let outFile = try openAutomixPlaybackFile(outURL)
+        let inFile = incomingAudioFile ?? prepareMashupIncomingFile(inURL) ?? {
+            try? openAutomixPlaybackFile(inURL)
+        }()
+        guard let inFile else { throw CocoaError(.fileReadNoSuchFile) }
+
+        let pos = max(0, positionA)
+        localSegmentTokens.removeValue(forKey: ObjectIdentifier(activePlayer))
+        localSegmentTokens.removeValue(forKey: ObjectIdentifier(idlePlayer))
+        activePlayer.stop()
+        idlePlayer.stop()
+
+        activeAudioFile = outFile
+        incomingAudioFile = inFile
+        incomingIsStream = false
+        activeLocalURL = outURL
+        scheduleLocalSegment(outFile, on: activePlayer, at: pos)
+        scheduleLocalSegment(inFile, on: idlePlayer, at: max(0, cueB))
+        activePlayer.volume = 1
+        idlePlayer.volume = 0
+        if !engine.isRunning { try engine.start() }
+        activePlayer.play()
+        idlePlayer.play()
+
+        if isUsingStreamPlayer {
+            activeStreamingPlayer.pause()
+            idleStreamingPlayer.pause()
+            activeStreamingPlayer.volume = 0
+            idleStreamingPlayer.volume = 0
+            isUsingStreamPlayer = false
+            AutoMixSessionLog.shared.event(
+                String(format: "lane.native dual-deck pos=%.1f cueB=%.1f", pos, cueB)
+            )
+        }
+
+        // Remount chrome/playhead onto native A (stream observers stop after flip).
+        let clock = Date()
+        anchorDate = clock
+        anchorOffset = pos
+        pausedProgress = pos
+        progress = pos
+        streamDuration = currentTrack?.duration ?? streamDuration
+        startTimer()
+    }
+
     /// Audible Automix fader at the cue while bake may still be cooking.
     private func beginLiveAutomixAtCue(arm: PendingMashupLiveArm) {
         guard isTransitioning, !incomingLaneReady else { return }
         guard transitionRequestID == arm.transitionID, generation == arm.generation else { return }
 
-        mashupBakeFailedUseCrossfade = true
+        // Bake is late — keep Apple Automix volume grammar (A lead × B bed), not a
+        // silent equal-power fade that left volB=0 on the stream path (field 1129).
+        mashupBakeFailedUseCrossfade = false
         AutoMixSessionLog.shared.event("bake.pending → live Automix at cue")
 
-        var liveArmed = arm.prearmed
-        if !liveArmed {
-            let prepared = incomingAudioFile ?? prepareMashupIncomingFile(arm.inURL)
-            if let prepared {
-                do {
-                    try armPreparedMashupIncoming(
-                        file: prepared,
-                        on: idlePlayer,
-                        at: arm.cueB
-                    )
-                    liveArmed = true
-                    arm.prearmed = true
-                } catch {
-                    AutoMixSessionLog.shared.fault(
-                        "lane.arm \(error.localizedDescription)"
-                    )
+        do {
+            try mountLiveAutomixNativeDecks(
+                outURL: arm.outURL,
+                inURL: arm.inURL,
+                positionA: max(playbackProgress, arm.cueA),
+                cueB: arm.cueB
+            )
+            arm.prearmed = true
+        } catch {
+            // Fall back to silent-arm B only (native A already playing).
+            var liveArmed = arm.prearmed
+            if !liveArmed {
+                let prepared = incomingAudioFile ?? prepareMashupIncomingFile(arm.inURL)
+                if let prepared {
+                    do {
+                        try armPreparedMashupIncoming(
+                            file: prepared,
+                            on: idlePlayer,
+                            at: arm.cueB
+                        )
+                        liveArmed = true
+                        arm.prearmed = true
+                    } catch {
+                        AutoMixSessionLog.shared.fault(
+                            "lane.arm \(error.localizedDescription)"
+                        )
+                    }
                 }
             }
-        }
-        guard liveArmed else {
-            AutoMixSessionLog.shared.fault("lane.arm missing at cue → keep waiting")
-            arm.fired = false
-            return
+            guard liveArmed else {
+                AutoMixSessionLog.shared.fault("lane.arm missing at cue → keep waiting")
+                arm.fired = false
+                return
+            }
+            AutoMixSessionLog.shared.fault(
+                "lane.native \(error.localizedDescription) → keep hybrid"
+            )
         }
 
         let transitionID = arm.transitionID
@@ -3027,15 +3101,8 @@ final class PlayerCore {
         incomingLaneReady = true
         transitionStartTime = Date()
         if isMashupTransitionMode {
-            if isUsingStreamPlayer, let item = activeStreamingPlayer.currentItem {
-                StreamBeatTap.shared.attach(to: item)
-            }
             let rates = activeMashupStyle.playbackRates(progress: 0)
-            if isUsingStreamPlayer {
-                activeStreamingPlayer.rate = rates.outgoing
-            } else {
-                applyMashupTimePitch(progress: 0, outgoing: true, rate: rates.outgoing)
-            }
+            applyMashupTimePitch(progress: 0, outgoing: true, rate: rates.outgoing)
             applyMashupTimePitch(progress: 0, outgoing: false, rate: rates.incoming)
             applyMashupTransitionEQ(progress: 0)
             AutoMixDJEngine.shared.markMashupProgress(0)
@@ -3729,6 +3796,7 @@ final class PlayerCore {
                         transitionID: transitionID,
                         generation: token,
                         currentTrackID: current.id,
+                        outURL: outURL,
                         inURL: inURL,
                         bakeTask: bakeTask,
                         prearmed: prearmedIncoming
@@ -4148,9 +4216,10 @@ final class PlayerCore {
             idlePlayer.volume = 0
             idleStreamingPlayer.volume = 0
         } else {
-            // Stem fail still keeps Automix character: EQ one-vocal + echo/plate + beatmatch.
-            // Equal-power only avoids stacking two dry lead vocals when stems are missing.
-            let useMashupVolumes = mashup && !mashupBakeFailedUseCrossfade
+            // Apple Automix live grammar (A lead × B bed → LAND) even when bake is
+            // still cooking. Equal-power was used after bake.pending and left B
+            // silent on the stream path (field 1129 volB=0 through MIXING).
+            let useMashupVolumes = mashup
             let gains = useMashupVolumes
                 ? mashupHeardVolumes(progress: p)
                 : CrossfadeCurve.gains(progress: p)
