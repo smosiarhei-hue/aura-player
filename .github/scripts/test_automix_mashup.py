@@ -279,6 +279,9 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("mashupBakeFailedUseCrossfade", player)
         self.assertIn("live Automix FX fallback", player)
         self.assertIn("bake.pending → live Automix at cue", player)
+        self.assertIn("lane.prepare ready before cue", player)
+        self.assertIn("prepareMashupIncomingFile", player)
+        self.assertIn("armPreparedMashupIncoming", player)
         self.assertIn("isAppleAutomix", player)
         # After bake.fail, arm local materialized B (not hybrid stream).
         self.assertIn("localIncomingURL = inURLForBake ?? nextURL", player)
@@ -423,6 +426,9 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("let heardPastCue = max(0, liveAfter - cueA)", player)
         self.assertIn("let bakeLag = min(heardPastCue, max(0, blend - 1.5))", player)
         self.assertIn("waitUntilMashupCue", player)
+        # Wall-clock + cue-past-tail so live Automix arms before A EOF (field starve).
+        self.assertIn("posAtStart + Date().timeIntervalSince(waitStarted)", player)
+        self.assertIn("safeCue >= dur - 0.75", player)
         self.assertIn("mashupGiveUpTrackID", player)
         self.assertIn("giveUpMashupAndKeepPlaying", player)
         self.assertIn("fallback.file", player)

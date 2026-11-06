@@ -79,6 +79,10 @@ class AutomixDtaFallbackTests(unittest.TestCase):
         finish = PLAYER.split("private func handleTrackFinish()", 1)[1].split(
             "private var lastRefillCheck", 1
         )[0]
+        # Prefer hard-complete when B was pre-opened / queued (field starve with
+        # incomingAudioFile set but txReady still 0).
+        self.assertIn("transition.starve → complete armed B", finish)
+        self.assertIn("completeTransition(to: target)", finish)
         self.assertIn("transition.starve → next", finish)
         self.assertIn("force next", finish)
         self.assertIn("giveUpMashupAndKeepPlaying", finish)

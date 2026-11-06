@@ -2875,17 +2875,62 @@ final class PlayerCore {
 
     /// Park until the musical cue. Pause does not cancel the mix; the playhead
     /// just sits, and we continue when playback resumes.
+    ///
+    /// Field log (starve): stream `progress` can stall under MainActor load while
+    /// audio keeps moving — wall-clock from the wait start still trips the cue so
+    /// live Automix arms before A ends.
     private func waitUntilMashupCue(_ cue: Double) async -> Bool {
+        let safeCue = cue.isFinite ? max(0, cue) : 0
+        let waitStarted = Date()
+        let posAtStart = playbackProgress
         while !Task.isCancelled {
             if !isTransitioning { return false }
-            if isPlaying {
-                let pos = isUsingStreamPlayer ? progress : liveProgress()
-                if pos + 0.2 >= cue { return true }
-                if duration > 1, pos >= duration - 0.3 { return true }
+            let pos = playbackProgress
+            let dur = max(playbackDuration, duration)
+            if isPlaying || pos + 0.05 >= posAtStart {
+                if pos + 0.25 >= safeCue { return true }
+                if dur > 1, pos >= dur - 0.35 { return true }
+                // Cue past the tail — start the mix now rather than wait for EOF.
+                if dur > 1, safeCue >= dur - 0.75 { return true }
             }
-            try? await Task.sleep(for: .milliseconds(200))
+            if isPlaying {
+                let estimated = posAtStart + Date().timeIntervalSince(waitStarted)
+                if estimated + 0.25 >= safeCue { return true }
+                if dur > 1, estimated >= dur - 0.35 { return true }
+            }
+            try? await Task.sleep(for: .milliseconds(100))
         }
         return false
+    }
+
+    /// Pre-open B during bake lead-in so cue-time arm is instant (no decode stall).
+    private func prepareMashupIncomingFile(_ url: URL) -> AVAudioFile? {
+        do {
+            let file = try openAutomixPlaybackFile(url)
+            incomingAudioFile = file
+            incomingIsStream = false
+            return file
+        } catch {
+            AutoMixSessionLog.shared.fault(
+                "lane.prepare \(error.localizedDescription)"
+            )
+            return nil
+        }
+    }
+
+    /// Silent local B on the idle node — ready for live Automix without bake.
+    private func armPreparedMashupIncoming(
+        file: AVAudioFile,
+        on node: AVAudioPlayerNode,
+        at startAt: Double
+    ) throws {
+        incomingIsStream = false
+        incomingAudioFile = file
+        incomingQuality = LocalAudioQualityReader.read(file)
+        scheduleLocalSegment(file, on: node, at: startAt)
+        node.volume = 0
+        if !engine.isRunning { try engine.start() }
+        node.play()
     }
 
     /// One failure must not cancel-and-reschedule the same pair. Keep A playing,
@@ -3440,6 +3485,12 @@ final class PlayerCore {
                             echoDelaySec: echoDelaySec
                         )
                     }
+                    // Decode B during lead-in so cue-time live Automix is instant.
+                    // Field starve: openAutomixPlaybackFile at the cue raced EOF.
+                    let preparedIncoming = self.prepareMashupIncomingFile(inURL)
+                    if preparedIncoming != nil {
+                        AutoMixSessionLog.shared.event("lane.prepare ready before cue")
+                    }
                     let reachedCue = await self.waitUntilMashupCue(cueA)
                     guard reachedCue, !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
                           self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else {
@@ -3477,6 +3528,107 @@ final class PlayerCore {
                         bakeResult = .failure(CocoaError(.fileReadUnknown))
                         self.mashupBakeFailedUseCrossfade = true
                         AutoMixSessionLog.shared.event("bake.pending → live Automix at cue")
+                        // Arm silent B NOW — do not await bake or a slow re-open.
+                        // Field: waiting here left txReady=0 until EOF → transition.starve.
+                        var liveArmed = false
+                        if let prepared = preparedIncoming ?? self.incomingAudioFile {
+                            do {
+                                try self.armPreparedMashupIncoming(
+                                    file: prepared,
+                                    on: targetNode,
+                                    at: cueB
+                                )
+                                liveArmed = true
+                            } catch {
+                                AutoMixSessionLog.shared.fault(
+                                    "lane.arm \(error.localizedDescription)"
+                                )
+                            }
+                        }
+                        if liveArmed {
+                            self.incomingLaneReady = true
+                            self.transitionStartTime = Date()
+                            if self.isMashupTransitionMode {
+                                if self.isUsingStreamPlayer, let item = self.activeStreamingPlayer.currentItem {
+                                    StreamBeatTap.shared.attach(to: item)
+                                }
+                                let rates = self.activeMashupStyle.playbackRates(progress: 0)
+                                if self.isUsingStreamPlayer {
+                                    self.activeStreamingPlayer.rate = rates.outgoing
+                                } else {
+                                    self.applyMashupTimePitch(progress: 0, outgoing: true, rate: rates.outgoing)
+                                }
+                                self.applyMashupTimePitch(progress: 0, outgoing: false, rate: rates.incoming)
+                                self.applyMashupTransitionEQ(progress: 0)
+                                AutoMixDJEngine.shared.markMashupProgress(0)
+                                AutoMixDJEngine.shared.currentBPM = Double(self.activeMashupStyle.targetBPM)
+                                AutoMixDJEngine.shared.statusBadge = self.activeMashupStyle.phaseLabel(progress: 0)
+                            }
+                            self.startTransitionTimer()
+                            self.transitionPreparationTask = nil
+                            Task { @MainActor [weak self] in
+                                guard let self else { return }
+                                let late = await bakeTask.result
+                                guard self.transitionRequestID == transitionID, self.isTransitioning else {
+                                    if case .success(let pair) = late {
+                                        MidSideStemBaker.removeTempFiles([pair.outgoing, pair.incoming])
+                                    }
+                                    return
+                                }
+                                guard case .success(let stemPair) = late else { return }
+                                let live = self.playbackProgress
+                                let heard = max(0, live - cueA)
+                                let landAt = blend * handoff
+                                if heard >= landAt - 1.5 {
+                                    MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
+                                    AutoMixSessionLog.shared.event(
+                                        String(format: "bake.late-drop lag=%.2fs", heard)
+                                    )
+                                    return
+                                }
+                                do {
+                                    self.mashupBakeFailedUseCrossfade = false
+                                    self.clearMashupBakeTemps()
+                                    self.mashupBakeTempURLs = [stemPair.outgoing, stemPair.incoming]
+                                    self.mashupBakeRealIncomingURL = inURL
+                                    self.mashupBakeIncomingBaseCue = cueB
+                                    self.mashupBakeOutgoingBaseCue = cueA
+                                    self.mashupIncomingCueSec = cueB
+                                    self.incomingStartPosition = cueB
+                                    let wasStream = self.isUsingStreamPlayer
+                                    try self.playMashupStemPair(
+                                        outgoingURL: stemPair.outgoing,
+                                        incomingURL: stemPair.incoming,
+                                        startOffsetSec: heard
+                                    )
+                                    if wasStream {
+                                        self.mashupStemEntryStartedAt = Date()
+                                        self.mashupStemEntryDuration = 0.35
+                                        self.mashupStemEntryFromStream = true
+                                    }
+                                    let enterP = min(1, heard / max(0.001, blend))
+                                    let rates = self.activeMashupStyle.playbackRates(progress: enterP)
+                                    self.applyMashupTimePitch(progress: enterP, outgoing: true, rate: rates.outgoing)
+                                    self.applyMashupTimePitch(progress: enterP, outgoing: false, rate: rates.incoming)
+                                    self.applyMashupTransitionEQ(progress: enterP)
+                                    let mixClock = Date()
+                                    self.transitionStartTime = mixClock.addingTimeInterval(-heard)
+                                    self.anchorDate = mixClock
+                                    let heardA = cueA + heard
+                                    self.anchorOffset = heardA
+                                    self.pausedProgress = heardA
+                                    self.progress = heardA
+                                    self.startTimer()
+                                    AutoMixSessionLog.shared.event(
+                                        String(format: "bake.upgrade lag=%.2fs", heard)
+                                    )
+                                } catch {
+                                    MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
+                                    self.mashupBakeFailedUseCrossfade = true
+                                }
+                            }
+                            return
+                        }
                         Task { @MainActor [weak self] in
                             guard let self else { return }
                             let late = await bakeTask.result
@@ -3487,7 +3639,7 @@ final class PlayerCore {
                                 return
                             }
                             guard case .success(let stemPair) = late else { return }
-                            let live = self.isUsingStreamPlayer ? self.progress : self.liveProgress()
+                            let live = self.playbackProgress
                             let heard = max(0, live - cueA)
                             let landAt = blend * handoff
                             if heard >= landAt - 1.5 {
@@ -3657,20 +3809,37 @@ final class PlayerCore {
                 // crossfade with silent/stuck B (volB logged 0) then LAND freeze.
                 let localIncomingURL = inURLForBake ?? nextURL
                 var armedIncoming = false
-                if let localIncomingURL {
+                if let prepared = self.incomingAudioFile, !self.incomingIsStream {
+                    do {
+                        guard !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
+                              self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else { return }
+                        try self.armPreparedMashupIncoming(
+                            file: prepared,
+                            on: targetNode,
+                            at: startAt
+                        )
+                        armedIncoming = true
+                    } catch {
+                        targetNode.stop()
+                        targetNode.volume = 0
+                        self.incomingAudioFile = nil
+                        self.incomingIsStream = true
+                        AutoMixSessionLog.shared.fault(
+                            "fallback.file \(error.localizedDescription) → stream"
+                        )
+                    }
+                } else if let localIncomingURL {
                     do {
                         // Private copy / CAF decode — the live m4a/mp3 open is what
                         // field-logged as bake.fail + fallback.file 'dta?' → stream.
                         let file = try self.openAutomixPlaybackFile(localIncomingURL)
                         guard !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
                               self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else { return }
-                        self.incomingIsStream = false
-                        self.incomingAudioFile = file
-                        self.incomingQuality = LocalAudioQualityReader.read(file)
-                        self.scheduleLocalSegment(file, on: targetNode, at: startAt)
-                        targetNode.volume = 0
-                        if !self.engine.isRunning { try self.engine.start() }
-                        targetNode.play()
+                        try self.armPreparedMashupIncoming(
+                            file: file,
+                            on: targetNode,
+                            at: startAt
+                        )
                         armedIncoming = true
                     } catch {
                         // Same 'dta?' that killed the bake must not cancel the mix.
@@ -4677,6 +4846,18 @@ final class PlayerCore {
                 }
             }
             if transitionPreparationTask != nil, !incomingLaneReady {
+                // B already decoded / queued but the fader never flipped ready —
+                // hard-complete instead of starving into a cold start at t=0.
+                let bArmed = incomingAudioFile != nil || idleStreamingPlayer.currentItem != nil
+                if bArmed, let target = incomingTrack {
+                    SonivoDiagnostics.log(
+                        "[AutoMix] Track ended while preparing — complete armed B \(target.title)",
+                        tag: "AUTOMIX"
+                    )
+                    AutoMixSessionLog.shared.fault("transition.starve → complete armed B")
+                    completeTransition(to: target)
+                    return
+                }
                 // A finished while bake/stream arm was still running. Returning here
                 // left play=1 with a dead deck — the next song never started.
                 SonivoDiagnostics.log(
