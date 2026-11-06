@@ -104,5 +104,6 @@ class YandexWaveSessionTests(unittest.TestCase):
         self.assertIn('reservedFirstScreenControls',player)
         self.assertIn('totalHeight - reservedFirstScreenControls',player)
         self.assertIn('NowPlayingAtmosphere',player)
-        self.assertIn('coverDissolveMask',player)
+        self.assertIn('coverTopEdgeBlurMask',player)
+        self.assertIn('coverBottomEdgeBlurMask',player)
 if __name__=='__main__':unittest.main()

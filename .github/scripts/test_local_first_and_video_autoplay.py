@@ -130,7 +130,8 @@ class VideoShotLayoutStabilityTests(unittest.TestCase):
         self.assertIn('totalHeight - reservedFirstScreenControls', geometry)
         self.assertIn('NowPlayingAtmosphere', player)
         self.assertNotIn('DownwardCoverWash', player)
-        self.assertIn('coverDissolveMask', player)
+        self.assertIn('coverTopEdgeBlurMask', player)
+        self.assertIn('coverBottomEdgeBlurMask', player)
         for condition in ['isFullScreenVideoShot', 'isVideoShotEnabled', 'videoPlayback', 'videoShotURL']:
             self.assertNotIn(condition, geometry)
         stage = player.split('private func artworkStage(', 1)[1].split('private func', 1)[0]
