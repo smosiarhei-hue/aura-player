@@ -116,8 +116,13 @@ struct PlayerScreenV2: View {
                 let totalHeight = geo.size.height
                 let totalWidth = geo.size.width
                 let topInset = max(safeTop, 12)
-                // Cover owns the top; primary controls pin toward the bottom of the viewport.
-                let standardArtworkStageHeight = min(totalWidth, totalHeight * 0.52)
+                // Reserve a tight first-screen control cluster at the bottom; cover fills the rest.
+                // (Spacer inside ScrollView does not expand — sizing the art is what pins the panel low.)
+                let reservedFirstScreenControls: CGFloat = 298 + max(safeBottom, 8)
+                let standardArtworkStageHeight = min(
+                    totalHeight * 0.68,
+                    max(totalWidth * 0.90, totalHeight - reservedFirstScreenControls)
+                )
 
                 ZStack(alignment: .top) {
                     // Blurred/color-matched wash under the dissolve — continues the cover.
@@ -834,10 +839,8 @@ struct PlayerScreenV2: View {
 
     private func lowerDeck(safeAreaBottom: CGFloat) -> some View {
         VStack(spacing: 0) {
-            // Push the compact Now Playing cluster toward the bottom of the first screen.
-            Spacer(minLength: 10)
-
-            VStack(spacing: 10) {
+            // Compact cluster — art height already pins this block to the bottom.
+            VStack(spacing: 6) {
                 metadataRow
                 PlayerTimelineSection(player: player) { centerStatusLabel }
                 transportControls
@@ -846,12 +849,12 @@ struct PlayerScreenV2: View {
                 primaryUtilityRow
             }
             .padding(.horizontal, 28)
-            .padding(.top, 2)
-            .padding(.bottom, 6)
+            .padding(.top, 0)
+            .padding(.bottom, 4)
 
             trackWaveButton
                 .padding(.horizontal, 28)
-                .padding(.top, 10)
+                .padding(.top, 6)
             if let error = YandexMusicService.shared.waveError {
                 Text(error).font(SN.text(.caption)).foregroundStyle(SN.inkMuted)
                     .padding(.horizontal, 28)
@@ -870,10 +873,10 @@ struct PlayerScreenV2: View {
             Label("Действия ниже", systemImage: "chevron.down")
                 .font(SN.text(.caption, .medium))
                 .foregroundStyle(SN.inkMuted)
-                .padding(.top, 10)
+                .padding(.top, 8)
             secondaryPlayerActions
                 .padding(.horizontal, 28)
-                .padding(.top, 8)
+                .padding(.top, 6)
                 .padding(.bottom, max(safeAreaBottom, 16))
         }
         .frame(maxWidth: .infinity)

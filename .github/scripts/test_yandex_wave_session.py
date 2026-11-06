@@ -101,6 +101,7 @@ class YandexWaveSessionTests(unittest.TestCase):
         self.assertIn('waveService.waveError',source('MyWaveHeroView.swift'))
         player=source('PlayerScreenV2.swift')
         self.assertIn('YandexMusicService.shared.waveError',player)
-        self.assertIn('let standardArtworkStageHeight = min(totalWidth, totalHeight * 0.52)',player)
+        self.assertIn('reservedFirstScreenControls',player)
+        self.assertIn('totalHeight - reservedFirstScreenControls',player)
         self.assertIn('NowPlayingAtmosphere',player)
 if __name__=='__main__':unittest.main()
