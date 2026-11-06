@@ -492,7 +492,15 @@ class AutoMixMashupTests(unittest.TestCase):
         # Field 1133: provisional bpm0/mood.scan must re-profile bake-local A/B
         # so style.upgrade can lock rates before MIXING, not after LAND.
         self.assertIn("ingestBakeLocalPair", player)
-        self.assertIn("analysis.bake-local ok", player)
+        self.assertIn("ingestBakeLocalPair", player)
+        self.assertIn("mashupStemEntryFromOut", player)
+        self.assertIn("mashupStemEntryFromIn", player)
+        runtime = (
+            ROOT / "Sonivo/AutoMixV2AnalysisRuntime.swift"
+        ).read_text()
+        self.assertIn("analysis.bake-local bpmA=", runtime)
+        self.assertIn("bakeToken", runtime)
+        self.assertIn("analysis.bake-local", runtime)
         analysis = (ROOT / "Sonivo/AutoMixV2AnalysisRuntime.swift").read_text()
         self.assertIn("func ingestBakeLocalPair", analysis)
         self.assertIn("Анализ bake-local пары", analysis)
@@ -504,7 +512,11 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("never zero the other deck here", land_fn)
         self.assertNotIn("playerB.volume = 0", land_fn)
         self.assertIn("Ease into stem decks", player)
-        self.assertIn("mashupStemEntryDuration = fromStream ? 0.38 : 0.28", player)
+        self.assertIn("mashupStemEntryDuration = fromStream ? 0.42 : (priorIn > 0.05 ? 0.55 : 0.32)", player)
+        self.assertIn("stemFrom:", player)
+        # Field 1137: always tile phrase loops even when BPM is still provisional.
+        self.assertIn("loop.bake bars=", player)
+        self.assertNotIn("style.targetBPM > 30\n                        && (planLoopBars", player)
         style_src = (
             ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupLiveStyle.swift"
         ).read_text()

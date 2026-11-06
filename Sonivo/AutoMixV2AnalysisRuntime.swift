@@ -71,9 +71,10 @@ final class AutoMixV2AnalysisRuntime {
         }
     }
 
-    /// Field 1133: bake already materialized A/B while the observer was still on
-    /// `bpm0` / `mood.scan` — profile the same local URLs the stem bake uses so
-    /// `style.upgrade` can lock rates before MIXING, not after LAND.
+    /// Field 1133/1137: bake already materialized A/B while the observer was still
+    /// on `bpm0` / `mood.scan` — profile those URLs so rates/loops lock before MIXING.
+    /// Uses a dedicated bake token so the background observer cannot race `observedPair`
+    /// and discard a finished profile (field 1137: silent ingest miss → bpm0 forever).
     @discardableResult
     func ingestBakeLocalPair(
         outgoing: Track,
@@ -81,18 +82,29 @@ final class AutoMixV2AnalysisRuntime {
         outgoingFile: URL,
         incomingFile: URL
     ) async -> Bool {
-        guard shouldAnalyse else { return false }
+        guard shouldAnalyse else {
+            AutoMixSessionLog.shared.event("analysis.bake-local skip=disabled")
+            return false
+        }
         guard let currentID = trackID(for: outgoing),
-              let nextID = trackID(for: incoming) else { return false }
+              let nextID = trackID(for: incoming) else {
+            AutoMixSessionLog.shared.event("analysis.bake-local skip=noTrackID")
+            return false
+        }
         let planMode = mixSettingsMode
         let key = currentID.raw + "|" + nextID.raw + "|" + planMode.rawValue
         if plannedPair == pairKey(currentID, nextID),
            let plan = transitionPlan, plan.type != .none,
            let a = currentProfile, a.bpm > 30,
            let b = nextProfile, b.bpm > 30 {
+            AutoMixSessionLog.shared.event(
+                String(format: "analysis.bake-local cached bpmA=%.0f bpmB=%.0f", a.bpm, b.bpm)
+            )
             return true
         }
+        // Cancel background pair work, but keep bake results even if observer restarts.
         analysisTask?.cancel()
+        let bakeToken = key
         observedPair = key
         plannedPair = ""
         lastError = nil
@@ -101,13 +113,13 @@ final class AutoMixV2AnalysisRuntime {
             let rawA = try await analyzer.profile(for: currentID, fileURL: outgoingFile)
             var a = await TrackProfileEnricher.enrich(rawA, fileURL: outgoingFile)
             a = await applyNeuralCue(to: a, track: outgoing, role: .outgoing)
-            guard observedPair == key else { return false }
-            currentProfile = a
             let rawB = try await analyzer.profile(for: nextID, fileURL: incomingFile)
             var b = await TrackProfileEnricher.enrich(rawB, fileURL: incomingFile)
             b = await applyNeuralCue(to: b, track: incoming, role: .incoming)
-            guard observedPair == key else { return false }
+            // Publish profiles even if the observer raced — PlayerCore reads these next.
+            currentProfile = a
             nextProfile = b
+            observedPair = bakeToken
             let settings = MixSettings(
                 mode: planMode == .duet ? .duet : .automix,
                 crossfadeSeconds: MashupBlendScheduler.defaultPreferredBlendSec,
@@ -122,17 +134,30 @@ final class AutoMixV2AnalysisRuntime {
                 bMeta: metadata(for: incoming, id: nextID),
                 settings: settings
             )
-            guard observedPair == key else { return false }
             transitionPlan = plan
             plannedPair = pairKey(currentID, nextID)
             pipelineStatus = plan.type == .none
                 ? "План запретил музыкальный переход; будет кроссфейд"
                 : "План перехода готов · \(plan.archetype.rawValue) · A@\(String(format: "%.0f", a.mixOutSec))s"
-            return plan.type != .none && a.bpm > 30 && b.bpm > 30
+            let ok = a.bpm > 30 && b.bpm > 30
+            AutoMixSessionLog.shared.event(
+                String(
+                    format: "analysis.bake-local bpmA=%.0f bpmB=%.0f plan=%@ ok=%d",
+                    a.bpm, b.bpm, plan.archetype.rawValue, ok ? 1 : 0
+                )
+            )
+            // Profiles with BPM still unlock beatmatch even when MixPlanner declines.
+            return ok
         } catch {
-            guard observedPair == key, !Self.isCancellation(error) else { return false }
+            if Self.isCancellation(error) {
+                AutoMixSessionLog.shared.event("analysis.bake-local cancel")
+                return false
+            }
             lastError = String(describing: error)
             pipelineStatus = "Эвристика mashup (bake-local анализ недоступен)"
+            AutoMixSessionLog.shared.event(
+                "analysis.bake-local fail \(error.localizedDescription)"
+            )
             return false
         }
     }

@@ -686,6 +686,10 @@ final class PlayerCore {
     private var mashupStemEntryStartedAt: Date?
     private var mashupStemEntryDuration: Double = 0.24
     private var mashupStemEntryFromStream = false
+    /// Pre-mount deck levels so bake.upgrade eases from live vols → stem bed
+    /// (field 1137: B was zeroed then jumped, heard as stutter).
+    private var mashupStemEntryFromOut: Float = 1
+    private var mashupStemEntryFromIn: Float = 0
     /// Equal-power tail from the baked vocal into the dry file. Invalidated on skip.
     private var landOverlapTimer: Timer?
     private var landOverlapToken = UUID()
@@ -2841,6 +2845,9 @@ final class PlayerCore {
         let pos = PlaybackResumePolicy.position(seconds, duration: track.duration)
         let dryNode = activePlayer
         let stemNode = idlePlayer
+        // Keep the audible stem level — snapping 0.77→1.0 then dry from 0 felt like
+        // a volume stutter at LAND (field 1137).
+        let stemFrom = min(1, max(0.35, stemNode.volume))
 
         localSegmentTokens.removeValue(forKey: ObjectIdentifier(dryNode))
         // Keep stemNode token until after dry is audible.
@@ -2857,13 +2864,11 @@ final class PlayerCore {
         scheduleLocalSegment(audioFile, on: dryNode, at: pos)
         dryNode.play()
         dryNode.volume = 0
-        // Keep the stem the listener is already hearing and ease the dry file in.
-        // An instant cut was the jump at the end of AutoMix.
-        stemNode.volume = 1
+        stemNode.volume = stemFrom
         // Field 1133: never zero the other deck here — that killed the audible B
         // stem before the glide's first tick and left ~1s of volA=0/volB=0 stutter.
         activePlayer = dryNode == playerA ? playerA : playerB
-        startLandGlide(stem: stemNode, dry: dryNode, overlap: glide)
+        startLandGlide(stem: stemNode, dry: dryNode, overlap: glide, stemFrom: stemFrom)
         timePitchA.rate = 1
         timePitchA.pitch = 0
         timePitchA.bypass = true
@@ -2894,25 +2899,31 @@ final class PlayerCore {
     }
 
     /// Short equal-power overlap so the dry song replaces the baked vocal in place.
-    private func startLandGlide(stem: AVAudioPlayerNode, dry: AVAudioPlayerNode, overlap requested: Double) {
+    private func startLandGlide(
+        stem: AVAudioPlayerNode,
+        dry: AVAudioPlayerNode,
+        overlap requested: Double,
+        stemFrom: Float = 1
+    ) {
         landOverlapTimer?.invalidate()
         let token = UUID()
         landOverlapToken = token
-        let overlap = min(0.9, max(0.40, requested))
+        let overlap = min(1.05, max(0.55, requested))
         let started = Date()
         // Player nodes are not Sendable. Remember which deck is the bake and
         // touch both only on the main actor, or Swift 6 rejects the timer hop.
         guard dry !== stem else { return }
         let stemIsA = stem === playerA
-        // Apply the first sample now — waiting for the timer left a silent hole
-        // between MIXING bloom and dry B (field 1133 end stutter).
-        stem.volume = 1
+        let from = min(1, max(0.2, stemFrom))
+        // First sample keeps the audible stem level — no 0.77→1.0 slap.
+        stem.volume = from
         dry.volume = 0
-        let timer = Timer(timeInterval: overlap / 24.0, repeats: true) { [weak self] timer in
+        let timer = Timer(timeInterval: overlap / 28.0, repeats: true) { [weak self] timer in
             let elapsed = -started.timeIntervalSinceNow
             let u = min(1, max(0, elapsed / overlap))
             let ease = u * u * (3 - 2 * u)
-            let stemGain = Float(cos(ease * Double.pi * 0.5))
+            let stemGain = from * Float(cos(ease * Double.pi * 0.5))
+            // Rise dry toward full while stem falls from its live level.
             let dryGain = Float(sin(ease * Double.pi * 0.5))
             let done = u >= 1
             if done { timer.invalidate() }
@@ -3164,17 +3175,12 @@ final class PlayerCore {
                 self.mashupBakeOutgoingBaseCue = cueA
                 self.mashupIncomingCueSec = cueB
                 self.incomingStartPosition = cueB
-                let wasStream = self.isUsingStreamPlayer
                 try self.playMashupStemPair(
                     outgoingURL: stemPair.outgoing,
                     incomingURL: stemPair.incoming,
                     startOffsetSec: heard
                 )
-                if wasStream {
-                    self.mashupStemEntryStartedAt = Date()
-                    self.mashupStemEntryDuration = 0.35
-                    self.mashupStemEntryFromStream = true
-                }
+                // Entry ramp already seeded inside playMashupStemPair from live levels.
                 let enterP = min(1, heard / max(0.001, blend))
                 if let outgoing = self.currentTrack, let incoming = self.incomingTrack {
                     _ = self.refreshMashupStyleFromAnalysis(
@@ -3809,15 +3815,12 @@ final class PlayerCore {
                     // Field 1133: bake had local A/B while observer still reported bpm0 /
                     // mood.scan — profile those same URLs before stem work so rates lock.
                     if !self.activeMashupStyle.isBeatmatched || self.activeMashupStyle.targetBPM < 30 {
-                        let ingested = await AutoMixV2AnalysisRuntime.shared.ingestBakeLocalPair(
+                        _ = await AutoMixV2AnalysisRuntime.shared.ingestBakeLocalPair(
                             outgoing: current,
                             incoming: nextTrack,
                             outgoingFile: outURL,
                             incomingFile: inURL
                         )
-                        if ingested {
-                            AutoMixSessionLog.shared.event("analysis.bake-local ok")
-                        }
                     }
                     // Local A/B are ready — pick up BPM/plan if analysis finished during lead-in
                     // so stem bake and live rates are not stuck at provisional rate=1.
@@ -3873,14 +3876,9 @@ final class PlayerCore {
                     // Seamless-loop / plan loopBarsA → tile that many bars into the
                     // instrumental bed so vocals sit on a repeating groove (not a one-shot outro).
                     let planLoopBars = self.activeTransitionPlan.map { max(0, $0.loopBarsA) } ?? 0
-                    let wantsPhraseLoop = !duetBake
-                        && style.targetBPM > 30
-                        && (planLoopBars > 0
-                            || style.archetypeName == "seamlessLoop"
-                            || self.activeTransitionPlan?.archetype == .seamlessLoop)
-                    let loopBars = wantsPhraseLoop
-                        ? max(2, planLoopBars > 0 ? planLoopBars : 2)
-                        : 0
+                    // Field 1137: bpm0 skipped loops entirely. Always tile a 2-bar
+                    // instrumental phrase for Automix (120 BPM grid when unknown).
+                    let loopBars = duetBake ? 0 : max(2, planLoopBars > 0 ? planLoopBars : 2)
                     let loopSec = Double(loopBars) * barSec
                     if loopSec > 0.25 {
                         self.liveLoopNextBar = Double(loopBars)
@@ -4415,14 +4413,16 @@ final class PlayerCore {
             let sourceLevel = gatedOutgoing
             let targetLevel = gains.incoming
 
-            // Ease into stem decks (stream or native) — avoids bake.ready volume stutter.
+            // Ease into stem decks from pre-mount live levels — avoids bake.ready /
+            // bake.upgrade stutter (field 1137: B was zeroed then jumped).
             if mashup, let entryAt = mashupStemEntryStartedAt {
                 let entryT = min(1, max(0, -entryAt.timeIntervalSinceNow / max(0.05, mashupStemEntryDuration)))
                 let ease = entryT * entryT * (3 - 2 * entryT)
                 let stemIn = Float(sin(ease * Double.pi * 0.5))
-                // Lead A from near-unity down to the Automix bed while B blooms in.
-                let entryOut = Float(1 - Double(1 - sourceLevel) * ease)
-                let entryIn = targetLevel * stemIn
+                let fromOut = mashupStemEntryFromOut
+                let fromIn = mashupStemEntryFromIn
+                let entryOut = fromOut + (sourceLevel - fromOut) * stemIn
+                let entryIn = fromIn + (targetLevel - fromIn) * stemIn
                 if mashupStemEntryFromStream {
                     let streamOut = Float(cos(ease * Double.pi * 0.5))
                     activeStreamingPlayer.volume = volume * streamOut
@@ -4628,11 +4628,20 @@ final class PlayerCore {
         }
 
         let fromStream = isUsingStreamPlayer
-        // Always ease into stem decks — field 1133 heard a volume stutter at
-        // bake.ready when native snapped straight to bed 0.64 / vocal 0.38.
+        // Capture live deck levels BEFORE stop — bake.upgrade must ease from these
+        // (field 1137: zeroing B then blooming it sounded like a stutter).
+        let priorOut = fromStream
+            ? max(activeStreamingPlayer.volume, volume)
+            : max(activePlayer.volume, 0.001)
+        let priorIn = fromStream
+            ? max(idleStreamingPlayer.volume, 0)
+            : max(idlePlayer.volume, 0)
+        mashupStemEntryFromOut = min(1, max(0.05, priorOut))
+        mashupStemEntryFromIn = min(1, max(0, priorIn))
         mashupStemEntryFromStream = fromStream
         mashupStemEntryStartedAt = Date()
-        mashupStemEntryDuration = fromStream ? 0.38 : 0.28
+        // Longer on mid-mix upgrade so volA 1.00→0.64 is a glide, not a step.
+        mashupStemEntryDuration = fromStream ? 0.42 : (priorIn > 0.05 ? 0.55 : 0.32)
         incomingIsStream = false
         mashupPlayingMasterBake = false
         if !fromStream {
@@ -4640,21 +4649,14 @@ final class PlayerCore {
             idleStreamingPlayer.pause()
             activeStreamingPlayer.volume = 0
             idleStreamingPlayer.volume = 0
-            // Keep isUsingStreamPlayer false; entry ramp still runs via stem volumes.
         } else {
             idleStreamingPlayer.pause()
             idleStreamingPlayer.volume = 0
-            // Equal-power handoff from dry stream → stems in tickTransition.
         }
 
         // Invalidate completions before stop so drained stems can't re-enter finish.
         localSegmentTokens.removeValue(forKey: ObjectIdentifier(activePlayer))
         localSegmentTokens.removeValue(forKey: ObjectIdentifier(idlePlayer))
-        // Capture pre-mount level so the first stem samples can ease from unity
-        // instead of jumping to the Automix bed (start stutter).
-        let priorOut = fromStream
-            ? max(activeStreamingPlayer.volume, volume)
-            : max(activePlayer.volume, 0.001)
         activePlayer.stop()
         idlePlayer.stop()
 
@@ -4666,20 +4668,14 @@ final class PlayerCore {
 
         scheduleLocalSegment(outFile, on: activePlayer, at: offset)
         scheduleLocalSegment(inFile, on: idlePlayer, at: offset)
-        // Start stems silent; tickTransition ramps them over mashupStemEntryDuration.
-        activePlayer.volume = 0
-        idlePlayer.volume = 0
+        // Seed at prior live levels — never start B at 0 after it was already audible.
+        activePlayer.volume = mashupStemEntryFromOut
+        idlePlayer.volume = mashupStemEntryFromIn
         if !engine.isRunning { try engine.start() }
         activePlayer.play()
         idlePlayer.play()
         if !fromStream {
-            // Seed a near-unity first frame, then let the entry ramp settle to bed.
-            let enterP = min(1, offset / max(0.001, transitionDuration))
-            let vols = mashupHeardVolumes(progress: enterP)
-            activePlayer.volume = max(vols.outgoing, min(1, priorOut))
-            idlePlayer.volume = 0
             isUsingStreamPlayer = false
-            // Keep mashupStemEntryStartedAt so tickTransition eases to target bed.
         }
         if !activeMashupStyle.isDuet {
             mashupPhraseLoopCueSec = 0
