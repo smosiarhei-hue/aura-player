@@ -423,6 +423,22 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("mashupBakeOutgoingBaseCue + elapsed", player)
         # Bake 22s before the cue. Wall-clock lag used to start the slice 13s in.
         self.assertIn("automixBakeLeadSec: Double = 22", player)
+        # Bake lead must not light Mixing chrome. Field: "Сведение" shimmered from
+        # cue−22s (~32s) while audio was still A alone; isTransitionActive flips
+        # only for plain crossfade at schedule, mashup waits for markMashupProgress.
+        schedule = player.split("private func scheduleSimpleTransition(", 1)[1].split(
+            "private func stopBeatLoop(", 1
+        )[0]
+        self.assertIn(
+            "AutoMixDJEngine.shared.isTransitionActive = transitionMode == .crossfade",
+            schedule,
+        )
+        self.assertNotIn(
+            "isTransitionActive = transitionMode == .crossfade || mashup",
+            schedule,
+        )
+        self.assertIn("markMashupProgress", schedule)
+        self.assertIn("Mixing badge only when the blend is actually audible", schedule)
         self.assertIn("let heardPastCue = max(0, liveAfter - cueA)", player)
         self.assertIn("let bakeLag = min(heardPastCue, max(0, blend - 1.5))", player)
         self.assertIn("waitUntilMashupCue", player)

@@ -3732,7 +3732,12 @@ final class PlayerCore {
         }
         let mashup = isMashupTransitionMode
         let strategyName = activeMashupStyle.isDuet ? "DUET" : "MASHUP"
-        AutoMixDJEngine.shared.isTransitionActive = transitionMode == .crossfade || mashup
+        // Crossfade arms at the cue, so chrome can go live immediately.
+        // Mashup bake lead starts ~automixBakeLeadSec before the musical cue —
+        // lighting isTransitionActive here made "Сведение" shimmer from ~32s while
+        // audio was still A alone. Mashup flips the flag only at audible start
+        // (markMashupProgress / beginLiveAutomixAtCue / bake.ready).
+        AutoMixDJEngine.shared.isTransitionActive = transitionMode == .crossfade
         AutoMixDJEngine.shared.activeStrategyName = mashup ? strategyName : (transitionMode == .crossfade ? "CROSSFADE" : "GAPLESS")
         AutoMixDJEngine.shared.transitionProgress = 0
         // Mixing badge only when the blend is actually audible (lane ready) — not while baking.
