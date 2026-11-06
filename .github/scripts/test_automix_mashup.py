@@ -437,6 +437,9 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("automixBakeGraceSec: Double = 3.5", player)
         self.assertIn("bake.hold grace=", player)
         self.assertIn("bake.late-drop lag=", player)
+        # Swift 6: bake Task.detached must snapshot blend before concurrent grace read.
+        self.assertIn("let bakeBlend = blend", player)
+        self.assertIn("blendSec: bakeBlend", player)
         # LAND: match dry to stem level — equal-power from 0 bumped correlated decks.
         self.assertIn("dry.volume = from", player)
         land_glide = player.split("private func startLandGlide(", 1)[1].split(

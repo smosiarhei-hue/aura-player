@@ -4013,23 +4013,38 @@ final class PlayerCore {
                     // tempo echo into LAND. Baking wet under live A+B sounds like "troits".
                     let echoDelaySec = 0.0
                     let rateB = Double(style.rateB == 0 ? 1 : style.rateB)
+                    // Snapshot Sendable bake inputs before Task.detached — capturing
+                    // `blend`/`handoff` then reading them again for grace/arm races
+                    // Swift 6 (field 1148 Build IPA).
+                    let bakeOutURL = outURL
+                    let bakeInURL = inURL
+                    let bakeCueA = cueA
+                    let bakeCueB = cueB
+                    let bakeBlend = blend
+                    let bakeHandoff = handoff
+                    let bakePad = stemPadSec
+                    let bakeLandFade = barSec
+                    let bakeRateB = rateB
+                    let bakeLoopSec = loopSec
+                    let bakeEcho = echoDelaySec
+                    let bakeDuet = duetBake
                     // Bake in parallel with the cue wait. Waiting for HTDemucs first left
                     // 20s of silence after schedule, then a late abrupt land.
                     let bakeTask = Task.detached(priority: .userInitiated) { () -> (outgoing: URL, incoming: URL) in
                         do {
                             if let neural = try await HTDemucsMashupBake.stemPair(
-                                duet: duetBake,
-                                outgoingURL: outURL,
-                                incomingURL: inURL,
-                                cueA: cueA,
-                                cueB: cueB,
-                                blendSec: blend,
-                                handoffProgress: handoff,
-                                padSec: stemPadSec,
-                                landFadeSec: barSec,
-                                playbackRate: rateB,
-                                loopSec: loopSec,
-                                echoDelaySec: echoDelaySec
+                                duet: bakeDuet,
+                                outgoingURL: bakeOutURL,
+                                incomingURL: bakeInURL,
+                                cueA: bakeCueA,
+                                cueB: bakeCueB,
+                                blendSec: bakeBlend,
+                                handoffProgress: bakeHandoff,
+                                padSec: bakePad,
+                                landFadeSec: bakeLandFade,
+                                playbackRate: bakeRateB,
+                                loopSec: bakeLoopSec,
+                                echoDelaySec: bakeEcho
                             ) {
                                 return neural
                             }
@@ -4038,28 +4053,28 @@ final class PlayerCore {
                         } catch {
                             // Fall through to mid/side.
                         }
-                        if duetBake {
+                        if bakeDuet {
                             return try MidSideStemBaker.bakeDuetStemPair(
-                                outgoingURL: outURL,
-                                incomingURL: inURL,
-                                cueA: cueA,
-                                cueB: cueB,
-                                blendSec: blend,
-                                padSec: stemPadSec
+                                outgoingURL: bakeOutURL,
+                                incomingURL: bakeInURL,
+                                cueA: bakeCueA,
+                                cueB: bakeCueB,
+                                blendSec: bakeBlend,
+                                padSec: bakePad
                             )
                         }
                         return try MidSideStemBaker.bakeAutomixStemPair(
-                            outgoingURL: outURL,
-                            incomingURL: inURL,
-                            cueA: cueA,
-                            cueB: cueB,
-                            blendSec: blend,
-                            handoffProgress: handoff,
-                            padSec: stemPadSec,
-                            landFadeSec: barSec,
-                            playbackRate: rateB,
-                            loopSec: loopSec,
-                            echoDelaySec: echoDelaySec
+                            outgoingURL: bakeOutURL,
+                            incomingURL: bakeInURL,
+                            cueA: bakeCueA,
+                            cueB: bakeCueB,
+                            blendSec: bakeBlend,
+                            handoffProgress: bakeHandoff,
+                            padSec: bakePad,
+                            landFadeSec: bakeLandFade,
+                            playbackRate: bakeRateB,
+                            loopSec: bakeLoopSec,
+                            echoDelaySec: bakeEcho
                         )
                     }
                     // Decode + silent-arm B during lead-in so cue-time live Automix
@@ -4142,7 +4157,7 @@ final class PlayerCore {
                         }
                         // Field 1148: share the post-cue grace with firePending so
                         // HTDemucs can still win before we fall back to live Automix.
-                        let holdSec = min(Self.automixBakeGraceSec, max(1.2, blend * 0.4))
+                        let holdSec = min(Self.automixBakeGraceSec, max(1.2, bakeBlend * 0.4))
                         let graceMs = Int(holdSec * 1000)
                         Task.detached {
                             try? await Task.sleep(for: .milliseconds(graceMs))
