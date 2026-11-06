@@ -238,6 +238,20 @@ public struct MashupLiveStyle: Sendable, Equatable {
         return min(0.92, max(0.84, handoffAt))
     }
 
+    /// Snap LAND / handoff onto a whole bar so B's vocal enters on the kick grid.
+    public mutating func snapLandToBarGrid(blendSec: Double) {
+        guard targetBPM > 30, blendSec > 1.5, !isDuet else { return }
+        let barSec = 240.0 / Double(targetBPM)
+        let bars = max(2.0, blendSec / barSec)
+        let raw = automixLandProgress
+        let landBars = max(1.0, (raw * bars).rounded())
+        let snapped = min(0.93, max(0.58, landBars / bars))
+        handoffAt = snapped
+        if moodLand >= 0.55 {
+            moodLand = snapped
+        }
+    }
+
     private func appleAutomixVolumes(progress: Double) -> (outgoing: Float, incoming: Float) {
         let p = min(1, max(0, progress))
         let handoff = automixLandProgress

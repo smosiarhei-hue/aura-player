@@ -308,16 +308,20 @@ public actor HTDemucsRuntime {
         )
         var left = mixed.left
         var right = mixed.right
-        if echoDelaySec > 0.05 {
-            if stem == .instrumental {
-                StemMashupGlue.shapeInstrumentalBed(
-                    left: &left, right: &right, rate: cached.rate, loopSec: loopSec, delaySec: echoDelaySec
-                )
-            } else if stem == .vocal, let until {
-                StemMashupGlue.shapeIncomingVocal(
-                    left: &left, right: &right, rate: cached.rate, delaySec: echoDelaySec, untilFrame: until
-                )
-            }
+        // Tile phrase loops even when Automix keeps echo dry (echoDelaySec=0).
+        if stem == .instrumental, loopSec > 0.25 || echoDelaySec > 0.05 {
+            StemMashupGlue.shapeInstrumentalBed(
+                left: &left,
+                right: &right,
+                rate: cached.rate,
+                loopSec: loopSec,
+                delaySec: echoDelaySec,
+                untilFrame: until
+            )
+        } else if stem == .vocal, echoDelaySec > 0.05, let until {
+            StemMashupGlue.shapeIncomingVocal(
+                left: &left, right: &right, rate: cached.rate, delaySec: echoDelaySec, untilFrame: until
+            )
         }
         return try Self.writeCAF(left: left, right: right, rate: cached.rate)
     }

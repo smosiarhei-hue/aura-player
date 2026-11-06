@@ -1228,10 +1228,8 @@ final class PlayerCore {
         let safeBPM = bpm > 30 ? bpm : 120
         let bar = EffectAutomation.bar(atSeconds: elapsed, bpm: safeBPM)
 
-        // Phrase-loop seeks restart the decoder and stutter the next song — keep off.
-        let loopBars = 0
+        // Phrase loops for non-Apple paths run in tickTransition (seekOutgoingPhraseLoop).
         _ = progress
-        _ = loopBars
 
         var echoWet: Float = 0
         var echoFb: Float = 20
@@ -3383,12 +3381,20 @@ final class PlayerCore {
             || style.isBeatmatched != previous.isBeatmatched
             || style.archetypeName != previous.archetypeName
         guard upgraded else { return false }
+        if style.targetBPM > 30, !style.isDuet {
+            style.snapLandToBarGrid(blendSec: max(4, transitionDuration))
+        }
         activeMashupStyle = style
         let analysis = AutoMixV2AnalysisRuntime.shared
         if let plan = analysis.transitionPlan, plan.type != .none,
            let outP = analysis.currentProfile, mashupProfileMatches(outP, track: outgoing),
            let inP = analysis.nextProfile, mashupProfileMatches(inP, track: incoming) {
             activeTransitionPlan = plan
+            if plan.loopBarsA > 0, style.targetBPM > 30, liveLoopNextBar.isInfinite {
+                liveLoopNextBar = Double(plan.loopBarsA)
+            }
+        } else if style.archetypeName == "seamlessLoop", style.targetBPM > 30, liveLoopNextBar.isInfinite {
+            liveLoopNextBar = 2
         }
         AutoMixSessionLog.shared.event(
             String(
@@ -3723,9 +3729,13 @@ final class PlayerCore {
         activeMashupStyle = mashupStyle ?? .fallback
         let analysisPlan = AutoMixV2AnalysisRuntime.shared.transitionPlan
         activeTransitionPlan = (mashupStyle != nil) ? analysisPlan : nil
-        mashupPhraseLoopCueSec = isUsingStreamPlayer ? progress : liveProgress()
-        if let plan = activeTransitionPlan, plan.loopBarsA > 0 {
+        // Phrase-loop cue: musical outgoing start (stem mounts remapped to 0).
+        mashupPhraseLoopCueSec = outgoingCue
+            ?? (isUsingStreamPlayer ? progress : liveProgress())
+        if let plan = activeTransitionPlan, plan.loopBarsA > 0, activeMashupStyle.targetBPM > 30 {
             liveLoopNextBar = Double(plan.loopBarsA)
+        } else if activeMashupStyle.archetypeName == "seamlessLoop", activeMashupStyle.targetBPM > 30 {
+            liveLoopNextBar = 2
         } else {
             liveLoopNextBar = .infinity
         }
@@ -3842,6 +3852,11 @@ final class PlayerCore {
                             style = self.activeMashupStyle
                         }
                     }
+                    // Snap LAND onto a whole bar so B's vocal hits the kick grid.
+                    if !duetBake, style.targetBPM > 30 {
+                        style.snapLandToBarGrid(blendSec: blend)
+                        self.activeMashupStyle = style
+                    }
                     let handoffStyle = self.activeMashupStyle
                     let handoff = duetBake ? style.handoffAt : handoffStyle.automixLandProgress
                     // Extra tail so stems outlive bake lag + LAND handoff (short stems
@@ -3849,8 +3864,31 @@ final class PlayerCore {
                     // Tail must outlive bake lag. A short slice used to end, fire
                     // track-finish, and restart the next song from the top.
                     let stemPadSec = 8.0
-                    let barSec = (4 * 60) / max(30, Double(style.targetBPM))
-                    let loopSec = 0.0
+                    let bpmForGrid = Double(
+                        style.targetBPM > 30
+                            ? style.targetBPM
+                            : (self.activeTransitionPlan?.tempoTargetBPM ?? 120)
+                    )
+                    let barSec = (4 * 60) / max(30, bpmForGrid)
+                    // Seamless-loop / plan loopBarsA → tile that many bars into the
+                    // instrumental bed so vocals sit on a repeating groove (not a one-shot outro).
+                    let planLoopBars = self.activeTransitionPlan.map { max(0, $0.loopBarsA) } ?? 0
+                    let wantsPhraseLoop = !duetBake
+                        && style.targetBPM > 30
+                        && (planLoopBars > 0
+                            || style.archetypeName == "seamlessLoop"
+                            || self.activeTransitionPlan?.archetype == .seamlessLoop)
+                    let loopBars = wantsPhraseLoop
+                        ? max(2, planLoopBars > 0 ? planLoopBars : 2)
+                        : 0
+                    let loopSec = Double(loopBars) * barSec
+                    if loopSec > 0.25 {
+                        self.liveLoopNextBar = Double(loopBars)
+                        self.mashupPhraseLoopCueSec = 0
+                        AutoMixSessionLog.shared.event(
+                            String(format: "loop.bake bars=%d sec=%.2f bpm=%.0f", loopBars, loopSec, bpmForGrid)
+                        )
+                    }
                     // Apple Automix stems stay dry (carve only). Baked echo/plate
                     // is a third layer under live A+B and is what users hear as "troits".
                     let echoDelaySec = 0.0
@@ -4462,6 +4500,28 @@ final class PlayerCore {
             AutoMixDJEngine.shared.currentBPM = Double(activeMashupStyle.targetBPM)
             AutoMixDJEngine.shared.statusBadge = activeMashupStyle.phaseLabel(progress: p)
             applyMashupTransitionEQ(progress: p)
+        }
+
+        // Live phrase loop on outgoing A (seek) when stems are NOT already tiled.
+        // Baked loopSec beds already repeat the groove — seeking those stutters.
+        if mashup,
+           mashupBakeRealIncomingURL == nil,
+           !mashupPlayingMasterBake,
+           activeMashupStyle.targetBPM > 30,
+           !liveLoopNextBar.isInfinite {
+            let landAt = activeMashupStyle.isDuet
+                ? activeMashupStyle.handoffAt
+                : activeMashupStyle.automixLandProgress
+            let bpm = activeMashupStyle.targetBPM
+            let bar = EffectAutomation.bar(atSeconds: elapsed, bpm: bpm)
+            let step = max(1.0, Double(activeTransitionPlan?.loopBarsA ?? 2))
+            if bar + 0.001 >= liveLoopNextBar, p < landAt * 0.72 {
+                seekOutgoingPhraseLoop()
+                liveLoopNextBar += step
+                AutoMixSessionLog.shared.event(
+                    String(format: "loop.phrase bar=%.1f next=%.1f cue=%.1f", bar, liveLoopNextBar, mashupPhraseLoopCueSec)
+                )
+            }
         }
 
         // Apple Automix / Duet / Mashup: one hard cut at LAND — artwork, timeline,

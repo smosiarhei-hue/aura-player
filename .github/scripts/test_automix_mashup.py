@@ -357,6 +357,9 @@ class AutoMixMashupTests(unittest.TestCase):
             ROOT / "Packages/AutoMixV2/Sources/AudioEngineCore/StemMashupGlue.swift"
         ).read_text()
         self.assertIn("echoWet: 0.10", glue)
+        # Phrase loops must tile the instrumental bed (not `_ = loopSec` no-op).
+        self.assertIn("tilePhraseLoop", glue)
+        self.assertIn("loopSec > 0.25", glue)
         self.assertIn("echoWet: 0.03", glue)
         player_fx = (ROOT / "Sonivo/playercore.swift").read_text()
         # Apple Automix: beatmatch + EQ — never delay/reverb soup (that triples A+B+wet).
@@ -506,6 +509,20 @@ class AutoMixMashupTests(unittest.TestCase):
             ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupLiveStyle.swift"
         ).read_text()
         self.assertIn("Lead-in from unity so bake.ready", style_src)
+        self.assertIn("snapLandToBarGrid", style_src)
+        # Field: vocal on BPM + loops — bake tiles phrase, live seeks when not baked.
+        self.assertIn("loop.bake bars=", player)
+        self.assertIn("loop.phrase bar=", player)
+        self.assertIn("seekOutgoingPhraseLoop", player)
+        baker = (
+            ROOT / "Packages/AutoMixV2/Sources/AudioEngineCore/MidSideStemBaker.swift"
+        ).read_text()
+        self.assertIn("request.loopSec > 0.25 || request.echoDelaySec > 0.05", baker)
+        htd = (
+            ROOT
+            / "Packages/AutoMixV2/Sources/AudioEngineCore/StemSplit/HTDemucsMashupBake.swift"
+        ).read_text()
+        self.assertIn("loopSec > 0.25 || echoDelaySec > 0.05", htd)
         style = (
             ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupLiveStyle.swift"
         ).read_text()

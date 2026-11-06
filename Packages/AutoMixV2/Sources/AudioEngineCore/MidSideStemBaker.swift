@@ -522,26 +522,25 @@ public enum MidSideStemBaker {
             StemSeparator.lastBackend = .hybridSpectral
         }
 
-        // Glue the vocal into the bed before LAND. The dry song after LAND
-        // is written below and does not keep this wash.
-        if request.echoDelaySec > 0.05 {
-            if request.mode == .instrumental {
-                StemMashupGlue.shapeInstrumentalBed(
-                    left: &left,
-                    right: &right,
-                    rate: rate,
-                    loopSec: request.loopSec,
-                    delaySec: request.echoDelaySec
-                )
-            } else if request.mode == .vocal {
-                StemMashupGlue.shapeIncomingVocal(
-                    left: &left,
-                    right: &right,
-                    rate: rate,
-                    delaySec: request.echoDelaySec,
-                    untilFrame: Int(untilFrame)
-                )
-            }
+        // Phrase-loop the instrumental bed on the beat grid before LAND; optional
+        // echo wash stays opt-in (PlayerCore Automix usually passes delay=0).
+        if request.mode == .instrumental, request.loopSec > 0.25 || request.echoDelaySec > 0.05 {
+            StemMashupGlue.shapeInstrumentalBed(
+                left: &left,
+                right: &right,
+                rate: rate,
+                loopSec: request.loopSec,
+                delaySec: request.echoDelaySec,
+                untilFrame: untilFrame > 0 ? Int(untilFrame) : nil
+            )
+        } else if request.mode == .vocal, request.echoDelaySec > 0.05 {
+            StemMashupGlue.shapeIncomingVocal(
+                left: &left,
+                right: &right,
+                rate: rate,
+                delaySec: request.echoDelaySec,
+                untilFrame: Int(untilFrame)
+            )
         }
 
         // Stem→dry bloom near LAND. The incoming vocal becomes the full song.

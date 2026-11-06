@@ -1,28 +1,32 @@
 import Foundation
 
 /// Puts the next vocal in the same space as the ending instrumental.
-/// The bed plays forward. A light tempo echo and a short plate sit on both
-/// stems, lighter on the vocal so the words stay in front.
-/// Repeating the outro as a phrase loop sounded like the next song stuttering.
-/// This is a musical send, not a room node and not system Spatial Audio.
+/// Phrase-loop tiles the outro bed on the beat grid; optional soft wash is a
+/// musical send, not a room node and not system Spatial Audio.
 public enum StemMashupGlue {
     public static func shapeInstrumentalBed(
         left: inout [Float],
         right: inout [Float],
         rate: Double,
         loopSec: Double,
-        delaySec: Double
+        delaySec: Double,
+        untilFrame: Int? = nil
     ) {
         guard left.count == right.count, left.count > 8, rate > 8_000 else { return }
-        _ = loopSec
+        let limit = untilFrame.map { min(max(0, $0), left.count) } ?? left.count
+        // Tile a 2/4-bar phrase through the bed so Automix keeps groove under B's vocal.
+        if loopSec > 0.25 {
+            tilePhraseLoop(&left, &right, rate: rate, loopSec: loopSec, until: limit)
+        }
+        guard delaySec > 0.05 else { return }
         wash(
             &left, &right,
             rate: rate,
             delaySec: delaySec,
-            // Optional lab glue only — PlayerCore Automix passes echoDelaySec=0.
+            // Optional lab glue only — PlayerCore Automix usually passes echoDelaySec=0.
             echoWet: 0.10,
             reverbWet: 0.18,
-            until: left.count
+            until: limit
         )
     }
 
@@ -41,6 +45,7 @@ public enum StemMashupGlue {
             left[i] *= 1.05
             right[i] *= 1.05
         }
+        guard delaySec > 0.05 else { return }
         // Nearly dry — any real wash under a live vocal is heard as a third copy.
         wash(
             &left, &right,
@@ -50,6 +55,44 @@ public enum StemMashupGlue {
             reverbWet: 0.08,
             until: until
         )
+    }
+
+    /// Crossfade-tile the first `loopSec` of the buffer through `[0, until)`.
+    /// Keeps the outro groove repeating while B blooms — DJ seamless-loop bed.
+    public static func tilePhraseLoop(
+        _ left: inout [Float],
+        _ right: inout [Float],
+        rate: Double,
+        loopSec: Double,
+        until: Int
+    ) {
+        let n = left.count
+        let limit = min(max(0, until), n)
+        let loopFrames = max(64, Int(loopSec * rate))
+        guard loopFrames > 64, loopFrames < limit / 2 else { return }
+        let xfade = max(32, min(loopFrames / 8, Int(0.04 * rate)))
+        var write = loopFrames
+        while write < limit {
+            let remain = limit - write
+            let copyCount = min(loopFrames, remain)
+            for k in 0..<copyCount {
+                let src = k
+                let dst = write + k
+                if k < xfade, write > 0 {
+                    let t = Float(k) / Float(xfade)
+                    let ease = t * t * (3 - 2 * t)
+                    let wa = cos(ease * Float.pi * 0.5)
+                    let wb = sin(ease * Float.pi * 0.5)
+                    left[dst] = left[dst] * wa + left[src] * wb
+                    right[dst] = right[dst] * wa + right[src] * wb
+                } else {
+                    left[dst] = left[src]
+                    right[dst] = right[src]
+                }
+            }
+            // Advance by almost one phrase; overlap provides the crossfade.
+            write += max(1, loopFrames - xfade)
+        }
     }
 
     private static func wash(
