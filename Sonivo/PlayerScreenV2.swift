@@ -119,8 +119,8 @@ struct PlayerScreenV2: View {
                 let totalHeight = geo.size.height
                 let totalWidth = geo.size.width
                 let topInset = max(safeTop, 12)
-                // Cover sits a hair under the Dynamic Island; top blur softens that edge.
-                let coverTopClearance: CGFloat = max(10, topInset * 0.42)
+                // Cover clears the Island with room — top blur softens the edge above it.
+                let coverTopClearance: CGFloat = max(28, topInset + 12)
                 // Apple Music: edge-to-edge square. Height == width — never taller.
                 // A taller stage made scaledToFill upscale the art and soften it.
                 // Wave banner + secondary glass row left the player; keep room for
@@ -195,8 +195,8 @@ struct PlayerScreenV2: View {
                             .scrollIndicators(.hidden)
                             .accessibilityLabel("Плеер и дополнительные действия")
 
-                            playerTopNativeBlur(height: topInset + 18)
-                                .frame(width: totalWidth, height: topInset + 18)
+                            playerTopNativeBlur(height: coverTopClearance + 10)
+                                .frame(width: totalWidth, height: coverTopClearance + 10)
                                 .allowsHitTesting(false)
                                 .accessibilityHidden(true)
 
