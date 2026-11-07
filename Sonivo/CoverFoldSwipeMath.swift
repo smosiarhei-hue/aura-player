@@ -3,23 +3,33 @@ import Foundation
 import SwiftUI
 
 /// Folding-cards carousel math (Basit / Bencho reference):
-/// center slot is flat; side slots fold on Y and scale down as they leave the middle.
+/// center slot is flat; side slots warp/fold and scale down as they leave the middle.
 /// `progress` is finger travel / cover width (positive = reveal previous from the left).
 nonisolated enum CoverFoldSwipeMath {
-    static let maxFoldDegrees: Double = 52
-    static let perspective: CGFloat = 0.55
-    static let sideScale: CGFloat = 0.90
+    /// Mild rigid tilt under the Metal warp (depth cue only).
+    static let maxFoldDegrees: Double = 28
+    static let perspective: CGFloat = 0.50
+    /// Side plates ~0.85× like the reference.
+    static let sideScale: CGFloat = 0.85
     /// Soft rubber past one full slot so a throw still feels physical.
     static let progressLimit: CGFloat = 1.18
+    /// Pull neighbors inward so the carousel clusters (not full-width paging).
+    static let clusterFactor: CGFloat = 0.78
 
     static func progress(dragX: CGFloat, width: CGFloat) -> CGFloat {
         guard width.isFinite, width > 0, dragX.isFinite else { return 0 }
         return max(-progressLimit, min(progressLimit, dragX / width))
     }
 
-    /// Horizontal travel of a slot (−1 previous, 0 current, +1 next).
+    /// Signed distance used by the Metal warp (`slot + progress`).
+    static func warpAmount(slot: Int, progress: CGFloat) -> Float {
+        Float(CGFloat(slot) + progress)
+    }
+
+    /// Horizontal travel of a slot (−1 previous, 0 current, +1 next), clustered.
     static func slotOffset(slot: Int, progress: CGFloat, width: CGFloat) -> CGFloat {
-        (CGFloat(slot) + progress) * width
+        let t = CGFloat(slot) + progress
+        return t * width * clusterFactor
     }
 
     /// Distance from the focus plane; 0 = fully centered.
@@ -27,7 +37,7 @@ nonisolated enum CoverFoldSwipeMath {
         abs(CGFloat(slot) + progress)
     }
 
-    /// Y-axis fold: outer edge bends away; center opens flat.
+    /// Light Y tilt under the mesh warp (outer edge away).
     static func foldDegrees(slot: Int, progress: CGFloat) -> Double {
         let t = Double(slot) + Double(progress)
         return -t * maxFoldDegrees
@@ -38,10 +48,11 @@ nonisolated enum CoverFoldSwipeMath {
         return 1 - t * (1 - sideScale)
     }
 
+    /// Keep opacity high until the plate is nearly off — reference barely fades.
     static func opacity(slot: Int, progress: CGFloat) -> Double {
         let t = Double(centeredness(slot: slot, progress: progress))
-        if t <= 1.05 { return 1 }
-        return max(0, 1 - (t - 1.05) / 0.35)
+        if t <= 1.12 { return 1 }
+        return max(0, 1 - (t - 1.12) / 0.28)
     }
 
     static func zIndex(slot: Int, progress: CGFloat) -> Double {
@@ -54,14 +65,14 @@ nonisolated enum CoverFoldSwipeMath {
     }
 }
 
-/// Compositor springs for the fold settle — ProMotion-friendly smooth curves.
+/// Soft settle — critically / lightly underdamped, no aggressive bounce.
 @MainActor enum CoverFoldSwipeMotion {
     static var commitAnimation: Animation {
-        .smooth(duration: 0.42, extraBounce: 0.04)
+        .spring(response: 0.45, dampingFraction: 0.85, blendDuration: 0)
     }
     static var cancelAnimation: Animation {
-        .smooth(duration: 0.36, extraBounce: 0.06)
+        .spring(response: 0.40, dampingFraction: 0.88, blendDuration: 0)
     }
     /// One full slot after commit so the fold finishes before the track swap.
-    static let commitHoldMilliseconds: UInt64 = 400
+    static let commitHoldMilliseconds: UInt64 = 420
 }

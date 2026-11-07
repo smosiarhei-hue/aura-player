@@ -14,18 +14,24 @@ class CoverFoldSwipeTests(unittest.TestCase):
     def test_math_and_promition_surface_exist(self):
         math = (ROOT / "Sonivo/CoverFoldSwipeMath.swift").read_text()
         gate = (ROOT / "Sonivo/CoverSwipeProMotion.swift").read_text()
+        metal = (ROOT / "Sonivo/CoverFoldWarp.metal").read_text()
         for token in [
             "maxFoldDegrees",
             "foldDegrees(slot:",
             "slotOffset(slot:",
             "progressLimit",
             "perspective",
+            "sideScale: CGFloat = 0.85",
+            "clusterFactor",
+            "warpAmount(slot:",
         ]:
             self.assertIn(token, math)
         self.assertIn("CoverSwipeProMotionGate", gate)
         self.assertIn("preferredFrameRateRange", gate)
         self.assertIn("maximum: Float(desired)", gate)
         self.assertIn("min(120", gate)
+        self.assertIn("coverFoldWarp", metal)
+        self.assertIn("[[ stitchable ]] float2 coverFoldWarp", metal)
 
     def test_player_uses_folding_carousel_not_teleport_easein(self):
         player = (ROOT / "Sonivo/PlayerScreenV2.swift").read_text()
@@ -35,6 +41,8 @@ class CoverFoldSwipeTests(unittest.TestCase):
         self.assertIn("CoverFoldSwipeMath.progress", stage)
         self.assertIn("foldedCoverPlate(", stage)
         self.assertIn("rotation3DEffect(", stage)
+        self.assertIn("distortionEffect(", stage)
+        self.assertIn("ShaderLibrary.coverFoldWarp(", stage)
         self.assertIn("CoverSwipeProMotionGate(active:", stage)
         self.assertIn("ForEach([-1, 0, 1]", stage)
         self.assertNotIn(".offset(x: coverDragX)\n        .rotationEffect", stage)
@@ -48,6 +56,8 @@ class CoverFoldSwipeTests(unittest.TestCase):
         self.assertNotIn("-sign * width * 0.65", swipe)
         self.assertIn("transaction.disablesAnimations = true", swipe)
         self.assertIn("coverDragX = 0", swipe)
+        motion = (ROOT / "Sonivo/CoverFoldSwipeMath.swift").read_text()
+        self.assertIn("response: 0.45, dampingFraction: 0.85", motion)
 
     def test_math_swift_preconditions(self):
         """Pure fold curves — center flat, sides fold, opacity drops past one slot."""

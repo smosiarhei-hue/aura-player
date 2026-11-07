@@ -690,6 +690,12 @@ struct PlayerScreenV2: View {
         let preferred = slotTrack.flatMap { artworkImage(for: $0) }
             ?? (slot == 0 ? currentArtworkImage : nil)
 
+        let warp = reduceMotion ? 0 : CoverFoldSwipeMath.warpAmount(slot: slot, progress: progress)
+        let samplePad = CGSize(
+            width: max(24, side * 0.22 * CGFloat(abs(warp))),
+            height: max(12, side * 0.10 * CGFloat(abs(warp)))
+        )
+
         coverLayer(for: slotTrack, preferredImage: preferred)
             .frame(width: side, height: side)
             .clipped()
@@ -705,6 +711,14 @@ struct PlayerScreenV2: View {
                     Rectangle().fill(Color.black)
                 }
             }
+            // Mesh bend (curved edges) — rigid rotation alone cannot match the reference.
+            .distortionEffect(
+                ShaderLibrary.coverFoldWarp(
+                    .float2(side, side),
+                    .float(warp)
+                ),
+                maxSampleOffset: samplePad
+            )
             .scaleEffect(scale)
             .rotation3DEffect(
                 .degrees(degrees),
