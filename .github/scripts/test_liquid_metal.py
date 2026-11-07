@@ -50,7 +50,7 @@ class LiquidMetalTests(unittest.TestCase):
         for token in ['Button(action: togglePlayback)','Button(action: previousTrack)',
                       'Button(action: nextTrack)', '.disabled(player.isLoading)',
                       'SonivoEqualizerGlyph(', 'startTrackWave()', 'primaryUtilityRow',
-                      'playerTopNativeBlur']:
+                      'playerTopColorBloom']:
             self.assertIn(token,s)
         self.assertNotIn('sonivoMetal',(ROOT/'SonivoLiveActivity/SonivoLiveActivityWidget.swift').read_text())
         lifecycle=(ROOT/'Sonivo/SonivoCaptureBrand.swift').read_text()

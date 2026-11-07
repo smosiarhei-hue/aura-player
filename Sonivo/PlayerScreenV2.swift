@@ -195,8 +195,9 @@ struct PlayerScreenV2: View {
                             .scrollIndicators(.hidden)
                             .accessibilityLabel("Плеер и дополнительные действия")
 
-                            playerTopNativeBlur(height: coverTopClearance + 10)
-                                .frame(width: totalWidth, height: coverTopClearance + 10)
+                            // Colorful cover bloom — fills Island clearance and melts into art.
+                            playerTopColorBloom(height: coverTopClearance + standardArtworkStageHeight * 0.28)
+                                .frame(width: totalWidth, height: coverTopClearance + standardArtworkStageHeight * 0.28, alignment: .top)
                                 .allowsHitTesting(false)
                                 .accessibilityHidden(true)
 
@@ -606,15 +607,16 @@ struct PlayerScreenV2: View {
         .animation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion), value: showLyricsMode)
     }
 
-    /// Soft vertical dissolve on both edges — top melts under the Island like the
-    /// bottom melts into the control wash (no hard cover strip).
+    /// Long soft dissolve on both edges — top eases into the color bloom, bottom
+    /// into the control wash (no hard strip at either end).
     private var coverDissolveMask: some View {
         LinearGradient(
             stops: [
                 .init(color: .clear, location: 0.00),
-                .init(color: .black.opacity(0.22), location: 0.05),
-                .init(color: .black.opacity(0.72), location: 0.12),
-                .init(color: .black, location: 0.20),
+                .init(color: .black.opacity(0.12), location: 0.06),
+                .init(color: .black.opacity(0.40), location: 0.14),
+                .init(color: .black.opacity(0.78), location: 0.24),
+                .init(color: .black, location: 0.34),
                 .init(color: .black, location: 0.52),
                 .init(color: .black.opacity(0.78), location: 0.70),
                 .init(color: .black.opacity(0.28), location: 0.88),
@@ -912,44 +914,90 @@ struct PlayerScreenV2: View {
         .frame(maxWidth: .infinity)
     }
 
-    /// Soft native material under the Island — same ease as the cover bottom dissolve,
-    /// so the top never reads as a hard frosted strip.
-    private func playerTopNativeBlur(height: CGFloat) -> some View {
-        Rectangle()
-            .fill(.ultraThinMaterial)
-            .mask(
-                LinearGradient(
-                    stops: [
-                        .init(color: .black.opacity(0.55), location: 0.00),
-                        .init(color: .black.opacity(0.32), location: 0.28),
-                        .init(color: .black.opacity(0.12), location: 0.58),
-                        .init(color: .black.opacity(0.04), location: 0.78),
-                        .init(color: .clear, location: 1.00)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+    /// Bright multi-stop palette bloom for the Island / cover seam — no gray material bar.
+    private func playerTopColorBloom(height: CGFloat) -> some View {
+        let tones = coverBloomTones
+        return ZStack(alignment: .top) {
+            LinearGradient(
+                stops: [
+                    .init(color: tones[0].opacity(0.92), location: 0.00),
+                    .init(color: tones[1].opacity(0.78), location: 0.22),
+                    .init(color: tones[2].opacity(0.55), location: 0.48),
+                    .init(color: tones[3].opacity(0.28), location: 0.72),
+                    .init(color: tones[0].opacity(0.10), location: 0.88),
+                    .init(color: .clear, location: 1.00)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
             )
-            .frame(height: height)
+            // Cross-wash so the top reads as many cover hues, not one flat tint.
+            LinearGradient(
+                stops: [
+                    .init(color: tones[2].opacity(0.55), location: 0.00),
+                    .init(color: tones[3].opacity(0.42), location: 0.35),
+                    .init(color: tones[1].opacity(0.22), location: 0.65),
+                    .init(color: .clear, location: 1.00)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .blendMode(.plusLighter)
+            LinearGradient(
+                stops: [
+                    .init(color: tones[1].opacity(0.40), location: 0.00),
+                    .init(color: tones[0].opacity(0.25), location: 0.40),
+                    .init(color: .clear, location: 1.00)
+                ],
+                startPoint: .topTrailing,
+                endPoint: .bottomLeading
+            )
+            .blendMode(.softLight)
+        }
+        .frame(height: height)
+        .allowsHitTesting(false)
     }
 
-    /// Soft palette bloom under the dissolving cover — gives the control deck its color.
+    /// Saturated cover hues for top/bottom washes — prefer extracted artwork palette.
+    private var coverBloomTones: [Color] {
+        let live = resolvedArtworkPaletteTrackID == track?.id ? artworkPaletteColors : []
+        var tones = live
+        if tones.isEmpty { tones = palette }
+        while tones.count < 4 {
+            tones.append(tones.last ?? dominantArtworkColor ?? SN.amber)
+        }
+        return Array(tones.prefix(4))
+    }
+
+    /// Soft palette bloom under the dissolving cover — bright top + bottom washes.
     private var coverAccentWash: some View {
-        let tone = (resolvedArtworkPaletteTrackID == track?.id ? dominantArtworkColor : nil)
-            ?? artworkPaletteColors.first
-            ?? palette.first
-            ?? Color.black
-        return LinearGradient(
-            stops: [
-                .init(color: .clear, location: 0.28),
-                .init(color: tone.opacity(0.22), location: 0.48),
-                .init(color: tone.opacity(0.42), location: 0.68),
-                .init(color: tone.opacity(0.55), location: 0.88),
-                .init(color: tone.opacity(0.62), location: 1.00)
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
+        let tones = coverBloomTones
+        return ZStack {
+            LinearGradient(
+                stops: [
+                    .init(color: tones[0].opacity(0.70), location: 0.00),
+                    .init(color: tones[1].opacity(0.42), location: 0.12),
+                    .init(color: tones[2].opacity(0.18), location: 0.26),
+                    .init(color: .clear, location: 0.40),
+                    .init(color: tones[1].opacity(0.22), location: 0.55),
+                    .init(color: tones[0].opacity(0.40), location: 0.72),
+                    .init(color: tones[2].opacity(0.55), location: 0.88),
+                    .init(color: tones[3].opacity(0.68), location: 1.00)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            LinearGradient(
+                colors: [
+                    tones[2].opacity(0.35),
+                    tones[3].opacity(0.18),
+                    .clear,
+                    tones[0].opacity(0.28)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .blendMode(.plusLighter)
+        }
         .blendMode(.plusLighter)
     }
 

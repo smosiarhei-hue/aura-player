@@ -34,7 +34,8 @@ class NowPlayingCoverAppleMusicTests(unittest.TestCase):
             geometry,
         )
         self.assertIn("coverTopClearance", geometry)
-        self.assertIn("playerTopNativeBlur", PLAYER)
+        self.assertIn("playerTopColorBloom", PLAYER)
+        self.assertIn("coverBloomTones", PLAYER)
         self.assertNotIn("totalHeight * 0.58", geometry)
         self.assertNotIn("max(totalWidth,", geometry)
         self.assertIn("coverAccentWash", PLAYER)
@@ -56,10 +57,10 @@ class NowPlayingCoverAppleMusicTests(unittest.TestCase):
         )[0]
         self.assertIn("LinearGradient", mask)
         self.assertIn(".clear", mask)
-        # Top edge dissolves like the bottom — no hard cover strip under the Island.
+        # Long soft top dissolve into the colorful bloom — no hard strip.
         self.assertIn("location: 0.00", mask)
-        self.assertIn("location: 0.20", mask)
-        self.assertIn("both edges", PLAYER.split("private var coverDissolveMask:", 1)[0][-200:])
+        self.assertIn("location: 0.34", mask)
+        self.assertIn("color bloom", PLAYER.split("private var coverDissolveMask:", 1)[0][-240:])
 
     def test_cover_fills_square_not_letterboxed(self):
         layer = PLAYER.split("private func coverLayer(", 1)[1].split(
@@ -101,8 +102,10 @@ class NowPlayingCoverAppleMusicTests(unittest.TestCase):
         self.assertIn("list.bullet", utility)
         self.assertIn("sleepTimerUtilityButton", utility)
         self.assertIn("SonivoEqualizerGlyph()", utility)
-        self.assertIn("playerTopNativeBlur", PLAYER)
+        self.assertIn("playerTopColorBloom", PLAYER)
+        self.assertIn("coverBloomTones", PLAYER)
         self.assertIn("coverTopClearance", PLAYER)
+        self.assertNotIn("playerTopNativeBlur", PLAYER)
 
 
 if __name__ == "__main__":

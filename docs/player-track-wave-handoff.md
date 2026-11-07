@@ -29,4 +29,4 @@ Linux: `python3 -m unittest discover -s .github/scripts -p 'test_*.py'` — 220 
 ## Native glass and neutral naming refinement
 - Menu item title is **Моя волна по текущему треку**. No service/provider name is shown or spoken in its label. Catalog-only tracks enable the action; local imports stay disabled.
 - Recommendation/API/refill logic is unchanged by the player chrome move into `⋯`.
-- Cover clears the Dynamic Island slightly; a native `.ultraThinMaterial` fade softens the top edge.
+- Cover clears the Dynamic Island slightly; a multi-stop cover-palette color bloom melts the top edge into the art (no gray material strip).
