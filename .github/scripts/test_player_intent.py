@@ -12,8 +12,9 @@ class PlayerIntentTests(unittest.TestCase):
         self.assertIn('animateTrackSwipe(direction: direction, width: width)',cover)
     def test_staged_swipe_is_cancelled_and_generation_protected(self):
         block=SCREEN.split('private func animateTrackSwipe',1)[1].split('private func releaseCoverSwitchLock',1)[0]
-        for token in ['coverSwitchTask?.cancel()', 'coverSwitchGeneration == generation', '!Task.isCancelled', 'reduceMotion', '.easeIn(duration: 0.18)', '.spring(response: 0.42']:
+        for token in ['coverSwitchTask?.cancel()', 'coverSwitchGeneration == generation', '!Task.isCancelled', 'reduceMotion', 'CoverFoldSwipeMotion.commitAnimation', 'CoverFoldSwipeMotion.commitHoldMilliseconds']:
             self.assertIn(token,block)
+        self.assertNotIn('.easeIn(duration: 0.18)',block)
         lifetime=SCREEN.split('.onDisappear {',1)[1].split('private var isFullScreenVideoShot',1)[0]
         self.assertIn('coverSwitchTask?.cancel()',lifetime)
     def test_timeline_ignores_taps_and_vertical_drags_and_stale_track(self):

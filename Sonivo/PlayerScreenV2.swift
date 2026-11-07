@@ -564,43 +564,47 @@ struct PlayerScreenV2: View {
     }
 
     private func artworkStage(width: CGFloat, height: CGFloat) -> some View {
-        // Full-bleed square (width×width). Horizontal crop only — no scaleEffect > 1.
+        // Full-bleed square (width×width). Folding-cards carousel on swipe (Basit / Bencho).
         let coverSide = min(width, height)
-        let tiltAngle = reduceMotion ? 0.0 : Double(coverDragX / width) * 3.0
-        let dragScale = reduceMotion ? 1.0 : (1.0 - min(0.04, abs(coverDragX / width) * 0.04))
+        let progress = CoverFoldSwipeMath.progress(dragX: coverDragX, width: width)
         let playScale = player.isPlaying ? 1.0 : 0.97
+        let folding = !reduceMotion && coverMixAmount == 0 && !isFullScreenVideoShot
+        let neighbors = coverSwipeNeighbors
 
         return ZStack {
             if isFullScreenVideoShot {
                 // Preserve the artwork footprint and swipe surface while revealing the video.
                 Color.clear
                     .frame(width: width, height: height)
+            } else if folding {
+                ForEach([-1, 0, 1], id: \.self) { slot in
+                    if CoverFoldSwipeMath.isVisible(slot: slot, progress: progress) {
+                        let slotTrack: Track? = {
+                            switch slot {
+                            case -1: return neighbors.prev
+                            case 1: return neighbors.next
+                            default: return track
+                            }
+                        }()
+                        // Empty side slots stay hidden so we never invent a ghost cover.
+                        if slot == 0 || slotTrack != nil {
+                            foldedCoverPlate(
+                                for: slotTrack,
+                                side: coverSide,
+                                width: width,
+                                slot: slot,
+                                progress: progress,
+                                morphSource: slot == 0 && abs(progress) < 0.04 && !showLyricsMode
+                            )
+                            .zIndex(CoverFoldSwipeMath.zIndex(slot: slot, progress: progress))
+                        }
+                    }
+                }
             } else {
                 artwork
                     .frame(width: coverSide, height: coverSide)
                     .clipped()
-                    // Progressive blur at the top edge — same art softening into the
-                    // native UIBlur atmosphere (no tint strip painted over the cover).
-                    .overlay(alignment: .top) {
-                        artwork
-                            .frame(width: coverSide, height: coverSide)
-                            .blur(radius: reduceMotion ? 0 : 22)
-                            .mask(
-                                LinearGradient(
-                                    stops: [
-                                        .init(color: .black, location: 0.00),
-                                        .init(color: .black.opacity(0.70), location: 0.42),
-                                        .init(color: .clear, location: 1.00)
-                                    ],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
-                            .frame(height: coverSide * 0.24, alignment: .top)
-                            .clipped()
-                            .allowsHitTesting(false)
-                            .accessibilityHidden(true)
-                    }
+                    .overlay(alignment: .top) { coverTopProgressiveBlur(side: coverSide) }
                     .mask(coverDissolveMask)
                     .matchedGeometryEffect(
                         id: LyricsPresentationMotion.coverMorphID,
@@ -608,32 +612,138 @@ struct PlayerScreenV2: View {
                         properties: .frame,
                         isSource: !showLyricsMode
                     )
+                    .offset(x: coverDragX)
             }
         }
         .frame(width: width, height: height, alignment: .top)
-        .scaleEffect(playScale * dragScale)
-        .offset(x: coverDragX)
-        .rotationEffect(.degrees(tiltAngle))
+        .scaleEffect(playScale)
         .contentShape(Rectangle())
         .gesture(
             showLyricsMode ? nil : DragGesture(minimumDistance: 18)
                 .onChanged { value in
                     guard !isCoverSwitching, PlayerInteractionPolicy.horizontalIntent(
                         x: Double(value.translation.width), y: Double(value.translation.height)) else { return }
-                    coverDragX = max(-width * 0.7, min(width * 0.7, value.translation.width))
+                    // Full slot travel so the fold can open the neighbor flat.
+                    let limit = width * CoverFoldSwipeMath.progressLimit
+                    coverDragX = max(-limit, min(limit, value.translation.width))
                 }
                 .onEnded { value in
                     guard !isCoverSwitching else { return }
                     if let direction = PlayerInteractionPolicy.trackDirection(
                         x: Double(value.translation.width), y: Double(value.translation.height), width: Double(width)) {
-                        animateTrackSwipe(direction: direction, width: width)
+                        let hasNeighbor = direction > 0
+                            ? coverSwipeNeighbors.next != nil
+                            : coverSwipeNeighbors.prev != nil
+                        if hasNeighbor {
+                            animateTrackSwipe(direction: direction, width: width)
+                        } else {
+                            withAnimation(reduceMotion ? nil : CoverFoldSwipeMotion.cancelAnimation) { coverDragX = 0 }
+                        }
                     } else {
-                        withAnimation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.9)) { coverDragX = 0 }
+                        withAnimation(reduceMotion ? nil : CoverFoldSwipeMotion.cancelAnimation) { coverDragX = 0 }
                     }
                 }
         )
+        .background {
+            CoverSwipeProMotionGate(active: abs(coverDragX) > 0.5 || isCoverSwitching)
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
         .animation(.interactiveSpring(response: 0.38, dampingFraction: 0.75), value: player.isPlaying)
         .animation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion), value: showLyricsMode)
+    }
+
+    /// Previous / next queue neighbors for the folding peek plates.
+    private var coverSwipeNeighbors: (prev: Track?, next: Track?) {
+        let q = player.queue
+        guard let cur = player.currentTrack ?? track else {
+            return (nil, q.first)
+        }
+        guard let idx = q.firstIndex(where: { $0.id == cur.id }) else {
+            return (nil, q.first)
+        }
+        let prev: Track? = {
+            if idx > 0 { return q[idx - 1] }
+            return player.repeatMode == .all && q.count > 1 ? q.last : nil
+        }()
+        let next: Track? = {
+            if idx + 1 < q.count { return q[idx + 1] }
+            return player.repeatMode == .all && q.count > 1 ? q.first : nil
+        }()
+        return (prev, next)
+    }
+
+    @ViewBuilder
+    private func foldedCoverPlate(
+        for slotTrack: Track?,
+        side: CGFloat,
+        width: CGFloat,
+        slot: Int,
+        progress: CGFloat,
+        morphSource: Bool
+    ) -> some View {
+        let degrees = reduceMotion ? 0 : CoverFoldSwipeMath.foldDegrees(slot: slot, progress: progress)
+        let scale = reduceMotion ? 1 : CoverFoldSwipeMath.scale(slot: slot, progress: progress)
+        let opacity = CoverFoldSwipeMath.opacity(slot: slot, progress: progress)
+        let offsetX = CoverFoldSwipeMath.slotOffset(slot: slot, progress: progress, width: width)
+        let preferred = slotTrack.flatMap { artworkImage(for: $0) }
+            ?? (slot == 0 ? currentArtworkImage : nil)
+
+        coverLayer(for: slotTrack, preferredImage: preferred)
+            .frame(width: side, height: side)
+            .clipped()
+            .overlay(alignment: .top) {
+                if slot == 0, abs(progress) < 0.2 {
+                    coverTopProgressiveBlur(side: side)
+                }
+            }
+            .mask {
+                if abs(progress) < 0.12 && slot == 0 {
+                    coverDissolveMask
+                } else {
+                    Rectangle().fill(Color.black)
+                }
+            }
+            .scaleEffect(scale)
+            .rotation3DEffect(
+                .degrees(degrees),
+                axis: (x: 0, y: 1, z: 0),
+                anchor: .center,
+                perspective: CoverFoldSwipeMath.perspective
+            )
+            .offset(x: offsetX)
+            .opacity(opacity)
+            .matchedGeometryEffect(
+                id: LyricsPresentationMotion.coverMorphID,
+                in: nowPlayingCoverSpace,
+                properties: .frame,
+                isSource: morphSource
+            )
+            .allowsHitTesting(false)
+            .accessibilityHidden(slot != 0)
+    }
+
+    @ViewBuilder
+    private func coverTopProgressiveBlur(side: CGFloat) -> some View {
+        artwork
+            .frame(width: side, height: side)
+            .blur(radius: reduceMotion ? 0 : 22)
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: .black, location: 0.00),
+                        .init(color: .black.opacity(0.70), location: 0.42),
+                        .init(color: .clear, location: 1.00)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .frame(height: side * 0.24, alignment: .top)
+            .clipped()
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 
     /// Soft native dissolve: top eases into the UIBlur atmosphere over a short seam;
@@ -1636,25 +1746,27 @@ struct PlayerScreenV2: View {
         coverSwitchGeneration = generation
         Haptics.tap(.light)
         let requestedTrackID = player.currentTrack?.id
-        let sign: CGFloat = direction > 0 ? -1 : 1
-        withAnimation(reduceMotion ? nil : .easeIn(duration: 0.18)) { coverDragX = reduceMotion ? 0 : sign * width }
+        // Next = fold current left (−1 slot); previous = fold current right (+1 slot).
+        let targetX: CGFloat = direction > 0 ? -width : width
+        withAnimation(reduceMotion ? nil : CoverFoldSwipeMotion.commitAnimation) {
+            coverDragX = reduceMotion ? 0 : targetX
+        }
         coverSwitchTask = Task { @MainActor in
-            do { try await Task.sleep(for: .milliseconds(reduceMotion ? 0 : 180)) } catch { return }
+            do {
+                try await Task.sleep(for: .milliseconds(reduceMotion ? 0 : CoverFoldSwipeMotion.commitHoldMilliseconds))
+            } catch { return }
             guard !Task.isCancelled, coverSwitchGeneration == generation, isPresented else { return }
             guard player.currentTrack?.id == requestedTrackID else {
-                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { coverDragX = 0 }
+                withAnimation(reduceMotion ? nil : CoverFoldSwipeMotion.cancelAnimation) { coverDragX = 0 }
                 isCoverSwitching = false
                 return
             }
             PlaybackAudioSessionCoordinator.shared.activateForPlayback()
             if direction > 0 { player.next() } else { player.previous() }
-            var transaction = Transaction(); transaction.disablesAnimations = true
-            withTransaction(transaction) { coverDragX = reduceMotion ? 0 : -sign * width * 0.65 }
-            do { try await Task.sleep(for: .milliseconds(20)) } catch { return }
-            guard !Task.isCancelled, coverSwitchGeneration == generation else { return }
-            withAnimation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.92)) { coverDragX = 0 }
-            do { try await Task.sleep(for: .milliseconds(450)) } catch { return }
-            guard coverSwitchGeneration == generation else { return }
+            // Neighbor is now centered — snap progress to 0 without a reverse fly-in.
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { coverDragX = 0 }
             isCoverSwitching = false
         }
     }
