@@ -2952,10 +2952,9 @@ final class PlayerCore {
     }
 
     /// Short overlap so the dry song replaces the baked vocal in place.
-    /// Field 1148: stem and dry are the same musical content at LAND — equal-power
-    /// (sin/cos from 0) summed to a loudness bump (volA+volB ≫ 1). Match dry to
-    /// the live stem level immediately, then only fade the stem out while dry
-    /// eases the rest of the way to unity.
+    /// Field 1148/1153: stem and dry are the same musical content at LAND —
+    /// a long dual fade (0.48–0.72s) logged as volA+volB ≫ 1. Keep dry at the
+    /// live stem level and kill the stem in ~150ms so LAND is a cut, not a bump.
     private func startLandGlide(
         stem: AVAudioPlayerNode,
         dry: AVAudioPlayerNode,
@@ -2965,21 +2964,23 @@ final class PlayerCore {
         landOverlapTimer?.invalidate()
         let token = UUID()
         landOverlapToken = token
-        let overlap = min(0.72, max(0.32, requested))
+        // Same-content replace — ignore long mood glides; they only fatten LAND.
+        let overlap = min(0.18, max(0.10, requested * 0.28))
         let started = Date()
         // Player nodes are not Sendable. Remember which deck is the bake and
         // touch both only on the main actor, or Swift 6 rejects the timer hop.
         guard dry !== stem else { return }
         let stemIsA = stem === playerA
         let from = min(1, max(0.35, stemFrom))
-        // First sample: dry already matches the audible stem — no hole, no bump.
-        stem.volume = from
+        // Dry carries the song immediately; stem only covers the first buffers.
         dry.volume = from
-        let timer = Timer(timeInterval: overlap / 24.0, repeats: true) { [weak self] timer in
+        stem.volume = min(0.22, from * 0.22)
+        let stemStart = stem.volume
+        let timer = Timer(timeInterval: overlap / 16.0, repeats: true) { [weak self] timer in
             let elapsed = -started.timeIntervalSinceNow
             let u = min(1, max(0, elapsed / overlap))
             let ease = u * u * (3 - 2 * u)
-            let stemGain = from * Float(1 - ease)
+            let stemGain = stemStart * Float(1 - ease)
             let dryGain = from + (1 - from) * Float(ease)
             let done = u >= 1
             if done { timer.invalidate() }
@@ -3234,7 +3235,7 @@ final class PlayerCore {
             let heard = max(0, live - cueA)
             let landAt = blend * handoff
             // Field 1148: once live Automix has been audible for >~1.2s, swapping
-            // onto stems mid-window (volA 1.00→0.64) is worse than finishing live.
+            // onto stems mid-window (volume thump) is worse than finishing live.
             if heard >= 1.2 || heard >= landAt - 1.5 {
                 MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
                 AutoMixSessionLog.shared.event(
@@ -4786,7 +4787,7 @@ final class PlayerCore {
         mashupStemEntryFromIn = min(1, max(0, priorIn))
         mashupStemEntryFromStream = fromStream
         mashupStemEntryStartedAt = Date()
-        // Longer on mid-mix upgrade so volA 1.00→0.64 is a glide, not a step.
+        // Longer on mid-mix upgrade so volume retarget is a glide, not a step.
         mashupStemEntryDuration = fromStream ? 0.42 : (priorIn > 0.05 ? 0.55 : 0.32)
         incomingIsStream = false
         mashupPlayingMasterBake = false
@@ -4932,7 +4933,9 @@ final class PlayerCore {
             isTransitioning = false
             transitionScheduled = false
             resetTransitionEQOffsets()
-            let glideSec = activeMashupStyle.moodLand >= 0.85 ? 0.72 : 0.48
+            // Same-content dry replace — keep the audible window tiny (field 1153
+            // logged 0.48–0.72s dual-vol after hardcut).
+            let glideSec = 0.14
             activeMashupStyle = .fallback
             rateReleaseTimer?.invalidate()
             rateReleaseTimer = nil

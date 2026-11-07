@@ -96,7 +96,7 @@ struct MashupLiveStyleTests {
         let preLand = style.volumes(progress: max(0, style.automixLandProgress - 0.02))
         let land = style.volumes(progress: min(0.99, style.automixLandProgress + 0.01))
         #expect(early.outgoing > 0.95)
-        #expect(early.incoming > 0.45 && early.incoming < 0.72)
+        #expect(early.incoming >= 0.30 && early.incoming <= 0.55)
         // Mid-window: A may soft-taper; B stays on quiet bed (no dual-loud stack).
         #expect(mid.outgoing > 0.78)
         #expect(mid.incoming <= style.automixIncomingBedGain + 0.03)
@@ -105,6 +105,11 @@ struct MashupLiveStyleTests {
         #expect(land.outgoing == 0)
         #expect(land.incoming > 0.95)
         #expect(style.automixIncomingBedGain <= 0.62)
+        // Stem bake path must share the same envelope (no volA=0.64 karaoke hold).
+        let stemMid = style.stemNeuralVolumes(progress: 0.50, blendSec: 16)
+        #expect(abs(stemMid.outgoing - mid.outgoing) < 0.001)
+        #expect(abs(stemMid.incoming - mid.incoming) < 0.001)
+        #expect(stemMid.outgoing > 0.70)
     }
 
     @Test("Key-clash Automix keeps a quieter B bed without a loudness cliff")

@@ -292,48 +292,13 @@ public struct MashupLiveStyle: Sendable, Equatable {
         return (min(1, max(0, outgoing)), min(1, max(0, incoming)))
     }
 
-    /// Stem AutoMix: ending instrumental bed under the next vocal.
-    /// Bed releases across ~1.5 bars with a soft LAND taper; vocal blooms on
-    /// the phrase (not a karaoke hard-cut of A vocal → paste B vocal).
+    /// Stem AutoMix volumes. Field 1153 logged a karaoke plateau (`volA=0.64` for
+    /// most of MIXING) from a hard bed hold — that stacked two full mixes. Reuse
+    /// Apple Automix grammar: A leads, quiet B bed, bloom + hard LAND in the
+    /// final ~18%. `blendSec` kept for call-site compatibility.
     public func stemNeuralVolumes(progress: Double, blendSec: Double) -> (outgoing: Float, incoming: Float) {
-        if isDuet { return duetVolumes(progress: progress) }
-        let p = min(1, max(0, progress))
-        let land = automixLandProgress
-        let bpm = Double(targetBPM > 30 ? targetBPM : 120)
-        let bar = min(0.22, max(0.07, (4 * 60 / bpm) / max(4, blendSec)))
-        // Longer release so echo-out / HPF have room before A hits zero.
-        let release = max(0, land - bar * 1.45)
-        // Quiet instrumental bed — A@0.88 + B@0.82 stacked two songs and muddied LAND.
-        let bed: Float = 0.64
-        // Lead-in from unity so bake.ready does not thump 1.0 → 0.64 (field 1133).
-        let lead = min(0.12, max(0.06, bar))
-        let outgoing: Float
-        if p < lead {
-            let t = Self.smoothstep(p / lead)
-            outgoing = 1 - (1 - bed) * t
-        } else if p <= release {
-            outgoing = bed
-        } else if p < land {
-            let t = Self.smoothstep((p - release) / max(0.08, land - release))
-            outgoing = bed * (1 - t)
-        } else {
-            outgoing = 0
-        }
-        // Vocal: soft bed → phrase bloom → unity at LAND (smoothstep, no cliff).
-        let bloom = max(0.18, land - 0.16)
-        let vocal: Float
-        if p >= land {
-            vocal = 1
-        } else if p < lead {
-            vocal = 0.18 + Self.smoothstep(p / lead) * 0.18
-        } else if p < bloom {
-            let t = Self.smoothstep((p - lead) / max(0.08, bloom - lead))
-            vocal = 0.36 + 0.22 * t
-        } else {
-            let t = Self.smoothstep((p - bloom) / max(0.08, land - bloom))
-            vocal = 0.58 + 0.42 * t
-        }
-        return (outgoing, min(1, vocal))
+        _ = blendSec
+        return volumes(progress: progress)
     }
 
     /// How loud B sits under A during ONE VOCAL Automix (before LAND bloom).

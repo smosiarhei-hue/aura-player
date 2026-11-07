@@ -407,8 +407,10 @@ class AutoMixMashupTests(unittest.TestCase):
         style_vol = (
             ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupLiveStyle.swift"
         ).read_text()
-        self.assertIn("bar * 1.45", style_vol)
-        self.assertIn("not a karaoke hard-cut", style_vol)
+        # Field 1153: stem path must reuse Apple Automix volumes (no volA=0.64 bed hold).
+        self.assertIn("stemNeuralVolumes", style_vol)
+        self.assertIn("return volumes(progress: progress)", style_vol)
+        self.assertIn("karaoke plateau", style_vol)
 
     def test_session_log_does_not_reenter_playercore_during_shared_init(self):
         """Launch SIGTRAP: mode didSet → AutoMixSessionLog.snapshot → PlayerCore.shared
@@ -556,16 +558,22 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("preparePrivateAnalysisURL", analyzer)
         self.assertIn("sonivo-analyze-", analyzer)
         self.assertIn("_GenericObjCError", analyzer)
-        # Field 1133: LAND must not kill the audible B stem before the dry glide,
-        # and bake.ready must ease into stem beds (not snap 1.0 → 0.64).
+        # Field 1133/1153: LAND must not kill B before dry is audible, and the
+        # same-content glide must stay short (no dual-vol bump).
         land_fn = player.split("private func landAutomixOntoDryB", 1)[1].split(
             "private func renderedFileSeconds", 1
         )[0]
         self.assertIn("never zero the other deck here", land_fn)
         self.assertNotIn("playerB.volume = 0", land_fn)
+        glide_fn = player.split("private func startLandGlide", 1)[1].split(
+            "private var isMashupTransitionMode", 1
+        )[0]
+        self.assertIn("requested * 0.28", glide_fn)
+        self.assertIn("stem.volume = min(0.22, from * 0.22)", glide_fn)
         self.assertIn("Ease into stem decks", player)
         self.assertIn("mashupStemEntryDuration = fromStream ? 0.42 : (priorIn > 0.05 ? 0.55 : 0.32)", player)
         self.assertIn("stemFrom:", player)
+        self.assertIn("let glideSec = 0.14", player)
         # Field 1145+: phrase loops only on a real BPM grid (fake 120 tiles off-kick).
         self.assertIn("loop.bake bars=", player)
         self.assertIn("loop.bake skip=noBPM", player)
@@ -574,7 +582,7 @@ class AutoMixMashupTests(unittest.TestCase):
         style_src = (
             ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupLiveStyle.swift"
         ).read_text()
-        self.assertIn("Lead-in from unity so bake.ready", style_src)
+        self.assertIn("return volumes(progress: progress)", style_src)
         self.assertIn("snapLandToBarGrid", style_src)
         # Always rebuild tempoMatch when plan rates are flat but profiles have BPM.
         self.assertIn("always rebuild the mutual grid when possible", style_src)
