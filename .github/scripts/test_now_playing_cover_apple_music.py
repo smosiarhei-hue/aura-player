@@ -56,6 +56,10 @@ class NowPlayingCoverAppleMusicTests(unittest.TestCase):
         )[0]
         self.assertIn("LinearGradient", mask)
         self.assertIn(".clear", mask)
+        # Top edge dissolves like the bottom — no hard cover strip under the Island.
+        self.assertIn("location: 0.00", mask)
+        self.assertIn("location: 0.20", mask)
+        self.assertIn("both edges", PLAYER.split("private var coverDissolveMask:", 1)[0][-200:])
 
     def test_cover_fills_square_not_letterboxed(self):
         layer = PLAYER.split("private func coverLayer(", 1)[1].split(

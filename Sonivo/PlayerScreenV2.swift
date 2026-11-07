@@ -606,11 +606,15 @@ struct PlayerScreenV2: View {
         .animation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion), value: showLyricsMode)
     }
 
-    /// Soft vertical dissolve so the sharp cover melts into the blurred atmosphere.
+    /// Soft vertical dissolve on both edges — top melts under the Island like the
+    /// bottom melts into the control wash (no hard cover strip).
     private var coverDissolveMask: some View {
         LinearGradient(
             stops: [
-                .init(color: .black, location: 0.00),
+                .init(color: .clear, location: 0.00),
+                .init(color: .black.opacity(0.22), location: 0.05),
+                .init(color: .black.opacity(0.72), location: 0.12),
+                .init(color: .black, location: 0.20),
                 .init(color: .black, location: 0.52),
                 .init(color: .black.opacity(0.78), location: 0.70),
                 .init(color: .black.opacity(0.28), location: 0.88),
@@ -908,16 +912,18 @@ struct PlayerScreenV2: View {
         .frame(maxWidth: .infinity)
     }
 
-    /// Soft native material under the Dynamic Island / status bar — no custom paint.
+    /// Soft native material under the Island — same ease as the cover bottom dissolve,
+    /// so the top never reads as a hard frosted strip.
     private func playerTopNativeBlur(height: CGFloat) -> some View {
         Rectangle()
             .fill(.ultraThinMaterial)
             .mask(
                 LinearGradient(
                     stops: [
-                        .init(color: .black, location: 0.00),
-                        .init(color: .black.opacity(0.72), location: 0.42),
-                        .init(color: .black.opacity(0.22), location: 0.78),
+                        .init(color: .black.opacity(0.55), location: 0.00),
+                        .init(color: .black.opacity(0.32), location: 0.28),
+                        .init(color: .black.opacity(0.12), location: 0.58),
+                        .init(color: .black.opacity(0.04), location: 0.78),
                         .init(color: .clear, location: 1.00)
                     ],
                     startPoint: .top,
@@ -2589,9 +2595,9 @@ private final class NowPlayingAtmosphereView: UIView {
         dimView.isUserInteractionEnabled = false
         dimView.backgroundColor = UIColor.black.withAlphaComponent(0.14)
         addSubview(dimView)
-        // Keep the upper third less fogged — sharp full-bleed cover owns that region.
+        // Soft top shade only — cover already dissolves into this blurred wash.
         topClear.colors = [
-            UIColor.black.withAlphaComponent(0.18).cgColor,
+            UIColor.black.withAlphaComponent(0.10).cgColor,
             UIColor.clear.cgColor
         ]
         topClear.locations = [0.0, 1.0]
@@ -2619,7 +2625,7 @@ private final class NowPlayingAtmosphereView: UIView {
         secondaryView.frame = overscan
         blurView.frame = bounds
         dimView.frame = bounds
-        topClear.frame = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height * 0.38)
+        topClear.frame = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height * 0.22)
         bottomFade.frame = bounds
         applyAlphas()
     }
