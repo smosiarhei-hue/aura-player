@@ -12,7 +12,7 @@ using namespace metal;
 ) {
     float w = max(size.x, 1.0f);
     float h = max(size.y, 1.0f);
-    float a = clamp(amount, -1.35f, 1.35f);
+    float a = clamp(amount, -1.0f, 1.0f);
     float mag = fabs(a);
     if (mag < 0.0008f) {
         return position;

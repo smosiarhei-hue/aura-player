@@ -26,7 +26,9 @@ nonisolated enum CoverFoldSwipeMath {
 
     /// Signed distance used by the Metal warp (`slot + progress`).
     static func warpAmount(slot: Int, progress: CGFloat) -> Float {
-        Float(CGFloat(slot) + progress)
+        // Saturate off-screen cards: larger shader inputs need huge sample
+        // regions and can clip the fold while adding no visible detail.
+        Float(max(-1, min(1, CGFloat(slot) + progress)))
     }
 
     /// Horizontal travel of a slot (−1 previous, 0 current, +1 next).

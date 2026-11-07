@@ -5679,6 +5679,8 @@ final class PlayerCore {
         guard let cur = currentTrack,
               let idx = q.firstIndex(where: { $0.id == cur.id }) else { return (nil, nil) }
         let prev = idx > 0 ? q[idx - 1] : nil
+        // next() can be temporarily suppressed after AutoMix handoff.
+        if let until = suppressAutomixSkipUntil, Date() < until { return (prev, nil) }
         // Radio may exclude tracks during recovery; shuffle chooses at command time.
         guard !isYandexWavePlayback, !shuffle else { return (prev, nil) }
         let next: Track?

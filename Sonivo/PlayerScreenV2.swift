@@ -668,20 +668,8 @@ struct PlayerScreenV2: View {
         progress: CGFloat,
         morphSource: Bool
     ) -> some View {
-        let degrees = reduceMotion ? 0 : CoverFoldSwipeMath.foldDegrees(slot: slot, progress: progress)
-        let scale = reduceMotion ? 1 : CoverFoldSwipeMath.scale(slot: slot, progress: progress)
-        let opacity = CoverFoldSwipeMath.opacity(slot: slot, progress: progress)
-        let offsetX = CoverFoldSwipeMath.slotOffset(slot: slot, progress: progress, width: width)
         let preferred = slotTrack.flatMap { artworkImage(for: $0) }
             ?? (slot == 0 && artworkTrackId == slotTrack?.id ? currentArtworkImage : nil)
-
-        let warp = reduceMotion ? 0 : CoverFoldSwipeMath.warpAmount(slot: slot, progress: progress)
-        let warpMag = CGFloat(abs(warp))
-        // Generous sample pad — weak padding clips the mesh into black "cube" slabs.
-        let samplePad = CGSize(
-            width: max(48, side * (0.28 + 0.55 * min(1, warpMag))),
-            height: max(36, side * (0.18 + 0.35 * min(1, warpMag)))
-        )
         let corner = side * CoverFoldSwipeMath.cornerRadiusFactor
 
         coverLayer(for: slotTrack, preferredImage: preferred)
@@ -691,23 +679,9 @@ struct PlayerScreenV2: View {
             // threshold made a visible line/pop on the top edge of the cover.
             .mask(coverDissolveMask)
             .compositingGroup()
-            // Mesh bend (curved jelly edges) — rigid rotation alone looks like cubes.
-            .distortionEffect(
-                ShaderLibrary.coverFoldWarp(
-                    .float2(side, side),
-                    .float(warp)
-                ),
-                maxSampleOffset: samplePad
-            )
-            .scaleEffect(scale)
-            .rotation3DEffect(
-                .degrees(degrees),
-                axis: (x: 0, y: 1, z: 0),
-                anchor: .center,
-                perspective: CoverFoldSwipeMath.perspective
-            )
-            .offset(x: offsetX)
-            .opacity(opacity)
+            // Interpolate the shader uniform as well as the transforms during
+            // spring settle; otherwise only the plate moves and the fold jumps.
+            .modifier(CoverFoldAnimatedEffect(side: side, width: width, slot: slot, progress: progress))
             .matchedGeometryEffect(
                 id: LyricsPresentationMotion.coverMorphID,
                 in: nowPlayingCoverSpace,
@@ -716,6 +690,43 @@ struct PlayerScreenV2: View {
             )
             .allowsHitTesting(false)
             .accessibilityHidden(slot != 0)
+    }
+
+    /// The fold itself, not only its offset, follows every interpolated frame.
+    private struct CoverFoldAnimatedEffect: AnimatableModifier {
+        let side: CGFloat
+        let width: CGFloat
+        let slot: Int
+        var progress: CGFloat
+
+        var animatableData: CGFloat {
+            get { progress }
+            set { progress = newValue }
+        }
+
+        func body(content: Content) -> some View {
+            let warp = CoverFoldSwipeMath.warpAmount(slot: slot, progress: progress)
+            let magnitude = CGFloat(abs(warp))
+            // Bound covers every source sample for |warp| <= 1, without expanding
+            // the render region as if an off-screen card bent without limit.
+            let samplePad = CGSize(
+                width: max(48, side * (0.28 + 0.55 * magnitude)),
+                height: max(36, side * (0.18 + 0.35 * magnitude))
+            )
+            return content
+                .distortionEffect(
+                    ShaderLibrary.coverFoldWarp(.float2(side, side), .float(warp)),
+                    maxSampleOffset: samplePad
+                )
+                .scaleEffect(CoverFoldSwipeMath.scale(slot: slot, progress: progress))
+                .rotation3DEffect(
+                    .degrees(CoverFoldSwipeMath.foldDegrees(slot: slot, progress: progress)),
+                    axis: (x: 0, y: 1, z: 0), anchor: .center,
+                    perspective: CoverFoldSwipeMath.perspective
+                )
+                .offset(x: CoverFoldSwipeMath.slotOffset(slot: slot, progress: progress, width: width))
+                .opacity(CoverFoldSwipeMath.opacity(slot: slot, progress: progress))
+        }
     }
 
     /// Soft native dissolve into the UIBlur atmosphere — alpha only, never a tinted
@@ -1201,7 +1212,8 @@ struct PlayerScreenV2: View {
                 ForEach([-1, 0, 1], id: \.self) { slot in
                     let item = slot == 0 ? track : (slot < 0 ? neighbors.prev : neighbors.next)
                     let distance = CGFloat(slot) + activeProgress
-                    if slot == 0 || (item != nil && abs(activeProgress) > 0.001 && abs(distance) < 1) {
+                    // Keep preview identity alive while a cancelled gesture settles.
+                    if slot == 0 || item != nil {
                         metadataText(item, marquee: slot == 0)
                             .frame(width: geo.size.width, alignment: .leading)
                             .rotation3DEffect(

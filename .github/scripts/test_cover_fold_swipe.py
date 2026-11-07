@@ -43,6 +43,8 @@ class CoverFoldSwipeTests(unittest.TestCase):
         self.assertIn("[[ stitchable ]] float2 coverFoldWarp", metal)
         self.assertIn("compress * 0.42f", metal)
         self.assertIn("ripple", metal)
+        self.assertIn("clamp(amount, -1.0f, 1.0f)", metal)
+        self.assertIn("Float(max(-1, min(1, CGFloat(slot) + progress)))", math)
 
     def test_player_uses_folding_carousel_not_teleport_easein(self):
         player = (ROOT / "Sonivo/PlayerScreenV2.swift").read_text()
@@ -54,6 +56,9 @@ class CoverFoldSwipeTests(unittest.TestCase):
         self.assertIn("rotation3DEffect(", stage)
         self.assertIn("distortionEffect(", stage)
         self.assertIn("ShaderLibrary.coverFoldWarp(", stage)
+        self.assertIn("CoverFoldAnimatedEffect", stage)
+        self.assertIn("var animatableData: CGFloat", stage)
+        self.assertIn("set { progress = newValue }", stage)
         self.assertIn("compositingGroup()", stage)
         self.assertIn("CoverFoldSwipeMath.cornerRadiusFactor", stage)
         self.assertIn("CoverSwipeProMotionGate(active:", stage)
@@ -72,6 +77,25 @@ class CoverFoldSwipeTests(unittest.TestCase):
         self.assertIn("coverDragX = 0", swipe)
         motion = (ROOT / "Sonivo/CoverFoldSwipeMath.swift").read_text()
         self.assertIn("response: 0.45, dampingFraction: 0.85", motion)
+
+    def test_sample_offsets_cover_the_saturated_shader_domain(self):
+        import math
+        for step in range(21):
+            a = step / 20
+            x_pad = 0.28 + 0.55 * a
+            y_pad = 0.18 + 0.35 * a
+            for xi in range(101):
+                nx = xi / 50 - 1
+                pull = max(0, nx * a) * a
+                compression = pull * pull
+                x_source = nx + compression * 0.95 * nx - pull * 0.42
+                self.assertLessEqual(abs(x_source - nx) / 2, x_pad + 1e-9)
+                for yi in range(51):
+                    y = yi / 50
+                    y_displacement = (math.sin(y * math.pi) * compression * 0.42
+                        + math.sin(y * math.pi * 2) * pull * 0.10
+                        + (2 * y - 1) * compression * 0.06)
+                    self.assertLessEqual(abs(y_displacement), y_pad + 1e-9)
 
     def test_math_swift_preconditions(self):
         """Pure fold curves — center flat, sides fold, opacity drops past one slot."""
@@ -121,6 +145,7 @@ class CoverSwipeSafetyRegressionTests(unittest.TestCase):
         preview = core.split('var coverSwipePreviewTracks:', 1)[1].split('private func peekNext', 1)[0]
         self.assertIn('idx > 0 ? q[idx - 1] : nil', preview)
         self.assertIn('guard !isYandexWavePlayback, !shuffle', preview)
+        self.assertIn('suppressAutomixSkipUntil', preview)
         self.assertNotIn('randomElement', preview)
         self.assertNotIn('effectiveQueue()', preview)
         player = (ROOT / 'Sonivo/PlayerScreenV2.swift').read_text()

@@ -2,9 +2,9 @@ import QuartzCore
 import SwiftUI
 import UIKit
 
-/// Keeps a no-op CADisplayLink alive while the cover is dragged / settling so
-/// ProMotion stays near 120 Hz (CADisableMinimumFrameDurationOnPhone alone is
-/// not enough for custom DragGesture updates — same pattern as Smooth-Drag).
+/// Requests a higher refresh rate only while the cover is dragged or settling.
+/// The display and operating system choose the actual rate; this is not a
+/// guarantee of 120 fps and needs device profiling for performance verification.
 struct CoverSwipeProMotionGate: UIViewRepresentable {
     var active: Bool
 
