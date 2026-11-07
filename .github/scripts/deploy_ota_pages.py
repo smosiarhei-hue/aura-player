@@ -1,12 +1,15 @@
 # Path: .github/scripts/deploy_ota_pages.py
 """Generate OTA manifest.plist and push to gh-pages branch."""
 
+import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.request
 
 
 def generate_manifest(bundle_id: str, version: str, ipa_url: str, title: str = "Sonivo") -> str:
@@ -44,6 +47,97 @@ def generate_manifest(bundle_id: str, version: str, ipa_url: str, title: str = "
 """
 
 
+def _github_api(method: str, path: str, token: str, body: dict | None = None) -> tuple[int, object]:
+    """Minimal GitHub REST helper (stdlib only — no PyGithub on the runner)."""
+    request = urllib.request.Request(
+        f"https://api.github.com{path}",
+        data=None if body is None else json.dumps(body).encode("utf-8"),
+        method=method,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "sonivo-ota-deploy",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            raw = response.read()
+            payload = json.loads(raw.decode("utf-8")) if raw else None
+            return response.status, payload
+    except urllib.error.HTTPError as error:
+        raw = error.read()
+        try:
+            payload = json.loads(raw.decode("utf-8")) if raw else {"message": str(error)}
+        except json.JSONDecodeError:
+            payload = {"message": raw.decode("utf-8", errors="replace")}
+        return error.code, payload
+    except Exception as error:  # network / timeout — never fail the IPA job for this
+        return 0, {"message": str(error)}
+
+
+def cancel_in_progress_pages_deployments(token: str, repository: str) -> None:
+    """Clear stuck GitHub Pages publish locks before pushing a new OTA IPA.
+
+    Rapid Build IPA runs were stacking deploys: one ~57MB Sonivo.ipa hung in
+    `syncing_files`, then every later `pages-build-deployment` failed with
+    "cancel <sha> first". Cancel + mark GH Deployments inactive up front.
+    """
+    owner, repo = repository.split("/", 1)
+    status_code, builds = _github_api("GET", f"/repos/{owner}/{repo}/pages/builds", token)
+    if status_code != 200 or not isinstance(builds, list):
+        print(f"Skip pages unlock (builds HTTP {status_code}): {builds}")
+        return
+
+    cancelled = 0
+    for build in builds[:8]:
+        if not isinstance(build, dict):
+            continue
+        if build.get("status") not in {"building", "queued"}:
+            continue
+        sha = (build.get("commit") or "").strip()
+        if not sha:
+            continue
+        code, _ = _github_api(
+            "POST",
+            f"/repos/{owner}/{repo}/pages/deployments/{sha}/cancel",
+            token,
+        )
+        print(f"Cancel pages deployment {sha[:7]} → HTTP {code}")
+        cancelled += 1
+
+    # Also retire GitHub Deployments still marked in_progress / queued for pages.
+    status_code, deployments = _github_api(
+        "GET",
+        f"/repos/{owner}/{repo}/deployments?environment=github-pages&per_page=10",
+        token,
+    )
+    if status_code == 200 and isinstance(deployments, list):
+        for deployment in deployments:
+            if not isinstance(deployment, dict):
+                continue
+            dep_id = deployment.get("id")
+            if not dep_id:
+                continue
+            code, statuses = _github_api(
+                "GET",
+                f"/repos/{owner}/{repo}/deployments/{dep_id}/statuses",
+                token,
+            )
+            latest = statuses[0]["state"] if code == 200 and isinstance(statuses, list) and statuses else ""
+            if latest in {"in_progress", "queued", "pending"}:
+                _github_api(
+                    "POST",
+                    f"/repos/{owner}/{repo}/deployments/{dep_id}/statuses",
+                    token,
+                    {"state": "inactive", "description": "Superseded by newer OTA Pages push"},
+                )
+                print(f"Mark deployment {dep_id} inactive (was {latest})")
+
+    if cancelled == 0:
+        print("No in-progress pages builds to cancel.")
+
+
 def deploy(env=None):
     if env is None:
         env = os.environ
@@ -61,6 +155,8 @@ def deploy(env=None):
 
     owner, repo_name = repository.split("/", 1)
     ipa_url = f"https://{owner}.github.io/{repo_name}/Sonivo.ipa"
+
+    cancel_in_progress_pages_deployments(token, repository)
 
     pages_dir = temp_dir / "gh_pages_deploy"
     if pages_dir.exists():
