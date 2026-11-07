@@ -5681,16 +5681,23 @@ final class PlayerCore {
         let prev = idx > 0 ? q[idx - 1] : nil
         // next() can be temporarily suppressed after AutoMix handoff.
         if let until = suppressAutomixSkipUntil, Date() < until { return (prev, nil) }
-        // Radio may exclude tracks during recovery; shuffle chooses at command time.
-        guard !isYandexWavePlayback, !shuffle else { return (prev, nil) }
+        // Radio has a deterministic server queue, with recovery exclusions.
+        // Only true shuffle is unknowable before the transport selects a track.
+        if isYandexWavePlayback {
+            let next = idx + 1 < q.count
+                ? q[(idx + 1)...].first { !waveRecovery.excludes(Self.yandexTrackID(from: $0)) }
+                : nil
+            return (prev, next)
+        }
+        guard !shuffle else { return (prev, nil) }
         let next: Track?
         if idx + 1 < q.count {
             next = q[idx + 1]
-        } else if repeatMode == .all, !q.isEmpty {
-            next = q[0]
+        } else if repeatMode == .all || !YandexMusicService.shared.isUserLoggedIn
+                    || YandexMusicService.ymId(fromFileName: cur.fileName) == nil {
+            next = q.first
         } else {
-            // The transport may wrap or asynchronously load a continuation.
-            next = nil
+            next = nil // The transport may asynchronously load a continuation.
         }
         return (prev, next)
     }

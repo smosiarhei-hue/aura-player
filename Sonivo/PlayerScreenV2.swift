@@ -26,7 +26,13 @@ struct PlayerScreenV2: View {
     @State private var coverDragX: CGFloat = 0
     @State private var isCoverSwitching = false
     @State private var coverSwitchTask: Task<Void, Never>?
+    @State private var coverSettleTask: Task<Void, Never>?
+    @State private var coverVisualSide = 0
     @State private var coverSwitchGeneration = UUID()
+    @State private var coverTransitionOutgoing: Track?
+    @State private var coverTransitionIncoming: Track?
+    @State private var coverTransitionOutgoingImage: UIImage?
+    @State private var coverTransitionDirection = 0
     @State private var dominantArtworkColor: Color?
     @State private var waveLoading = false
     @State private var waveActive = false
@@ -281,7 +287,11 @@ struct PlayerScreenV2: View {
             if !enabled { teardownVideoLooper() }
         }
         .onChange(of: track?.id) { _, _ in
-            if (isCoverSwitching && coverSwitchTask != nil) || abs(coverDragX) > 0.5 { cancelCoverSwitch() }
+            if let incoming = coverTransitionIncoming {
+                if player.currentTrack?.id != incoming.id { cancelCoverSwitch() }
+            } else if (isCoverSwitching && coverSwitchTask != nil) || abs(coverDragX) > 0.5 {
+                cancelCoverSwitch()
+            }
             trackWaveTask?.cancel()
             trackWaveRequestID = UUID()
             waveLoading = false
@@ -324,10 +334,15 @@ struct PlayerScreenV2: View {
             trackWaveTask?.cancel()
             lyricsControlsHideTask?.cancel()
             coverSwitchTask?.cancel()
+            coverSettleTask?.cancel()
+            coverVisualSide = 0
             pendingModalTask?.cancel()
             pendingModalTask = nil
             coverSwitchGeneration = UUID()
             isCoverSwitching = false
+            coverTransitionOutgoing = nil
+            coverTransitionIncoming = nil
+            coverTransitionOutgoingImage = nil
             coverDragX = 0
             trackWaveRequestID = UUID()
             waveLoading = false
@@ -418,7 +433,7 @@ struct PlayerScreenV2: View {
                     .onEnded { _ in scheduleLyricsControlsHide() })
 
             if lyricsControlsVisible {
-                lyricsControlsDeck(safeAreaBottom: safeAreaBottom)
+                lyricsControlsDeck(safeAreaBottom: safeAreaBottom, coverWidth: width)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             } else {
                 HStack(spacing: 16) {
@@ -522,7 +537,7 @@ struct PlayerScreenV2: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func lyricsControlsDeck(safeAreaBottom: CGFloat) -> some View {
+    private func lyricsControlsDeck(safeAreaBottom: CGFloat, coverWidth: CGFloat) -> some View {
         VStack(spacing: 16) {
             HStack {
                 Text(lyricsVoiceOver ? "Управление плеером" : (player.isBuffering ? "Ожидание воспроизведения" : (player.isPlaying ? "Скроется через 10 с без касаний" : "На паузе управление остаётся открытым")))
@@ -536,7 +551,7 @@ struct PlayerScreenV2: View {
                 .frame(minHeight: 44)
             }
             PlayerTimelineSection(player: player) { centerStatusLabel }
-            transportControls
+            transportControls(coverWidth: coverWidth)
             HStack(spacing: 16) {
                 closeLyricsButton
                 Spacer(minLength: 0)
@@ -585,12 +600,13 @@ struct PlayerScreenV2: View {
                             switch slot {
                             case -1: return neighbors.prev
                             case 1: return neighbors.next
-                            default: return track
+                            default: return coverTransitionOutgoing ?? track
                             }
                         }()
-                        // Empty side slots stay hidden so we never invent a ghost cover.
-                        if (slot == 0 || slotTrack != nil),
-                           CoverFoldSwipeMath.shouldDrawNeighbor(slot: slot, progress: progress) {
+                        // Only render the approaching side while moving. When
+                        // shuffle has no known target it is a neutral placeholder,
+                        // never an invented track or title.
+                        if slot == 0 || slot == coverVisualSide {
                             foldedCoverPlate(
                                 for: slotTrack,
                                 side: coverSide,
@@ -620,15 +636,14 @@ struct PlayerScreenV2: View {
         .frame(width: width, height: height, alignment: .top)
         .scaleEffect(playScale)
         .contentShape(Rectangle())
-        .gesture(
+        .simultaneousGesture(
             showLyricsMode ? nil : DragGesture(minimumDistance: 18)
                 .onChanged { value in
                     guard !isCoverSwitching, PlayerInteractionPolicy.horizontalIntent(
                         x: Double(value.translation.width), y: Double(value.translation.height)) else { return }
-                    // An unknown destination uses a small resistance instead of
-                    // revealing a misleading cover or dragging into empty space.
-                    let neighbor = value.translation.width < 0 ? neighbors.next : neighbors.prev
-                    let limit = width * (neighbor == nil ? 0.12 : CoverFoldSwipeMath.progressLimit)
+                    coverSettleTask?.cancel()
+                    coverVisualSide = value.translation.width < 0 ? 1 : -1
+                    let limit = width * CoverFoldSwipeMath.progressLimit
                     coverDragX = reduceMotion ? 0 : max(-limit, min(limit, value.translation.width))
                 }
                 .onEnded { value in
@@ -639,7 +654,7 @@ struct PlayerScreenV2: View {
                         // or previous() (restart at the beginning of the queue).
                         animateTrackSwipe(direction: direction, width: width)
                     } else {
-                        withAnimation(reduceMotion ? nil : CoverFoldSwipeMotion.cancelAnimation) { coverDragX = 0 }
+                        settleCoverDrag()
                     }
                 }
         )
@@ -655,6 +670,9 @@ struct PlayerScreenV2: View {
 
     /// Only preview a destination that the playback engine can guarantee.
     private var coverSwipeNeighbors: (prev: Track?, next: Track?) {
+        if let incoming = coverTransitionIncoming, coverTransitionOutgoing != nil {
+            return coverTransitionDirection > 0 ? (nil, incoming) : (incoming, nil)
+        }
         guard !player.isTransitionActive, player.currentTrack?.id == track?.id else { return (nil, nil) }
         return player.coverSwipePreviewTracks
     }
@@ -710,13 +728,14 @@ struct PlayerScreenV2: View {
             // Bound covers every source sample for |warp| <= 1, without expanding
             // the render region as if an off-screen card bent without limit.
             let samplePad = CGSize(
-                width: max(48, side * (0.28 + 0.55 * magnitude)),
-                height: max(36, side * (0.18 + 0.35 * magnitude))
+                width: max(8, side * 0.28 * magnitude * magnitude),
+                height: max(8, side * 0.58 * magnitude * magnitude)
             )
             return content
                 .distortionEffect(
                     ShaderLibrary.coverFoldWarp(.float2(side, side), .float(warp)),
-                    maxSampleOffset: samplePad
+                    maxSampleOffset: samplePad,
+                    isEnabled: magnitude > 0.001
                 )
                 .scaleEffect(CoverFoldSwipeMath.scale(slot: slot, progress: progress))
                 .rotation3DEffect(
@@ -960,15 +979,16 @@ struct PlayerScreenV2: View {
             .animation(reduceMotion ? nil : .linear(duration: 0.05), value: mixP)
         } else {
             coverLayer(for: track, preferredImage: {
-                let cached = track.flatMap { LibraryStore.cachedArtworkImage(for: $0) }
+                let cached = track.flatMap { LibraryStore.memoryCachedArtworkImage(for: $0) }
                 return (artworkTrackId == track?.id ? currentArtworkImage : nil) ?? cached
             }())
         }
     }
 
     private func artworkImage(for track: Track) -> UIImage? {
+        if coverTransitionOutgoing?.id == track.id, let coverTransitionOutgoingImage { return coverTransitionOutgoingImage }
         if artworkTrackId == track.id, let currentArtworkImage { return currentArtworkImage }
-        return LibraryStore.cachedArtworkImage(for: track)
+        return LibraryStore.memoryCachedArtworkImage(for: track)
     }
 
     @ViewBuilder
@@ -1004,7 +1024,7 @@ struct PlayerScreenV2: View {
             VStack(spacing: 8) {
                 metadataRow(coverWidth: coverWidth)
                 PlayerTimelineSection(player: player) { centerStatusLabel }
-                transportControls
+                transportControls(coverWidth: coverWidth)
                 FluidVolumeSlider()
                     .accessibilityElement(children: .contain)
                 primaryUtilityRow
@@ -1205,12 +1225,11 @@ struct PlayerScreenV2: View {
         let progress = CoverFoldSwipeMath.progress(dragX: coverDragX, width: coverWidth)
         let neighbors = coverSwipeNeighbors
         let canPreview = !reduceMotion && coverMixAmount == 0 && !isFullScreenVideoShot
-        let destination = progress < 0 ? neighbors.next : neighbors.prev
-        let activeProgress = canPreview && destination != nil ? progress : 0
+        let activeProgress = canPreview ? progress : 0
         return GeometryReader { geo in
             ZStack(alignment: .leading) {
                 ForEach([-1, 0, 1], id: \.self) { slot in
-                    let item = slot == 0 ? track : (slot < 0 ? neighbors.prev : neighbors.next)
+                    let item = slot == 0 ? (coverTransitionOutgoing ?? track) : (slot < 0 ? neighbors.prev : neighbors.next)
                     let distance = CGFloat(slot) + activeProgress
                     // Keep preview identity alive while a cancelled gesture settles.
                     if slot == 0 || item != nil {
@@ -1317,7 +1336,7 @@ struct PlayerScreenV2: View {
     private var qualityBadgeLabel: String {
         PlaybackQualityFacts(codec: player.currentCodec, bitrate: player.currentBitrate).badge
     }
-    private var transportControls: some View {
+    private func transportControls(coverWidth: CGFloat) -> some View {
         HStack(spacing: 0) {
             Button {
                 Haptics.tap(.light)
@@ -1332,7 +1351,7 @@ struct PlayerScreenV2: View {
             .frame(maxWidth: .infinity)
             .accessibilityLabel(player.shuffle ? "Перемешивание включено" : "Перемешать")
 
-            Button(action: previousTrack) {
+            Button { animateTrackSwipe(direction: -1, width: coverWidth) } label: {
                 Image(systemName: "backward.fill")
                     .font(.system(size: 26, weight: .bold))
                     .frame(width: 56, height: 52)
@@ -1351,7 +1370,7 @@ struct PlayerScreenV2: View {
             .frame(maxWidth: .infinity)
             .disabled(player.isLoading)
 
-            Button(action: nextTrack) {
+            Button { animateTrackSwipe(direction: 1, width: coverWidth) } label: {
                 Image(systemName: "forward.fill")
                     .font(.system(size: 26, weight: .bold))
                     .frame(width: 56, height: 52)
@@ -1557,12 +1576,13 @@ struct PlayerScreenV2: View {
     private func refreshPalette() async {
         guard let track, paletteTrackId != track.id || resolvedArtworkPaletteTrackID != track.id else { return }
         paletteTrackId = track.id
+        if artworkTrackId != track.id { currentArtworkImage = nil }
         artworkTrackId = track.id
         if let image = LibraryStore.cachedArtworkImage(for: track) {
             currentArtworkImage = image
             await updatePalette(from: image, trackID: track.id)
         } else if let raw = track.coverURL, let url = URL(string: raw), let (data, _) = try? await URLSession.shared.data(from: url), let image = UIImage(data: data) {
-            LibraryStore.cacheArtworkImage(image, for: track)
+            LibraryStore.cachePlayerArtwork(image, for: track)
             if paletteTrackId == track.id {
                 currentArtworkImage = image
                 await updatePalette(from: image, trackID: track.id)
@@ -1589,7 +1609,7 @@ struct PlayerScreenV2: View {
             Task(priority: .utility) {
                 if let (data, _) = try? await URLSession.shared.data(from: url),
                    let img = UIImage(data: data) {
-                    LibraryStore.cacheArtworkImage(img, for: next)
+                    LibraryStore.cachePlayerArtwork(img, for: next)
                 }
             }
         }
@@ -1742,78 +1762,83 @@ struct PlayerScreenV2: View {
         }
     }
     private func togglePlayback() { Haptics.tap(.medium); PlaybackAudioSessionCoordinator.shared.activateForPlayback(); player.togglePlay() }
-    private func previousTrack() {
-        guard !isCoverSwitching else { return }
-        isCoverSwitching = true
-        Haptics.tap(.light)
-        PlaybackAudioSessionCoordinator.shared.activateForPlayback()
-        player.previous()
-        releaseCoverSwitchLock()
-    }
-    private func nextTrack() {
-        guard !isCoverSwitching else { return }
-        isCoverSwitching = true
-        Haptics.tap(.light)
-        PlaybackAudioSessionCoordinator.shared.activateForPlayback()
-        player.next()
-        releaseCoverSwitchLock()
-    }
     private func animateTrackSwipe(direction: Int, width: CGFloat) {
-        guard !isCoverSwitching, track != nil else { return }
-        let preview = direction > 0 ? coverSwipeNeighbors.next : coverSwipeNeighbors.prev
-        if preview == nil || reduceMotion || coverMixAmount > 0 || isFullScreenVideoShot {
-            coverDragX = 0
-            if direction > 0 { nextTrack() } else { previousTrack() }
-            return
-        }
-        isCoverSwitching = true
+        guard !isCoverSwitching else { return }
         coverSwitchTask?.cancel()
+        coverSettleTask?.cancel()
         let generation = UUID()
         coverSwitchGeneration = generation
+        isCoverSwitching = true
+        let outgoing = track
+        let outgoingImage = outgoing.flatMap { artworkImage(for: $0) }
+        let canAnimate = !reduceMotion && !showLyricsMode && !isFullScreenVideoShot
+            && coverMixAmount == 0 && width.isFinite && width > 0
         Haptics.tap(.light)
-        let requestedTrackID = player.currentTrack?.id
-        let requestedQueue = player.queue.map(\.id)
-        let requestedShuffle = player.shuffle
-        let requestedRepeat = player.repeatMode
-        let requestedPreviewID = preview?.id
-        // Next = fold current left (−1 slot); previous = fold current right (+1 slot).
-        let targetX: CGFloat = direction > 0 ? -width : width
-        withAnimation(reduceMotion ? nil : CoverFoldSwipeMotion.commitAnimation) {
-            coverDragX = reduceMotion ? 0 : targetX
+        PlaybackAudioSessionCoordinator.shared.activateForPlayback()
+        // Playback must never wait for a visual effect. Capture what the engine
+        // actually selected (including shuffle/radio) and animate that result.
+        if direction > 0 { player.next() } else { player.previous() }
+        guard canAnimate, let outgoing, let incoming = player.currentTrack,
+              incoming.id != outgoing.id else {
+            settleCoverDrag()
+            releaseCoverSwitchLock()
+            return
         }
-        coverSwitchTask = Task { @MainActor in
-            do {
-                try await Task.sleep(for: .milliseconds(reduceMotion ? 0 : CoverFoldSwipeMotion.commitHoldMilliseconds))
-            } catch { return }
-            guard !Task.isCancelled, coverSwitchGeneration == generation, isPresented else { return }
-            let currentPreviewID = direction > 0 ? coverSwipeNeighbors.next?.id : coverSwipeNeighbors.prev?.id
-            guard player.currentTrack?.id == requestedTrackID,
-                  player.queue.map(\.id) == requestedQueue,
-                  player.shuffle == requestedShuffle, player.repeatMode == requestedRepeat,
-                  currentPreviewID == requestedPreviewID else {
-                withAnimation(reduceMotion ? nil : CoverFoldSwipeMotion.cancelAnimation) { coverDragX = 0 }
-                isCoverSwitching = false
-                coverSwitchTask = nil
-                return
-            }
-            coverSwitchTask = nil
-            PlaybackAudioSessionCoordinator.shared.activateForPlayback()
-            if direction > 0 { player.next() } else { player.previous() }
-            // Neighbor is now centered — snap progress to 0 without a reverse fly-in.
+        coverTransitionOutgoing = outgoing
+        coverTransitionIncoming = incoming
+        coverTransitionOutgoingImage = outgoingImage
+        coverTransitionDirection = direction
+        coverVisualSide = direction > 0 ? 1 : -1
+        // A button starts at rest; mount the destination plate before animating.
+        if abs(coverDragX) < 0.5 {
             var transaction = Transaction()
             transaction.disablesAnimations = true
-            withTransaction(transaction) { coverDragX = 0 }
-            isCoverSwitching = false
+            let initial = max(1, width * 0.004)
+            withTransaction(transaction) { coverDragX = direction > 0 ? -initial : initial }
+        }
+        let targetX: CGFloat = direction > 0 ? -width : width
+        coverSwitchTask = Task { @MainActor in
+            do { try await Task.sleep(for: .milliseconds(16)) } catch { return }
+            guard !Task.isCancelled, coverSwitchGeneration == generation else { return }
+            guard isPresented, player.currentTrack?.id == incoming.id else { cancelCoverSwitch(); return }
+            withAnimation(CoverFoldSwipeMotion.commitAnimation) { coverDragX = targetX }
+            do { try await Task.sleep(for: .milliseconds(CoverFoldSwipeMotion.commitHoldMilliseconds)) } catch { return }
+            guard !Task.isCancelled, coverSwitchGeneration == generation else { return }
+            guard isPresented, player.currentTrack?.id == incoming.id else { cancelCoverSwitch(); return }
+            finishCoverSwitch()
+        }
+    }
+    private func settleCoverDrag() {
+        coverSettleTask?.cancel()
+        withAnimation(reduceMotion ? nil : CoverFoldSwipeMotion.cancelAnimation) { coverDragX = 0 }
+        if reduceMotion { coverVisualSide = 0; return }
+        coverSettleTask = Task { @MainActor in
+            do { try await Task.sleep(for: .milliseconds(420)) } catch { return }
+            guard !Task.isCancelled else { return }
+            coverVisualSide = 0
+            coverSettleTask = nil
+        }
+    }
+    private func finishCoverSwitch() {
+        coverSettleTask?.cancel()
+        coverSettleTask = nil
+        coverSwitchTask = nil
+        isCoverSwitching = false
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            coverDragX = 0
+            coverTransitionOutgoing = nil
+            coverTransitionIncoming = nil
+            coverTransitionOutgoingImage = nil
+            coverTransitionDirection = 0
+            coverVisualSide = 0
         }
     }
     private func cancelCoverSwitch() {
         coverSwitchTask?.cancel()
-        coverSwitchTask = nil
         coverSwitchGeneration = UUID()
-        isCoverSwitching = false
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) { coverDragX = 0 }
+        finishCoverSwitch()
     }
     private func releaseCoverSwitchLock() {
         let generation = UUID()
@@ -2761,13 +2786,13 @@ private final class NowPlayingAtmosphereView: UIView {
     private let bottomFade = CAGradientLayer()
 
     var primaryImage: UIImage? {
-        didSet { primaryView.image = primaryImage }
+        didSet { if primaryView.image !== primaryImage { primaryView.image = primaryImage } }
     }
     var secondaryImage: UIImage? {
-        didSet { secondaryView.image = secondaryImage }
+        didSet { if secondaryView.image !== secondaryImage { secondaryView.image = secondaryImage } }
     }
     var secondaryAmount: CGFloat = 0 {
-        didSet { applyAlphas() }
+        didSet { if oldValue != secondaryAmount { applyAlphas() } }
     }
 
     override init(frame: CGRect) {

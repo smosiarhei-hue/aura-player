@@ -82,8 +82,8 @@ class CoverFoldSwipeTests(unittest.TestCase):
         import math
         for step in range(21):
             a = step / 20
-            x_pad = 0.28 + 0.55 * a
-            y_pad = 0.18 + 0.35 * a
+            x_pad = 0.28 * a * a
+            y_pad = 0.58 * a * a
             for xi in range(101):
                 nx = xi / 50 - 1
                 pull = max(0, nx * a) * a
@@ -140,26 +140,45 @@ print("ok")
 
 
 class CoverSwipeSafetyRegressionTests(unittest.TestCase):
-    def test_previews_are_conservative_and_do_not_block_transport(self):
+    def test_radio_preview_matches_recovery_and_shuffle_never_guesses(self):
         core = (ROOT / 'Sonivo/playercore.swift').read_text()
         preview = core.split('var coverSwipePreviewTracks:', 1)[1].split('private func peekNext', 1)[0]
         self.assertIn('idx > 0 ? q[idx - 1] : nil', preview)
-        self.assertIn('guard !isYandexWavePlayback, !shuffle', preview)
+        self.assertIn('if isYandexWavePlayback', preview)
+        self.assertIn('waveRecovery.excludes(Self.yandexTrackID(from: $0))', preview)
+        self.assertIn('guard !shuffle else { return (prev, nil) }', preview)
         self.assertIn('suppressAutomixSkipUntil', preview)
         self.assertNotIn('randomElement', preview)
         self.assertNotIn('effectiveQueue()', preview)
+
+    def test_transport_is_immediate_and_animation_uses_actual_track(self):
         player = (ROOT / 'Sonivo/PlayerScreenV2.swift').read_text()
-        gesture = player.split('private func artworkStage', 1)[1].split('private var coverSwipeNeighbors', 1)[0]
-        self.assertIn('animateTrackSwipe(direction: direction, width: width)', gesture)
-        self.assertNotIn('if hasNeighbor', gesture)
+        stage = player.split('private func artworkStage', 1)[1].split('private var coverSwipeNeighbors', 1)[0]
+        self.assertIn('.simultaneousGesture(', stage)
+        self.assertIn('animateTrackSwipe(direction: direction, width: width)', stage)
+        self.assertNotIn('0.12 : CoverFoldSwipeMath.progressLimit', stage)
+        self.assertIn('slot == coverVisualSide', stage)
+        self.assertIn('settleCoverDrag()', stage)
+        self.assertIn('default: return coverTransitionOutgoing ?? track', stage)
         commit = player.split('private func animateTrackSwipe', 1)[1].split('private func releaseCoverSwitchLock', 1)[0]
-        for token in ['preview == nil', 'nextTrack()', 'previousTrack()', 'requestedQueue',
-                      'requestedShuffle', 'requestedRepeat', 'currentPreviewID == requestedPreviewID',
-                      'coverSwitchGeneration = UUID()', 'coverSwitchTask?.cancel()']:
+        self.assertLess(commit.index('player.next()'), commit.index('coverSwitchTask = Task'))
+        self.assertLess(commit.index('player.previous()'), commit.index('coverSwitchTask = Task'))
+        for token in ['let incoming = player.currentTrack', 'coverTransitionOutgoing = outgoing',
+                      'coverTransitionIncoming = incoming', 'incoming.id != outgoing.id',
+                      'player.currentTrack?.id == incoming.id', 'coverSwitchGeneration = UUID()',
+                      'coverSwitchTask?.cancel()', 'width * 0.004']:
             self.assertIn(token, commit)
+        self.assertIn('Button { animateTrackSwipe(direction: -1, width: coverWidth) }', player)
+        self.assertIn('Button { animateTrackSwipe(direction: 1, width: coverWidth) }', player)
         self.assertIn('if phase != .active { cancelCoverSwitch() }', player)
-        self.assertIn('isCoverSwitching && coverSwitchTask != nil', player)
-        self.assertIn('abs(coverDragX) > 0.5 { cancelCoverSwitch() }', player)
+        self.assertIn('if let incoming = coverTransitionIncoming', player)
+        library = (ROOT / 'Sonivo/librarystore.swift').read_text()
+        self.assertIn('static func memoryCachedArtworkImage', library)
+        self.assertIn('static func cachePlayerArtwork', library)
+        self.assertIn('Task.detached(priority: .utility)', library.split('static func cachePlayerArtwork', 1)[1].split('static func cachedArtworkImage', 1)[0])
+        artwork = player.split('private func artworkImage(for', 1)[1].split('@ViewBuilder', 1)[0]
+        self.assertIn('memoryCachedArtworkImage', artwork)
+        self.assertNotIn('cachedArtworkImage(for:', artwork)
 
     def test_feather_and_text_share_swipe_without_changing_actions(self):
         player = (ROOT / 'Sonivo/PlayerScreenV2.swift').read_text()

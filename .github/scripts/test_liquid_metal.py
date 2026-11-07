@@ -47,8 +47,8 @@ class LiquidMetalTests(unittest.TestCase):
         self.assertIn('.sonivoMetal(corner: SN.radiusSmall',(ROOT/'Sonivo/SettingsUI.swift').read_text())
     def test_existing_player_semantics_survive(self):
         s=(ROOT/'Sonivo/PlayerScreenV2.swift').read_text()
-        for token in ['Button(action: togglePlayback)','Button(action: previousTrack)',
-                      'Button(action: nextTrack)', '.disabled(player.isLoading)',
+        for token in ['Button(action: togglePlayback)','animateTrackSwipe(direction: -1, width: coverWidth)',
+                      'animateTrackSwipe(direction: 1, width: coverWidth)', '.disabled(player.isLoading)',
                       'SonivoEqualizerGlyph(', 'startTrackWave()', 'primaryUtilityRow',
                       'coverBloomTones']:
             self.assertIn(token,s)

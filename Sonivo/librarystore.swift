@@ -628,6 +628,21 @@ final class LibraryStore {
 
     private static let artworkMemoryCache = NSCache<NSString, UIImage>()
 
+    /// Drawing paths must never synchronously check disk on every gesture frame.
+    static func memoryCachedArtworkImage(for track: Track) -> UIImage? {
+        artworkMemoryCache.object(forKey: (track.coverURL ?? track.fileName) as NSString)
+    }
+
+    /// Publish to memory immediately; JPEG compression and disk I/O stay off the UI thread.
+    static func cachePlayerArtwork(_ image: UIImage, for track: Track) {
+        artworkMemoryCache.setObject(image, forKey: (track.coverURL ?? track.fileName) as NSString)
+        let destination = artworkCacheDirectoryURL().appendingPathComponent("seed_\(stableSeed(track.fileName)).jpg")
+        Task.detached(priority: .utility) {
+            guard let data = image.jpegData(compressionQuality: 0.85) else { return }
+            try? data.write(to: destination, options: .atomic)
+        }
+    }
+
     static func cachedArtworkImage(for track: Track) -> UIImage? {
         let key = (track.coverURL ?? track.fileName) as NSString
         if let memoryImage = artworkMemoryCache.object(forKey: key) {
