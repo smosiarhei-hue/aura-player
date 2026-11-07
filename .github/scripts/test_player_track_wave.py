@@ -40,12 +40,12 @@ class PlayerTrackWaveTests(unittest.TestCase):
         screen=source('PlayerScreenV2.swift')
         body=screen.split('var body: some View',1)[1].split('.sheet(item:',1)[0]
         self.assertIn('ScrollView(.vertical)',body)
-        self.assertIn('playerTopColorBloom',body)
         self.assertIn('coverTopClearance',body)
         self.assertIn('coverBloomTones',screen)
+        self.assertNotIn('playerTopColorBloom',screen)
         self.assertNotIn('playerDismissGesture',body)
         self.assertNotIn('.background(SN.bg.ignoresSafeArea())\n        .simultaneousGesture',body)
-        deck=screen.split('private func lowerDeck',1)[1].split('private func playerTopColorBloom',1)[0]
+        deck=screen.split('private func lowerDeck',1)[1].split('private var coverBloomTones',1)[0]
         for first,second in [
             ('metadataRow','transportControls'),
             ('FluidVolumeSlider()','primaryUtilityRow'),
@@ -108,8 +108,8 @@ class PlayerTrackWaveTests(unittest.TestCase):
         normal_player = block.split('let base =',1)[1]
         for forbidden in ['LinearGradient','RadialGradient','PlayerMusicReactiveBackdrop','VideoShotPlayerView','TimelineView','Image(uiImage:']:
             self.assertNotIn(forbidden,normal_player)
-        self.assertIn('playerTopColorBloom',text)
         self.assertIn('coverBloomTones',text)
+        self.assertNotIn('playerTopColorBloom',text)
         self.assertNotIn('playerTopNativeBlur',text)
     def test_server_wave_does_not_enter_local_vibe_refill(self):
         text=source('MoodRadioEngine.swift').split('func activateYandexTrackWave',1)[1].split('func startTrackWave',1)[0]
