@@ -21,11 +21,15 @@ class CoverFoldSwipeTests(unittest.TestCase):
             "slotOffset(slot:",
             "progressLimit",
             "perspective",
-            "sideScale: CGFloat = 0.85",
+            "sideScale: CGFloat = 0.74",
             "clusterFactor",
             "warpAmount(slot:",
+            "cornerRadiusFactor",
         ]:
             self.assertIn(token, math)
+        # Mild tilt only — heavy Y rotation reads as cubes; warp carries the fold.
+        self.assertIn("static let maxFoldDegrees: Double = 12", math)
+        self.assertIn("static let clusterFactor: CGFloat = 0.92", math)
         self.assertIn("CoverSwipeProMotionGate", gate)
         self.assertIn("preferredFrameRateRange", gate)
         self.assertIn("maximum: Float(desired)", gate)
@@ -37,6 +41,8 @@ class CoverFoldSwipeTests(unittest.TestCase):
         self.assertIn("window == nil", gate)
         self.assertIn("coverFoldWarp", metal)
         self.assertIn("[[ stitchable ]] float2 coverFoldWarp", metal)
+        self.assertIn("compress * 0.42f", metal)
+        self.assertIn("ripple", metal)
 
     def test_player_uses_folding_carousel_not_teleport_easein(self):
         player = (ROOT / "Sonivo/PlayerScreenV2.swift").read_text()
@@ -48,8 +54,11 @@ class CoverFoldSwipeTests(unittest.TestCase):
         self.assertIn("rotation3DEffect(", stage)
         self.assertIn("distortionEffect(", stage)
         self.assertIn("ShaderLibrary.coverFoldWarp(", stage)
+        self.assertIn("compositingGroup()", stage)
+        self.assertIn("CoverFoldSwipeMath.cornerRadiusFactor", stage)
         self.assertIn("CoverSwipeProMotionGate(active:", stage)
         self.assertIn("ForEach([-1, 0, 1]", stage)
+        self.assertNotIn("coverTopProgressiveBlur", stage)
         self.assertNotIn(".offset(x: coverDragX)\n        .rotationEffect", stage)
 
         swipe = player.split("private func animateTrackSwipe", 1)[1].split(
@@ -75,18 +84,19 @@ func progress(dragX: Double, width: Double) -> Double {
   guard width > 0 else { return 0 }
   return max(-1.18, min(1.18, dragX / width))
 }
-func foldDegrees(slot: Int, progress: Double) -> Double { -(Double(slot) + progress) * 52 }
+func foldDegrees(slot: Int, progress: Double) -> Double { -(Double(slot) + progress) * 12 }
 func scale(slot: Int, progress: Double) -> Double {
-  let t = min(1, abs(Double(slot) + progress))
-  return 1 - t * (1 - 0.90)
+  let t = min(1.0, abs(Double(slot) + progress))
+  let eased = t * t * (3 - 2 * t)
+  return 1 - eased * (1 - 0.74)
 }
 precondition(abs(progress(dragX: 0, width: 390)) < 0.0001)
 precondition(abs(progress(dragX: 195, width: 390) - 0.5) < 0.0001)
 precondition(abs(foldDegrees(slot: 0, progress: 0)) < 0.0001)
-precondition(abs(foldDegrees(slot: 1, progress: 0) + 52) < 0.0001)
-precondition(abs(foldDegrees(slot: -1, progress: 0) - 52) < 0.0001)
+precondition(abs(foldDegrees(slot: 1, progress: 0) + 12) < 0.0001)
+precondition(abs(foldDegrees(slot: -1, progress: 0) - 12) < 0.0001)
 precondition(abs(scale(slot: 0, progress: 0) - 1) < 0.0001)
-precondition(scale(slot: 1, progress: 0) < 0.91)
+precondition(scale(slot: 1, progress: 0) < 0.75)
 print("ok")
 '''
         import platform

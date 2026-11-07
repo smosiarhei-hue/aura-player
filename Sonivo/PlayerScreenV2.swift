@@ -120,7 +120,7 @@ struct PlayerScreenV2: View {
                 let totalHeight = geo.size.height
                 let totalWidth = geo.size.width
                 let topInset = max(safeTop, 12)
-                // Cover clears the Island with room — top blur softens the edge above it.
+                // Cover clears the Island with room — soft alpha dissolve meets the atmosphere.
                 let coverTopClearance: CGFloat = max(28, topInset + 12)
                 // Apple Music: edge-to-edge square. Height == width — never taller.
                 // A taller stage made scaledToFill upscale the art and soften it.
@@ -587,7 +587,8 @@ struct PlayerScreenV2: View {
                             }
                         }()
                         // Empty side slots stay hidden so we never invent a ghost cover.
-                        if slot == 0 || slotTrack != nil {
+                        if (slot == 0 || slotTrack != nil),
+                           CoverFoldSwipeMath.shouldDrawNeighbor(slot: slot, progress: progress) {
                             foldedCoverPlate(
                                 for: slotTrack,
                                 side: coverSide,
@@ -604,7 +605,6 @@ struct PlayerScreenV2: View {
                 artwork
                     .frame(width: coverSide, height: coverSide)
                     .clipped()
-                    .overlay(alignment: .top) { coverTopProgressiveBlur(side: coverSide) }
                     .mask(coverDissolveMask)
                     .matchedGeometryEffect(
                         id: LyricsPresentationMotion.coverMorphID,
@@ -691,27 +691,28 @@ struct PlayerScreenV2: View {
             ?? (slot == 0 ? currentArtworkImage : nil)
 
         let warp = reduceMotion ? 0 : CoverFoldSwipeMath.warpAmount(slot: slot, progress: progress)
+        let warpMag = CGFloat(abs(warp))
+        // Generous sample pad — weak padding clips the mesh into black "cube" slabs.
         let samplePad = CGSize(
-            width: max(24, side * 0.22 * CGFloat(abs(warp))),
-            height: max(12, side * 0.10 * CGFloat(abs(warp)))
+            width: max(48, side * (0.28 + 0.55 * min(1, warpMag))),
+            height: max(36, side * (0.18 + 0.35 * min(1, warpMag)))
         )
+        let corner = side * CoverFoldSwipeMath.cornerRadiusFactor
+        let restingCenter = slot == 0 && abs(progress) < 0.12
 
         coverLayer(for: slotTrack, preferredImage: preferred)
             .frame(width: side, height: side)
-            .clipped()
-            .overlay(alignment: .top) {
-                if slot == 0, abs(progress) < 0.2 {
-                    coverTopProgressiveBlur(side: side)
-                }
-            }
+            .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
             .mask {
-                if abs(progress) < 0.12 && slot == 0 {
+                if restingCenter {
+                    // Soft alpha into the native UIBlur atmosphere — no blur strip on the art.
                     coverDissolveMask
                 } else {
-                    Rectangle().fill(Color.black)
+                    RoundedRectangle(cornerRadius: corner, style: .continuous).fill(Color.black)
                 }
             }
-            // Mesh bend (curved edges) — rigid rotation alone cannot match the reference.
+            .compositingGroup()
+            // Mesh bend (curved jelly edges) — rigid rotation alone looks like cubes.
             .distortionEffect(
                 ShaderLibrary.coverFoldWarp(
                     .float2(side, side),
@@ -738,37 +739,16 @@ struct PlayerScreenV2: View {
             .accessibilityHidden(slot != 0)
     }
 
-    @ViewBuilder
-    private func coverTopProgressiveBlur(side: CGFloat) -> some View {
-        artwork
-            .frame(width: side, height: side)
-            .blur(radius: reduceMotion ? 0 : 22)
-            .mask(
-                LinearGradient(
-                    stops: [
-                        .init(color: .black, location: 0.00),
-                        .init(color: .black.opacity(0.70), location: 0.42),
-                        .init(color: .clear, location: 1.00)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-            .frame(height: side * 0.24, alignment: .top)
-            .clipped()
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-    }
-
-    /// Soft native dissolve: top eases into the UIBlur atmosphere over a short seam;
-    /// bottom melts into the control wash. Mid art stays fully opaque — color bloom
-    /// never punches through (palette wash is clear across the cover band).
+    /// Soft native dissolve into the UIBlur atmosphere — alpha only, never a tinted
+    /// or re-blurred strip painted over the art (that seam reads as "the line").
+    /// Mid art stays fully opaque — color bloom never punches through.
     private var coverDissolveMask: some View {
         LinearGradient(
             stops: [
-                .init(color: .black.opacity(0.42), location: 0.00),
-                .init(color: .black.opacity(0.88), location: 0.05),
-                .init(color: .black, location: 0.11),
+                .init(color: .black.opacity(0.08), location: 0.00),
+                .init(color: .black.opacity(0.55), location: 0.035),
+                .init(color: .black.opacity(0.92), location: 0.08),
+                .init(color: .black, location: 0.14),
                 .init(color: .black, location: 0.55),
                 .init(color: .black.opacity(0.78), location: 0.72),
                 .init(color: .black.opacity(0.28), location: 0.88),

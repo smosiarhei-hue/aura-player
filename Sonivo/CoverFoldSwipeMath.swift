@@ -3,18 +3,21 @@ import Foundation
 import SwiftUI
 
 /// Folding-cards carousel math (Basit / Bencho reference):
-/// center slot is flat; side slots warp/fold and scale down as they leave the middle.
+/// separate floating plates — center flat/large, sides mesh-warp + scale down.
+/// Heavy `rotation3DEffect` alone looks like cubes; warp carries the fold look.
 /// `progress` is finger travel / cover width (positive = reveal previous from the left).
 nonisolated enum CoverFoldSwipeMath {
-    /// Mild rigid tilt under the Metal warp (depth cue only).
-    static let maxFoldDegrees: Double = 28
-    static let perspective: CGFloat = 0.50
-    /// Side plates ~0.85× like the reference.
-    static let sideScale: CGFloat = 0.85
+    /// Tiny rigid tilt under the Metal warp (depth cue only — not the fold).
+    static let maxFoldDegrees: Double = 12
+    static let perspective: CGFloat = 0.62
+    /// Side plates ~0.74× like the reference peeks.
+    static let sideScale: CGFloat = 0.74
     /// Soft rubber past one full slot so a throw still feels physical.
     static let progressLimit: CGFloat = 1.18
-    /// Pull neighbors inward so the carousel clusters (not full-width paging).
-    static let clusterFactor: CGFloat = 0.78
+    /// Keep a clear gap between plates (reference never hinges them together).
+    static let clusterFactor: CGFloat = 0.92
+    /// Corner radius relative to cover side (continuous cards, not hard cubes).
+    static let cornerRadiusFactor: CGFloat = 0.045
 
     static func progress(dragX: CGFloat, width: CGFloat) -> CGFloat {
         guard width.isFinite, width > 0, dragX.isFinite else { return 0 }
@@ -26,7 +29,7 @@ nonisolated enum CoverFoldSwipeMath {
         Float(CGFloat(slot) + progress)
     }
 
-    /// Horizontal travel of a slot (−1 previous, 0 current, +1 next), clustered.
+    /// Horizontal travel of a slot (−1 previous, 0 current, +1 next).
     static func slotOffset(slot: Int, progress: CGFloat, width: CGFloat) -> CGFloat {
         let t = CGFloat(slot) + progress
         return t * width * clusterFactor
@@ -37,7 +40,7 @@ nonisolated enum CoverFoldSwipeMath {
         abs(CGFloat(slot) + progress)
     }
 
-    /// Light Y tilt under the mesh warp (outer edge away).
+    /// Light Y tilt under the mesh warp (outer edge away) — keep mild.
     static func foldDegrees(slot: Int, progress: CGFloat) -> Double {
         let t = Double(slot) + Double(progress)
         return -t * maxFoldDegrees
@@ -45,7 +48,9 @@ nonisolated enum CoverFoldSwipeMath {
 
     static func scale(slot: Int, progress: CGFloat) -> CGFloat {
         let t = min(1, centeredness(slot: slot, progress: progress))
-        return 1 - t * (1 - sideScale)
+        // Ease into the side scale so mid-swipe still reads as a fold, not a pop.
+        let eased = t * t * (3 - 2 * t)
+        return 1 - eased * (1 - sideScale)
     }
 
     /// Keep opacity high until the plate is nearly off — reference barely fades.
@@ -62,6 +67,13 @@ nonisolated enum CoverFoldSwipeMath {
     /// Whether a side slot is close enough to draw (skip far off-screen plates).
     static func isVisible(slot: Int, progress: CGFloat) -> Bool {
         centeredness(slot: slot, progress: progress) < 1.35
+    }
+
+    /// Resting peeks stay subtle; mid-swipe neighbors fully engage.
+    static func shouldDrawNeighbor(slot: Int, progress: CGFloat) -> Bool {
+        if slot == 0 { return true }
+        // Always allow a thin peek so the carousel reads as multi-card.
+        return isVisible(slot: slot, progress: progress)
     }
 }
 
