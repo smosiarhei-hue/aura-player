@@ -29,7 +29,7 @@ class CoverFoldSwipeTests(unittest.TestCase):
             self.assertIn(token, math)
         # Mild tilt only — heavy Y rotation reads as cubes; warp carries the fold.
         self.assertIn("static let maxFoldDegrees: Double = 12", math)
-        self.assertIn("static let clusterFactor: CGFloat = 0.92", math)
+        self.assertIn("static let clusterFactor: CGFloat = 0.62", math)
         self.assertIn("CoverSwipeProMotionGate", gate)
         self.assertIn("preferredFrameRateRange", gate)
         self.assertIn("maximum: Float(desired)", gate)
@@ -41,8 +41,10 @@ class CoverFoldSwipeTests(unittest.TestCase):
         self.assertIn("window == nil", gate)
         self.assertIn("coverFoldWarp", metal)
         self.assertIn("[[ stitchable ]] float2 coverFoldWarp", metal)
-        self.assertIn("compress * 0.42f", metal)
-        self.assertIn("ripple", metal)
+        self.assertIn("float strength = smoothstep", metal)
+        self.assertIn("(1.0f + 0.44f * strength)", metal)
+        self.assertIn("float padX", metal)
+        self.assertIn("float padY", metal)
         self.assertIn("clamp(amount, -1.0f, 1.0f)", metal)
         self.assertIn("Float(max(-1, min(1, CGFloat(slot) + progress)))", math)
 
@@ -78,24 +80,27 @@ class CoverFoldSwipeTests(unittest.TestCase):
         motion = (ROOT / "Sonivo/CoverFoldSwipeMath.swift").read_text()
         self.assertIn("response: 0.45, dampingFraction: 0.85", motion)
 
-    def test_sample_offsets_cover_the_saturated_shader_domain(self):
-        import math
-        for step in range(21):
-            a = step / 20
-            x_pad = 0.28 * a * a
-            y_pad = 0.58 * a * a
-            for xi in range(101):
-                nx = xi / 50 - 1
-                pull = max(0, nx * a) * a
-                compression = pull * pull
-                x_source = nx + compression * 0.95 * nx - pull * 0.42
-                self.assertLessEqual(abs(x_source - nx) / 2, x_pad + 1e-9)
-                for yi in range(51):
-                    y = yi / 50
-                    y_displacement = (math.sin(y * math.pi) * compression * 0.42
-                        + math.sin(y * math.pi * 2) * pull * 0.10
-                        + (2 * y - 1) * compression * 0.06)
-                    self.assertLessEqual(abs(y_displacement), y_pad + 1e-9)
+    def test_padded_fold_extends_silhouette_and_samples_within_bounds(self):
+        # Mirror the Metal inverse-map for both directions and the padded canvas.
+        # At full fold the outer edge reaches 22% beyond the original top/bottom.
+        def smooth(x):
+            x = max(0.0, min(1.0, x))
+            return x*x*(3-2*x)
+        self.assertAlmostEqual(0.5 - 0.5 * (1 + 0.44), -0.22)
+        self.assertLess(0.22, 0.24)  # vertical padding contains the shape
+        for sign in (-1, 1):
+            for step in range(21):
+                a = step / 20
+                for xi in range(121):
+                    x = -0.10 + xi * 1.20 / 120
+                    nx = x * 2 - 1
+                    strength = smooth(a) * smooth(max(0, nx * sign))
+                    x_src = x - sign * 0.10 * strength
+                    self.assertLessEqual(abs(x_src-x), 0.11 + 1e-9)
+                    for yi in range(101):
+                        y = -0.24 + yi * 1.48 / 100
+                        y_src = .5 + (y-.5)/(1 + .44*strength)
+                        self.assertLessEqual(abs(y_src-y), .26 + 1e-9)
 
     def test_math_swift_preconditions(self):
         """Pure fold curves — center flat, sides fold, opacity drops past one slot."""
@@ -106,7 +111,7 @@ import Foundation
         checks = r'''
 func progress(dragX: Double, width: Double) -> Double {
   guard width > 0 else { return 0 }
-  return max(-1.18, min(1.18, dragX / width))
+  return max(-1.18, min(1.18, dragX / (width * 0.62)))
 }
 func foldDegrees(slot: Int, progress: Double) -> Double { -(Double(slot) + progress) * 12 }
 func scale(slot: Int, progress: Double) -> Double {
@@ -115,7 +120,7 @@ func scale(slot: Int, progress: Double) -> Double {
   return 1 - eased * (1 - 0.74)
 }
 precondition(abs(progress(dragX: 0, width: 390)) < 0.0001)
-precondition(abs(progress(dragX: 195, width: 390) - 0.5) < 0.0001)
+precondition(abs(progress(dragX: 120.9, width: 390) - 0.5) < 0.0001)
 precondition(abs(foldDegrees(slot: 0, progress: 0)) < 0.0001)
 precondition(abs(foldDegrees(slot: 1, progress: 0) + 12) < 0.0001)
 precondition(abs(foldDegrees(slot: -1, progress: 0) - 12) < 0.0001)
@@ -157,7 +162,7 @@ class CoverSwipeSafetyRegressionTests(unittest.TestCase):
         self.assertIn('.simultaneousGesture(', stage)
         self.assertIn('animateTrackSwipe(direction: direction, width: width)', stage)
         self.assertNotIn('0.12 : CoverFoldSwipeMath.progressLimit', stage)
-        self.assertIn('slot == coverVisualSide', stage)
+        self.assertIn('slot == 0 || slotTrack != nil || slot == coverVisualSide', stage)
         self.assertIn('settleCoverDrag()', stage)
         self.assertIn('default: return coverTransitionOutgoing ?? track', stage)
         commit = player.split('private func animateTrackSwipe', 1)[1].split('private func releaseCoverSwitchLock', 1)[0]
@@ -183,7 +188,14 @@ class CoverSwipeSafetyRegressionTests(unittest.TestCase):
     def test_feather_and_text_share_swipe_without_changing_actions(self):
         player = (ROOT / 'Sonivo/PlayerScreenV2.swift').read_text()
         plate = player.split('private func foldedCoverPlate', 1)[1].split('private var coverDissolveMask', 1)[0]
-        self.assertIn('.mask(coverDissolveMask)', plate)
+        self.assertIn('.mask(feather)', plate)
+        self.assertIn('.padding(.vertical, padY)', plate)
+        self.assertIn('.padding(.horizontal, padX)', plate)
+        self.assertIn('.mask(edgeGlow)', plate)
+        self.assertIn('Double(progress) * 0.80', plate)
+        self.assertIn('sin(Double(progress) * .pi * 2', plate)
+        self.assertIn('.blendMode(.screen)', plate)
+        self.assertNotIn('TimelineView', plate)
         self.assertNotIn('if restingCenter', plate)
         mask = player.split('private var coverDissolveMask', 1)[1].split('private func inlineLyricsStage', 1)[0]
         self.assertIn('.clear, location: 0.00', mask)

@@ -46,7 +46,7 @@ class NowPlayingCoverAppleMusicTests(unittest.TestCase):
             "private func inlineLyricsStage", 1
         )[0]
         self.assertIn(".mask(coverDissolveMask)", stage)
-        self.assertIn("let coverSide = min(width, height)", stage)
+        self.assertIn("let coverSide = min(width, height) * 0.68", stage)
         self.assertIn(".frame(width: coverSide, height: coverSide)", stage)
         self.assertNotIn("RoundedRectangle(cornerRadius: 18", stage)
         self.assertNotIn(".shadow(", stage)

@@ -136,7 +136,10 @@ class VideoShotLayoutStabilityTests(unittest.TestCase):
         stage = player.split('private func artworkStage(', 1)[1].split('private func', 1)[0]
         self.assertIn('Color.clear\n                    .frame(width: width, height: height)', stage)
         self.assertIn('.frame(width: width, height: height, alignment: .top)\n        .scaleEffect', stage)
-        self.assertIn('let coverSide = min(width, height)', stage)
+        self.assertIn('let coverSide = min(width, height) * 0.68', stage)
+        side = stage.split('let coverSide =', 1)[1].split('\n', 1)[0]
+        self.assertNotIn('isFullScreenVideoShot', side)
+        self.assertNotIn('folding', side)
         deck = player.split('private func lowerDeck(', 1)[1].split('private var coverBloomTones', 1)[0]
         self.assertNotIn('isFullScreenVideoShot', deck)
         self.assertNotIn('isVideoShotEnabled', deck)

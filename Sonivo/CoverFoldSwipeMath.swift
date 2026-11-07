@@ -15,13 +15,13 @@ nonisolated enum CoverFoldSwipeMath {
     /// Soft rubber past one full slot so a throw still feels physical.
     static let progressLimit: CGFloat = 1.18
     /// Keep a clear gap between plates (reference never hinges them together).
-    static let clusterFactor: CGFloat = 0.92
+    static let clusterFactor: CGFloat = 0.62
     /// Corner radius relative to cover side (continuous cards, not hard cubes).
     static let cornerRadiusFactor: CGFloat = 0.045
 
     static func progress(dragX: CGFloat, width: CGFloat) -> CGFloat {
         guard width.isFinite, width > 0, dragX.isFinite else { return 0 }
-        return max(-progressLimit, min(progressLimit, dragX / width))
+        return max(-progressLimit, min(progressLimit, dragX / (width * clusterFactor)))
     }
 
     /// Signed distance used by the Metal warp (`slot + progress`).

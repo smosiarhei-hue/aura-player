@@ -31,6 +31,7 @@ struct PlayerScreenV2: View {
     @State private var coverSwitchGeneration = UUID()
     @State private var coverTransitionOutgoing: Track?
     @State private var coverTransitionIncoming: Track?
+    @State private var coverTransitionOther: Track?
     @State private var coverTransitionOutgoingImage: UIImage?
     @State private var coverTransitionDirection = 0
     @State private var dominantArtworkColor: Color?
@@ -342,6 +343,7 @@ struct PlayerScreenV2: View {
             isCoverSwitching = false
             coverTransitionOutgoing = nil
             coverTransitionIncoming = nil
+            coverTransitionOther = nil
             coverTransitionOutgoingImage = nil
             coverDragX = 0
             trackWaveRequestID = UUID()
@@ -581,11 +583,12 @@ struct PlayerScreenV2: View {
     }
 
     private func artworkStage(width: CGFloat, height: CGFloat) -> some View {
-        // Full-bleed square (width×width). Folding-cards carousel on swipe (Basit / Bencho).
-        let coverSide = min(width, height)
         let progress = CoverFoldSwipeMath.progress(dragX: coverDragX, width: width)
         let playScale = player.isPlaying ? 1.0 : 0.97
         let folding = !reduceMotion && coverMixAmount == 0 && !isFullScreenVideoShot
+        // A centered card leaves room for the bending neighbors. Keep identical
+        // geometry in mixed, reduced-motion and video modes to avoid a layout jump.
+        let coverSide = min(width, height) * 0.68
         let neighbors = coverSwipeNeighbors
 
         return ZStack {
@@ -603,10 +606,9 @@ struct PlayerScreenV2: View {
                             default: return coverTransitionOutgoing ?? track
                             }
                         }()
-                        // Only render the approaching side while moving. When
-                        // shuffle has no known target it is a neutral placeholder,
-                        // never an invented track or title.
-                        if slot == 0 || slot == coverVisualSide {
+                        // Show real neighbors as folded peeks. An unknown shuffle
+                        // destination is neutral only while that side is dragged.
+                        if slot == 0 || slotTrack != nil || slot == coverVisualSide {
                             foldedCoverPlate(
                                 for: slotTrack,
                                 side: coverSide,
@@ -630,6 +632,8 @@ struct PlayerScreenV2: View {
                         properties: .frame,
                         isSource: !showLyricsMode
                     )
+                    .padding(.horizontal, coverSide * 0.10)
+                    .padding(.vertical, coverSide * 0.24)
                     .offset(x: coverDragX)
             }
         }
@@ -643,7 +647,7 @@ struct PlayerScreenV2: View {
                         x: Double(value.translation.width), y: Double(value.translation.height)) else { return }
                     coverSettleTask?.cancel()
                     coverVisualSide = value.translation.width < 0 ? 1 : -1
-                    let limit = width * CoverFoldSwipeMath.progressLimit
+                    let limit = width * CoverFoldSwipeMath.clusterFactor * CoverFoldSwipeMath.progressLimit
                     coverDragX = reduceMotion ? 0 : max(-limit, min(limit, value.translation.width))
                 }
                 .onEnded { value in
@@ -671,7 +675,7 @@ struct PlayerScreenV2: View {
     /// Only preview a destination that the playback engine can guarantee.
     private var coverSwipeNeighbors: (prev: Track?, next: Track?) {
         if let incoming = coverTransitionIncoming, coverTransitionOutgoing != nil {
-            return coverTransitionDirection > 0 ? (nil, incoming) : (incoming, nil)
+            return coverTransitionDirection > 0 ? (coverTransitionOther, incoming) : (incoming, coverTransitionOther)
         }
         guard !player.isTransitionActive, player.currentTrack?.id == track?.id else { return (nil, nil) }
         return player.coverSwipePreviewTracks
@@ -693,19 +697,15 @@ struct PlayerScreenV2: View {
         coverLayer(for: slotTrack, preferredImage: preferred)
             .frame(width: side, height: side)
             .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
-            // Keep the same feather through the gesture: switching masks at a
-            // threshold made a visible line/pop on the top edge of the cover.
-            .mask(coverDissolveMask)
-            .compositingGroup()
-            // Interpolate the shader uniform as well as the transforms during
-            // spring settle; otherwise only the plate moves and the fold jumps.
-            .modifier(CoverFoldAnimatedEffect(side: side, width: width, slot: slot, progress: progress))
             .matchedGeometryEffect(
                 id: LyricsPresentationMotion.coverMorphID,
                 in: nowPlayingCoverSpace,
                 properties: .frame,
                 isSource: morphSource
             )
+            // The modifier pads before warping so the visible edge can bend
+            // outside the original rectangle, as in the folding-card reference.
+            .modifier(CoverFoldAnimatedEffect(side: side, width: width, slot: slot, progress: progress))
             .allowsHitTesting(false)
             .accessibilityHidden(slot != 0)
     }
@@ -725,16 +725,65 @@ struct PlayerScreenV2: View {
         func body(content: Content) -> some View {
             let warp = CoverFoldSwipeMath.warpAmount(slot: slot, progress: progress)
             let magnitude = CGFloat(abs(warp))
-            // Bound covers every source sample for |warp| <= 1, without expanding
-            // the render region as if an off-screen card bent without limit.
-            let samplePad = CGSize(
-                width: max(8, side * 0.28 * magnitude * magnitude),
-                height: max(8, side * 0.58 * magnitude * magnitude)
-            )
+            let padX = side * 0.10
+            let padY = side * 0.24
+            let reveal = Double(min(1, magnitude * 3))
+            // Vary the spectral highlight with swipe position, rather than
+            // keeping an expensive display-linked animation running at rest.
+            let rawHue = 0.65 + Double(progress) * 0.80 + Double(slot) * 0.13
+            let hue = rawHue - floor(rawHue)
+            let secondHue = (hue + 0.19).truncatingRemainder(dividingBy: 1)
+            let thirdHue = (hue + 0.38).truncatingRemainder(dividingBy: 1)
+            let streak = CGFloat(0.50 + 0.22 * sin(Double(progress) * .pi * 2 + Double(slot)))
+            let shimmer = LinearGradient(stops: [
+                .init(color: .clear, location: 0),
+                .init(color: Color(hue: hue, saturation: 0.72, brightness: 1).opacity(0.70), location: streak - 0.20),
+                .init(color: Color(hue: secondHue, saturation: 0.62, brightness: 1).opacity(0.90), location: streak - 0.09),
+                .init(color: Color.white.opacity(0.68), location: streak),
+                .init(color: Color(hue: thirdHue, saturation: 0.70, brightness: 1).opacity(0.75), location: streak + 0.09),
+                .init(color: .clear, location: streak + 0.20),
+                .init(color: .clear, location: 1)
+            ], startPoint: .topLeading, endPoint: .bottomTrailing)
+            let edgeGlow = LinearGradient(stops: [
+                .init(color: .clear, location: 0),
+                .init(color: .white.opacity(0.15), location: 0.25),
+                .init(color: .white.opacity(0.75), location: 0.55),
+                .init(color: .white, location: 0.80),
+                .init(color: .white, location: 1)
+            ], startPoint: warp < 0 ? .trailing : .leading,
+               endPoint: warp < 0 ? .leading : .trailing)
+            // The resting cover blends into the native blur. As a plate bends,
+            // smoothly reveal its top/bottom edges so the fold is actually visible.
+            func ink(_ rest: Double) -> Color { .black.opacity(rest + (1 - rest) * reveal) }
+            let feather = LinearGradient(stops: [
+                .init(color: ink(0), location: 0),
+                .init(color: ink(0.12), location: 0.025),
+                .init(color: ink(0.48), location: 0.065),
+                .init(color: ink(0.82), location: 0.11),
+                .init(color: ink(1), location: 0.18),
+                .init(color: ink(1), location: 0.55),
+                .init(color: ink(0.78), location: 0.72),
+                .init(color: ink(0.28), location: 0.88),
+                .init(color: ink(0), location: 1)
+            ], startPoint: .top, endPoint: .bottom)
             return content
+                .overlay {
+                    if magnitude > 0.001 {
+                        shimmer
+                            .mask(edgeGlow)
+                            .clipShape(RoundedRectangle(cornerRadius: side * CoverFoldSwipeMath.cornerRadiusFactor, style: .continuous))
+                            .blendMode(.screen)
+                            .opacity(Double(min(1, magnitude * 1.5)) * 0.85)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .mask(feather)
+                .padding(.horizontal, padX)
+                .padding(.vertical, padY)
+                .compositingGroup()
                 .distortionEffect(
-                    ShaderLibrary.coverFoldWarp(.float2(side, side), .float(warp)),
-                    maxSampleOffset: samplePad,
+                    ShaderLibrary.coverFoldWarp(.float(Float(side)), .float(Float(padX)), .float(Float(padY)), .float(warp)),
+                    maxSampleOffset: CGSize(width: max(8, side * 0.11), height: max(8, side * 0.26)),
                     isEnabled: magnitude > 0.001
                 )
                 .scaleEffect(CoverFoldSwipeMath.scale(slot: slot, progress: progress))
@@ -1770,6 +1819,7 @@ struct PlayerScreenV2: View {
         coverSwitchGeneration = generation
         isCoverSwitching = true
         let outgoing = track
+        let previousNeighbors = coverSwipeNeighbors
         let outgoingImage = outgoing.flatMap { artworkImage(for: $0) }
         let canAnimate = !reduceMotion && !showLyricsMode && !isFullScreenVideoShot
             && coverMixAmount == 0 && width.isFinite && width > 0
@@ -1786,6 +1836,7 @@ struct PlayerScreenV2: View {
         }
         coverTransitionOutgoing = outgoing
         coverTransitionIncoming = incoming
+        coverTransitionOther = direction > 0 ? previousNeighbors.prev : previousNeighbors.next
         coverTransitionOutgoingImage = outgoingImage
         coverTransitionDirection = direction
         coverVisualSide = direction > 0 ? 1 : -1
@@ -1796,7 +1847,8 @@ struct PlayerScreenV2: View {
             let initial = max(1, width * 0.004)
             withTransaction(transaction) { coverDragX = direction > 0 ? -initial : initial }
         }
-        let targetX: CGFloat = direction > 0 ? -width : width
+        let distance = width * CoverFoldSwipeMath.clusterFactor
+        let targetX: CGFloat = direction > 0 ? -distance : distance
         coverSwitchTask = Task { @MainActor in
             do { try await Task.sleep(for: .milliseconds(16)) } catch { return }
             guard !Task.isCancelled, coverSwitchGeneration == generation else { return }
@@ -1830,6 +1882,7 @@ struct PlayerScreenV2: View {
             coverDragX = 0
             coverTransitionOutgoing = nil
             coverTransitionIncoming = nil
+            coverTransitionOther = nil
             coverTransitionOutgoingImage = nil
             coverTransitionDirection = 0
             coverVisualSide = 0
