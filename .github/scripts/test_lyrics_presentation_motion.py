@@ -14,8 +14,10 @@ class LyricsPresentationMotionTests(unittest.TestCase):
 
     def test_native_motion_has_no_timer_or_word_delay(self):
         source = (ROOT/'Sonivo/LyricsPresentationMotion.swift').read_text()
-        for value in ['.smooth(duration: 0.38, extraBounce: 0)', '.smooth(duration: 0.30, extraBounce: 0)', 'reduceMotion ? nil', 'reduceMotion ? .identity', '.offset(y: 16)']:
+        for value in ['.smooth(duration: 0.52, extraBounce: 0.02)', '.smooth(duration: 0.30, extraBounce: 0)', 'reduceMotion ? nil', 'reduceMotion ? .identity', 'coverMorphID']:
             self.assertIn(value, source)
+        self.assertIn('reduceMotion ? .identity : .opacity', source)
+        self.assertNotIn('.offset(y: 16)', source)
         for forbidden in ['Timer(', 'Task.sleep', 'asyncAfter', 'frameTime', 'player.seek', 'TimelineView']:
             self.assertNotIn(forbidden, source)
         project = (ROOT/'project.yml').read_text()
@@ -29,5 +31,7 @@ class LyricsPresentationMotionTests(unittest.TestCase):
         self.assertNotIn('Picker(', source)
         self.assertNotIn('Text("Aa")', source)
         self.assertNotIn('LyricsTypographyModeBar', source)
-        self.assertIn('KaraokeTypography.font(size: fontSize)', source)
+        self.assertIn('KaraokeTypography.font(size: displaySize)', source)
+        self.assertIn('distanceFromActive', source)
+        self.assertIn('neighborBlur', source)
         self.assertIn('.transaction { $0.animation = nil }', source)

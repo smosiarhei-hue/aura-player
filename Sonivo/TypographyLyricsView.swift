@@ -97,6 +97,8 @@ struct TypographyLyricsView: View {
     @ViewBuilder
     private func lyricRow(_ line: LyricsLine, index: Int) -> some View {
         let selected = index == activeIndex
+        // Apple Music live lyrics: active is full white; neighbors fade + blur by distance.
+        let distance = activeIndex.map { abs(index - $0) } ?? 0
         let preference = settings.lyricsFontSize.isFinite ? min(60, max(36, settings.lyricsFontSize)) : 46
         let fontSize = CGFloat(preference) * typeScale * (compact ? 0.8 : 1)
         if lyrics.isSynchronized {
@@ -107,8 +109,14 @@ struct TypographyLyricsView: View {
                 player.seek(to: LyricsPlaybackClock.seekTime(lineStart: line.startTime))
                 // Seeking a paused song must not unexpectedly start audio.
             } label: {
-                TypographyLyricText(line: line, clock: frameClock, active: selected,
-                    plain: false, fontSize: fontSize)
+                TypographyLyricText(
+                    line: line,
+                    clock: frameClock,
+                    active: selected,
+                    plain: false,
+                    fontSize: fontSize,
+                    distanceFromActive: distance
+                )
                     .padding(.vertical, 6).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     .contentShape(Rectangle())
             }
@@ -117,7 +125,14 @@ struct TypographyLyricsView: View {
             .accessibilityHint("Перемотать к этой строке")
             .accessibilityAddTraits(selected ? .isSelected : [])
         } else {
-            TypographyLyricText(line: line, clock: frameClock, active: false, plain: true, fontSize: fontSize)
+            TypographyLyricText(
+                line: line,
+                clock: frameClock,
+                active: false,
+                plain: true,
+                fontSize: fontSize,
+                distanceFromActive: 0
+            )
                 .padding(.vertical, 6)
         }
     }
@@ -168,15 +183,55 @@ private struct TypographyLyricText: View {
     let active: Bool
     let plain: Bool
     let fontSize: CGFloat
+    /// Absolute distance from the current line (0 = active). Drives Apple Music–style fade/blur.
+    var distanceFromActive: Int = 0
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var time: Double {
         // Inactive and line-only rows do not subscribe to the 120 Hz time field.
         active && TypographyLyricsPolicy.matchedWords(for: line) != nil ? clock.frameTime : 0
     }
+
+    /// Active = bright white; below/above lines dim like Apple Music (~25% → quieter).
+    private var inactiveOpacity: Double {
+        if plain { return contrast == .increased ? 0.78 : 0.90 }
+        if active { return 1 }
+        if contrast == .increased {
+            switch distanceFromActive {
+            case 1: return 0.58
+            case 2: return 0.46
+            default: return 0.38
+            }
+        }
+        switch distanceFromActive {
+        case 1: return 0.30
+        case 2: return 0.22
+        default: return 0.16
+        }
+    }
+
+    /// Progressive blur on neighbors (WWDC26 / Apple Music live lyrics).
+    private var neighborBlur: CGFloat {
+        guard !active, !plain, contrast != .increased, !reduceMotion else { return 0 }
+        switch distanceFromActive {
+        case 0: return 0
+        case 1: return 1.5
+        case 2: return 3.5
+        default: return 6
+        }
+    }
+
+    private var displaySize: CGFloat {
+        guard !plain else { return fontSize }
+        if active { return fontSize }
+        // Slightly smaller inactive lines — Apple Music hierarchy without layout jumps.
+        return fontSize * (distanceFromActive <= 1 ? 0.94 : 0.88)
+    }
+
     private var rendered: Text {
         guard active, let words = TypographyLyricsPolicy.matchedWords(for: line) else {
-            return Text(line.text).foregroundColor(active ? .white : .white.opacity(plain ? 0.90 : (contrast == .increased ? 0.70 : 0.44)))
+            return Text(line.text).foregroundColor(.white.opacity(inactiveOpacity))
         }
         return TypographyLyricsPolicy.segments(line.text).enumerated().reduce(Text("")) { result, pair in
             // Accent follows genuine source starts; never distribute line time over words.
@@ -189,9 +244,10 @@ private struct TypographyLyricText: View {
 
     var body: some View {
         rendered
-            .font(KaraokeTypography.font(size: fontSize))
+            .font(KaraokeTypography.font(size: displaySize))
             .tracking(-0.7).lineSpacing(4)
             .textRenderer(TypographyWordRenderer(time: time, active: active, glow: SN.accent, highContrast: contrast == .increased))
+            .blur(radius: neighborBlur)
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)

@@ -57,9 +57,19 @@ class NowPlayingCoverAppleMusicTests(unittest.TestCase):
         )[0]
         self.assertIn("LinearGradient", mask)
         self.assertIn(".clear", mask)
-        # Top of cover stays opaque — color wash must not punch through the art.
-        self.assertIn("color: .black, location: 0.00", mask)
+        # Soft top dissolve into native UIBlur atmosphere — not a tint strip over the art.
+        self.assertIn("color: .black.opacity(0.42), location: 0.00", mask)
+        self.assertIn("color: .black, location: 0.11", mask)
         self.assertIn("never painted over the cover", PLAYER)
+        self.assertIn(".blur(radius: reduceMotion ? 0 : 22)", stage)
+        self.assertIn("matchedGeometryEffect(", PLAYER)
+        self.assertIn("LyricsPresentationMotion.coverMorphID", PLAYER)
+        # Atmosphere stays under lyrics (WWDC26 blurred-cover backdrop).
+        self.assertIn(".opacity(isFullScreenVideoShot ? 0 : 1)", PLAYER)
+        self.assertNotIn(
+            ".opacity(showLyricsMode || isFullScreenVideoShot ? 0 : 1)",
+            PLAYER.split("NowPlayingAtmosphere(", 1)[1].split("coverAccentWash", 1)[0],
+        )
 
     def test_cover_fills_square_not_letterboxed(self):
         layer = PLAYER.split("private func coverLayer(", 1)[1].split(

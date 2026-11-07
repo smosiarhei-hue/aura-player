@@ -22,6 +22,7 @@ struct PlayerScreenV2: View {
     @State private var lyricsControlsHideTask: Task<Void, Never>?
     @State private var lyrics: Lyrics?
     @State private var lyricsLoading = false
+    @Namespace private var nowPlayingCoverSpace
     @State private var coverDragX: CGFloat = 0
     @State private var isCoverSwitching = false
     @State private var coverSwitchTask: Task<Void, Never>?
@@ -132,28 +133,28 @@ struct PlayerScreenV2: View {
                 )
 
                 ZStack(alignment: .top) {
-                    // Blurred/color-matched wash under the dissolve — continues the cover.
+                    // Native UIBlur of the cover — soft top dissolve + lyrics backdrop
+                    // (WWDC26: blur the art so it sits behind the transcript).
                     NowPlayingAtmosphere(
                         primary: coverWashPrimary,
                         secondary: coverWashSecondary,
                         secondaryAmount: coverWashAmount
                     )
                     .frame(width: totalWidth, height: totalHeight)
-                    .opacity(showLyricsMode || isFullScreenVideoShot ? 0 : 1)
+                    .opacity(isFullScreenVideoShot ? 0 : 1)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
 
-                    // Accent the palette under the cover so controls sit on a warm wash,
-                    // not a flat black field.
+                    // Palette bloom only in Island clearance + control deck — never mid-cover.
                     coverAccentWash
                         .frame(width: totalWidth, height: totalHeight)
-                        .opacity(showLyricsMode || isFullScreenVideoShot ? 0 : 1)
+                        .opacity(isFullScreenVideoShot ? 0 : (showLyricsMode ? 0.40 : 1))
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
 
                     background
                         .frame(width: totalWidth, height: totalHeight)
-                        .opacity(showLyricsMode || isFullScreenVideoShot ? 1 : 0.06)
+                        .opacity(isFullScreenVideoShot ? 1 : (showLyricsMode ? 0.28 : 0.06))
                         .clipped()
 
                     // Attach the native rendering layer during preparation too. Readiness
@@ -470,6 +471,12 @@ struct PlayerScreenV2: View {
         return HStack(spacing: 16) {
             artwork
                 .frame(width: 56, height: 56)
+                .matchedGeometryEffect(
+                    id: LyricsPresentationMotion.coverMorphID,
+                    in: nowPlayingCoverSpace,
+                    properties: .frame,
+                    isSource: showLyricsMode
+                )
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .shadow(color: .black.opacity(0.30), radius: 12, y: 6)
 
@@ -572,7 +579,35 @@ struct PlayerScreenV2: View {
                 artwork
                     .frame(width: coverSide, height: coverSide)
                     .clipped()
+                    // Progressive blur at the top edge — same art softening into the
+                    // native UIBlur atmosphere (no tint strip painted over the cover).
+                    .overlay(alignment: .top) {
+                        artwork
+                            .frame(width: coverSide, height: coverSide)
+                            .blur(radius: reduceMotion ? 0 : 22)
+                            .mask(
+                                LinearGradient(
+                                    stops: [
+                                        .init(color: .black, location: 0.00),
+                                        .init(color: .black.opacity(0.70), location: 0.42),
+                                        .init(color: .clear, location: 1.00)
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                            .frame(height: coverSide * 0.24, alignment: .top)
+                            .clipped()
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
                     .mask(coverDissolveMask)
+                    .matchedGeometryEffect(
+                        id: LyricsPresentationMotion.coverMorphID,
+                        in: nowPlayingCoverSpace,
+                        properties: .frame,
+                        isSource: !showLyricsMode
+                    )
             }
         }
         .frame(width: width, height: height, alignment: .top)
@@ -601,12 +636,15 @@ struct PlayerScreenV2: View {
         .animation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion), value: showLyricsMode)
     }
 
-    /// Cover stays opaque at the top (no tint overlay punching through the art).
-    /// Only the bottom melts into the control wash — same as Apple Music.
+    /// Soft native dissolve: top eases into the UIBlur atmosphere over a short seam;
+    /// bottom melts into the control wash. Mid art stays fully opaque — color bloom
+    /// never punches through (palette wash is clear across the cover band).
     private var coverDissolveMask: some View {
         LinearGradient(
             stops: [
-                .init(color: .black, location: 0.00),
+                .init(color: .black.opacity(0.42), location: 0.00),
+                .init(color: .black.opacity(0.88), location: 0.05),
+                .init(color: .black, location: 0.11),
                 .init(color: .black, location: 0.55),
                 .init(color: .black.opacity(0.78), location: 0.72),
                 .init(color: .black.opacity(0.28), location: 0.88),
@@ -916,16 +954,15 @@ struct PlayerScreenV2: View {
     }
 
     /// Bright palette bloom BEHIND the cover: Island clearance + control deck only.
-    /// Mid band stays clear so artwork colors are never overpainted.
+    /// Mid band stays clear so the soft top dissolve reveals native UIBlur, not tint.
     private var coverAccentWash: some View {
         let tones = coverBloomTones
         return ZStack {
             LinearGradient(
                 stops: [
-                    .init(color: tones[0].opacity(0.85), location: 0.00),
-                    .init(color: tones[1].opacity(0.55), location: 0.05),
-                    .init(color: tones[2].opacity(0.28), location: 0.09),
-                    .init(color: .clear, location: 0.14),
+                    .init(color: tones[0].opacity(0.62), location: 0.00),
+                    .init(color: tones[1].opacity(0.32), location: 0.035),
+                    .init(color: .clear, location: 0.07),
                     .init(color: .clear, location: 0.58),
                     .init(color: tones[1].opacity(0.24), location: 0.70),
                     .init(color: tones[0].opacity(0.42), location: 0.84),
@@ -937,8 +974,8 @@ struct PlayerScreenV2: View {
             )
             LinearGradient(
                 colors: [
-                    tones[2].opacity(0.40),
-                    tones[3].opacity(0.18),
+                    tones[2].opacity(0.22),
+                    .clear,
                     .clear,
                     .clear,
                     tones[0].opacity(0.30)
@@ -2591,11 +2628,11 @@ private final class NowPlayingAtmosphereView: UIView {
         addSubview(blurView)
         // Light dim — leave room for the SwiftUI coverAccentWash palette bloom.
         dimView.isUserInteractionEnabled = false
-        dimView.backgroundColor = UIColor.black.withAlphaComponent(0.14)
+        dimView.backgroundColor = UIColor.black.withAlphaComponent(0.12)
         addSubview(dimView)
-        // Soft top shade only — cover already dissolves into this blurred wash.
+        // Feather only — native blur stays colorful under the cover's soft top dissolve.
         topClear.colors = [
-            UIColor.black.withAlphaComponent(0.10).cgColor,
+            UIColor.black.withAlphaComponent(0.04).cgColor,
             UIColor.clear.cgColor
         ]
         topClear.locations = [0.0, 1.0]
@@ -2623,7 +2660,7 @@ private final class NowPlayingAtmosphereView: UIView {
         secondaryView.frame = overscan
         blurView.frame = bounds
         dimView.frame = bounds
-        topClear.frame = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height * 0.22)
+        topClear.frame = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height * 0.16)
         bottomFade.frame = bounds
         applyAlphas()
     }
