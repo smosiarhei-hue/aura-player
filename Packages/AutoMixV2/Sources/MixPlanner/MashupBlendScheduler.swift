@@ -115,14 +115,17 @@ public enum MashupBlendScheduler {
     }
 
     /// Cap B entry to the intro so LAND does not jump mid-body.
+    /// Floor keeps Automix off cold opens (field 1151 mood.pick inCue=0.1).
+    public static let minimumIncomingCueSec: Double = 4.0
+
     public static func clampAutomixIncomingCue(
         preferred: Double,
         incomingDur: Double
     ) -> Double {
-        let raw = max(0, preferred)
-        guard incomingDur > 30 else { return raw }
+        guard incomingDur > 30 else { return max(0, preferred) }
         let introCap = min(18.0, max(8.0, incomingDur * 0.18))
-        return min(raw, introCap)
+        let floored = max(minimumIncomingCueSec, preferred)
+        return min(floored, introCap)
     }
 
     // MARK: - Profile-backed

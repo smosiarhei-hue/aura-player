@@ -185,16 +185,21 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("DUET ·", planner)
         self.assertIn("maximumRateChange: 0.18", planner)
         self.assertIn("maxSemitones: 3", planner)
-        # Field 1148: rates must be target/naturalBPM — half-time used target/bBest
-        # so 66 vs 99 "beatmatched" at 57 while B actually raced ~114.
+        # Field 1148/1151: ±8% A-locked only — no geometric sludge, no half-time bBest.
         tempo_fn = planner.split("public static func tempoMatch(", 1)[1].split(
             "public static func duration(", 1
         )[0]
-        self.assertIn("target / aBPM", tempo_fn)
-        self.assertIn("target / bBPM", tempo_fn)
-        self.assertNotIn("targetBPM / bBest", tempo_fn)
+        self.assertIn("maximumRateChange: Float = 0.08", tempo_fn)
+        self.assertIn("aBPM / bBPM", tempo_fn)
+        self.assertNotIn("sqrt(", tempo_fn)
         self.assertNotIn("target / bBest", tempo_fn)
-        self.assertIn("fake common grid", tempo_fn)
+        self.assertNotIn("octaveCandidates", tempo_fn)
+        self.assertIn("minimumIncomingCueSec", (
+            ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupBlendScheduler.swift"
+        ).read_text())
+        self.assertIn("mashupBakeRealIncomingURL == nil, progress < 0.02", (
+            ROOT / "Sonivo/playercore.swift"
+        ).read_text())
 
         style = (
             ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupLiveStyle.swift"
@@ -647,45 +652,28 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn(".instrumentalize", executor)
 
     def test_tempo_match_rejects_wide_gap_sludge(self):
-        """Mirror BeatGridSynchronization.tempoMatch: rates vs natural BPM only."""
-        import math
+        """Mirror BeatGridSynchronization.tempoMatch: ±8% A-prefer locks only."""
 
-        def tempo_match(a: float, b: float, maximum: float = 0.16):
-            def octaves(bpm: float):
-                out = [bpm]
-                if bpm * 0.5 > 40:
-                    out.append(bpm * 0.5)
-                if bpm * 2 < 200:
-                    out.append(bpm * 2)
-                return out
-
+        def tempo_match(a: float, b: float, maximum: float = 0.08):
             slack = maximum + 0.005
             cands = []
-            for a_eff in octaves(a):
-                for b_eff in octaves(b):
-                    target = math.sqrt(a_eff * b_eff)
-                    rate_a = target / a
-                    rate_b = target / b
-                    if abs(rate_a - 1) <= slack and abs(rate_b - 1) <= slack:
-                        cands.append((target, rate_a, rate_b, max(abs(rate_a - 1), abs(rate_b - 1))))
             direct_b = a / b
             if abs(direct_b - 1) <= slack:
-                cands.append((a, 1.0, direct_b, abs(direct_b - 1)))
+                cands.append((a, 1.0, direct_b, abs(1 - 1) * 2 + abs(direct_b - 1)))
             direct_a = b / a
             if abs(direct_a - 1) <= slack:
-                cands.append((b, direct_a, 1.0, abs(direct_a - 1)))
+                cands.append((b, direct_a, 1.0, abs(direct_a - 1) * 2 + abs(1 - 1)))
             if not cands:
                 return None
-            best = min(cands, key=lambda c: c[3])
-            return None if best[3] > slack else best
+            return min(cands, key=lambda c: c[3])
 
-        # Field 1148: 66 vs 99 must NOT meet at ~57 with fake half-time rates.
         self.assertIsNone(tempo_match(66, 99))
+        self.assertIsNone(tempo_match(91, 120))
         close = tempo_match(110, 112)
         self.assertIsNotNone(close)
         assert close is not None
-        self.assertAlmostEqual(close[1] * 110, close[0], places=1)
-        self.assertAlmostEqual(close[2] * 112, close[0], places=1)
+        self.assertEqual(close[1], 1.0)
+        self.assertAlmostEqual(close[1] * 110, close[2] * 112, places=1)
 
     def test_docs_describe_auto_duration_and_live_eq(self):
         docs = (ROOT / "docs/automix-mashup.md").read_text()

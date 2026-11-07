@@ -716,42 +716,23 @@ public enum MixPlanner {
 
 public enum BeatGridSynchronization {
     public struct TempoMatch: Sendable, Equatable { public let targetBPM: Float; public let rateA: Float; public let rateB: Float }
-    /// Pick a shared grid tempo. Rates are always `target / naturalFileBPM` so both
-    /// decks actually land on the same perceived BPM (field 1148 log: half-time used
-    /// `target/bBest` so A slowed to 57 while B raced at ~114 — fake "beatmatch").
-    public static func tempoMatch(aBPM: Float, bBPM: Float, maximumRateChange: Float = 0.16) -> TempoMatch? {
+    /// Pick a shared grid tempo. Rates are always `target / naturalFileBPM`.
+    /// Default ±8% matches `MashupLiveStyle.clampRate` — wider geometric "locks"
+    /// (field 1151: 91↔120 → 1.15/0.87) were crushed to 1.08/0.92 and never met.
+    /// Prefer A locked so the playing track does not pitch-shift during lead-in.
+    public static func tempoMatch(aBPM: Float, bBPM: Float, maximumRateChange: Float = 0.08) -> TempoMatch? {
         guard aBPM.isFinite, bBPM.isFinite, aBPM > 30, bBPM > 30 else { return nil }
-
-        func octaveCandidates(_ bpm: Float) -> [Float] {
-            var out: [Float] = [bpm]
-            let half = bpm * 0.5
-            let dbl = bpm * 2
-            // Half / double only as metrical interpretations — rates still vs file BPM.
-            if half > 40 { out.append(half) }
-            if dbl < 200 { out.append(dbl) }
-            return out
-        }
 
         struct Cand {
             let target: Float
             let rateA: Float
             let rateB: Float
-            var cost: Float { max(abs(rateA - 1), abs(rateB - 1)) }
+            /// Prefer keeping A at 1.0 (solo lead-in stays natural).
+            var cost: Float { abs(rateA - 1) * 2 + abs(rateB - 1) }
         }
 
         let slack = maximumRateChange + 0.005
         var cands: [Cand] = []
-        for aEff in octaveCandidates(aBPM) {
-            for bEff in octaveCandidates(bBPM) {
-                let target = sqrt(aEff * bEff)
-                let rateA = target / aBPM
-                let rateB = target / bBPM
-                // Reject chipmunk / sludge — wide gaps return nil so Echo Freeze
-                // can run without a fake common grid (66 vs 99 used to meet at 57).
-                guard abs(rateA - 1) <= slack, abs(rateB - 1) <= slack else { continue }
-                cands.append(Cand(target: target, rateA: rateA, rateB: rateB))
-            }
-        }
 
         // A locked: only B shifts toward A.
         let directB = aBPM / bBPM
@@ -764,9 +745,9 @@ public enum BeatGridSynchronization {
             cands.append(Cand(target: bBPM, rateA: directA, rateB: 1))
         }
 
-        guard let best = cands.min(by: { $0.cost < $1.cost }), best.cost <= slack else {
-            return nil
-        }
+        // Wide gaps (66↔99, 91↔120) return nil → Echo Freeze at natural rates.
+        guard let best = cands.min(by: { $0.cost < $1.cost }) else { return nil }
+        guard abs(best.rateA - 1) <= slack, abs(best.rateB - 1) <= slack else { return nil }
         return TempoMatch(targetBPM: best.target, rateA: best.rateA, rateB: best.rateB)
     }
     public static func duration(bars: Double, bpm: Float) -> Double { bpm > 0 ? bars * 240 / Double(bpm) : 0 }
@@ -788,32 +769,36 @@ public enum BeatGridSynchronization {
     public static func incomingCue(profile: TrackProfile, duration: Double = 0) -> Double {
         // Prefer musical intro (mixIn / first phrase). Drop-alignment only when the
         // resulting cue stays in the intro — otherwise LAND jumps mid-body of B.
+        // Field 1151: mixIn≈0 + first downbeat at 0.1 baked cueB=0.1 (silence/cold open).
+        let floorIn = max(profile.mixInSec, profile.durationSec > 30 ? 4.0 : 0)
         if duration > 0, let drop = profile.dropsSec.first(where: { $0 >= 8.0 && $0 <= 45.0 }) {
             let halfDuration = duration / 2.0
             if drop >= halfDuration {
-                let targetIn = max(0, drop - halfDuration)
-                let introCap = max(profile.mixInSec + 8, min(18, profile.durationSec * 0.18))
+                let targetIn = max(floorIn, drop - halfDuration)
+                let introCap = max(floorIn + 8, min(18, profile.durationSec * 0.18))
                 if targetIn <= introCap {
-                    if let matched = profile.downbeatsSec.min(by: { abs($0 - targetIn) < abs($1 - targetIn) }) {
+                    if let matched = profile.downbeatsSec.min(by: { abs($0 - targetIn) < abs($1 - targetIn) }),
+                       matched >= floorIn - 0.05 {
                         return matched
                     }
                     return targetIn
                 }
             }
         }
-        if let firstDownbeat = profile.downbeatsSec.first(where: { $0 >= profile.mixInSec }) {
+        if let firstDownbeat = profile.downbeatsSec.first(where: { $0 >= floorIn }) {
             let fourBars = profile.bpm > 0 ? 16.0 * 60.0 / Double(profile.bpm) : 8.0
-            if let firstPhrase = profile.phraseStartsSec.first(where: { $0 >= profile.mixInSec }),
-               firstPhrase - profile.mixInSec <= fourBars {
+            if let firstPhrase = profile.phraseStartsSec.first(where: { $0 >= floorIn }),
+               firstPhrase - floorIn <= fourBars {
                 let beat = profile.bpm > 0 ? 60.0 / Double(profile.bpm) : 0.5
                 if let matched = profile.downbeatsSec.min(by: { abs($0 - firstPhrase) < abs($1 - firstPhrase) }),
-                   abs(matched - firstPhrase) <= beat {
+                   abs(matched - firstPhrase) <= beat,
+                   matched >= floorIn - 0.05 {
                     return matched
                 }
             }
             return firstDownbeat
         }
-        return profile.phraseStartsSec.first(where: { $0 >= profile.mixInSec }) ?? profile.mixInSec
+        return profile.phraseStartsSec.first(where: { $0 >= floorIn }) ?? floorIn
     }
     public static func phaseErrorMilliseconds(outgoingBeat: Double, incomingBeat: Double, rateA: Float, rateB: Float) -> Double {
         abs(outgoingBeat / Double(rateA) - incomingBeat / Double(rateB)) * 1_000

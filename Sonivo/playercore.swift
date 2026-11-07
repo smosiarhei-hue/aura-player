@@ -3499,7 +3499,12 @@ final class PlayerCore {
 
     private func snapMashupRatesToActiveStyle(progress: Double) {
         guard isMashupTransitionMode else { return }
-        let rates = activeMashupStyle.playbackRates(progress: progress)
+        var rates = activeMashupStyle.playbackRates(progress: progress)
+        // Solo lead-in: keep A at natural rate until stems/MIXING (field 1151
+        // bake-start+bpm pitched A during the long pre-cue window).
+        if mashupBakeRealIncomingURL == nil, progress < 0.02 {
+            rates.outgoing = 1
+        }
         if isUsingStreamPlayer {
             activeStreamingPlayer.rate = isPlaying ? rates.outgoing : 0
             idleStreamingPlayer.rate = isPlaying ? rates.incoming : 0
@@ -3731,15 +3736,15 @@ final class PlayerCore {
             source = "\(placed.mood)+mixOut"
         }
 
-        // Never bake B from t=0 when a profile grid exists — cueB=0 lands mid-phrase.
-        if cueB < 0.05,
+        // Never bake B from a cold open — cueB≈0 / 0.1 lands on silence (field 1151).
+        if cueB < MashupBlendScheduler.minimumIncomingCueSec,
            let inTrack = incomingTrack,
            let inP = analysis.nextProfile,
            mashupProfileMatches(inP, track: inTrack),
            inP.bpm > 30 {
             let musical = BeatGridSynchronization.incomingCue(profile: inP, duration: blend)
             cueB = MashupBlendScheduler.clampAutomixIncomingCue(
-                preferred: max(musical, inP.mixInSec),
+                preferred: max(musical, inP.mixInSec, MashupBlendScheduler.minimumIncomingCueSec),
                 incomingDur: incomingDur
             )
             if !source.contains("+grid") {
@@ -3958,14 +3963,14 @@ final class PlayerCore {
                             style = self.activeMashupStyle
                             self.snapMashupRatesToActiveStyle(progress: 0)
                         }
-                        // Final grid guard: never stem-bake B from silence/t=0 when profile exists.
-                        if cueB < 0.05,
+                        // Final grid guard: never stem-bake B from a cold open (field 1151 cueB=0.1).
+                        if cueB < MashupBlendScheduler.minimumIncomingCueSec,
                            let inP = AutoMixV2AnalysisRuntime.shared.nextProfile,
                            self.mashupProfileMatches(inP, track: nextTrack),
                            inP.bpm > 30 {
                             let musical = BeatGridSynchronization.incomingCue(profile: inP, duration: blend)
                             cueB = MashupBlendScheduler.clampAutomixIncomingCue(
-                                preferred: max(musical, inP.mixInSec),
+                                preferred: max(musical, inP.mixInSec, MashupBlendScheduler.minimumIncomingCueSec),
                                 incomingDur: nextTrack.duration > 1 ? nextTrack.duration : inP.durationSec
                             )
                             self.incomingStartPosition = cueB

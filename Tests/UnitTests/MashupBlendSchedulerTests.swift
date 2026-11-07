@@ -102,6 +102,12 @@ struct MashupBlendSchedulerTests {
             incomingDur: 228
         )
         #expect(abs(intro - 13.2) < 0.01)
+        // Field 1151: cold open 0.1 must lift off the floor.
+        let cold = MashupBlendScheduler.clampAutomixIncomingCue(
+            preferred: 0.1,
+            incomingDur: 212
+        )
+        #expect(cold >= MashupBlendScheduler.minimumIncomingCueSec)
     }
 
     private func profile(

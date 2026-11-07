@@ -6,18 +6,31 @@ import TrackAnalysis
 
 @Suite("AutoMix Stage 3")
 struct Stage3BeatMatchTests {
-    @Test("Tempo pairs are safely matched", arguments: [(120.0,128.0),(128.0,120.0),(90.0,174.0)])
+    @Test("Close tempos lock with A held", arguments: [(120.0,128.0),(128.0,120.0),(110.0,112.0)])
     func tempoPairs(pair: (Double, Double)) {
         let match = BeatGridSynchronization.tempoMatch(aBPM: Float(pair.0), bBPM: Float(pair.1))
         #expect(match != nil)
-        #expect(match?.rateA == 1.0)
-        #expect(match?.targetBPM == Float(pair.0))
-        #expect(abs((match?.rateB ?? 0) - 1) <= 0.08)
+        // Prefer A locked when B can stretch within ±8%.
+        if abs(Float(pair.0) / Float(pair.1) - 1) <= 0.085 {
+            #expect(match?.rateA == 1.0)
+            #expect(match?.targetBPM == Float(pair.0))
+            #expect(abs((match?.rateB ?? 0) - 1) <= 0.08)
+        } else {
+            #expect(match?.rateB == 1.0)
+            #expect(abs((match?.rateA ?? 0) - 1) <= 0.08)
+        }
+        let rateA = match?.rateA ?? 0
+        let rateB = match?.rateB ?? 0
+        #expect(abs(Float(pair.0) * rateA - Float(pair.1) * rateB) < 0.5)
     }
 
-    @Test("Unsafe tempo falls back")
+    @Test("Unsafe / wide tempo falls back")
     func unsafeTempo() {
         #expect(BeatGridSynchronization.tempoMatch(aBPM: 100, bBPM: 135) == nil)
+        // Field 1148/1151 sludge pairs — must not fake a common grid.
+        #expect(BeatGridSynchronization.tempoMatch(aBPM: 66, bBPM: 99) == nil)
+        #expect(BeatGridSynchronization.tempoMatch(aBPM: 91, bBPM: 120) == nil)
+        #expect(BeatGridSynchronization.tempoMatch(aBPM: 90, bBPM: 174) == nil)
     }
 
     @Test("Camelot wheel compatibility")
