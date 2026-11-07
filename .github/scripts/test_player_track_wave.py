@@ -83,7 +83,7 @@ class PlayerTrackWaveTests(unittest.TestCase):
         self.assertIn('safeGeometry.safeAreaInsets.bottom',screen)
         self.assertIn('let topInset = max(safeTop, 12)',screen)
         self.assertIn('.ignoresSafeArea(.container, edges: .all)',screen)
-        self.assertIn('lowerDeck(safeAreaBottom: safeBottom)',screen)
+        self.assertIn('lowerDeck(safeAreaBottom: safeBottom, coverWidth: totalWidth)',screen)
     def test_system_drag_does_not_install_competing_manual_gestures_or_stop_music(self):
         text=source('PlayerScreenV2.swift')
         for token in ['dismissOffsetY','dismissDragEligible','playerDismissGesture','dismissGestureActive']:

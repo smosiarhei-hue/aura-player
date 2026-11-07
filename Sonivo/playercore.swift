@@ -5672,6 +5672,27 @@ final class PlayerCore {
         }
     }
 
+    /// Conservative, read-only artwork previews. Never make a random choice or
+    /// mutate the queue just to animate a gesture: the transport owns that choice.
+    var coverSwipePreviewTracks: (prev: Track?, next: Track?) {
+        let q = queue.isEmpty ? LibraryStore.shared.tracks : queue
+        guard let cur = currentTrack,
+              let idx = q.firstIndex(where: { $0.id == cur.id }) else { return (nil, nil) }
+        let prev = idx > 0 ? q[idx - 1] : nil
+        // Radio may exclude tracks during recovery; shuffle chooses at command time.
+        guard !isYandexWavePlayback, !shuffle else { return (prev, nil) }
+        let next: Track?
+        if idx + 1 < q.count {
+            next = q[idx + 1]
+        } else if repeatMode == .all, !q.isEmpty {
+            next = q[0]
+        } else {
+            // The transport may wrap or asynchronously load a continuation.
+            next = nil
+        }
+        return (prev, next)
+    }
+
     private func peekNext(auto: Bool) -> Track? {
         let q = effectiveQueue()
         guard !q.isEmpty else { return nil }

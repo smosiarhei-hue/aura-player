@@ -115,5 +115,41 @@ print("ok")
             self.assertIn("ok", result.stdout)
 
 
+class CoverSwipeSafetyRegressionTests(unittest.TestCase):
+    def test_previews_are_conservative_and_do_not_block_transport(self):
+        core = (ROOT / 'Sonivo/playercore.swift').read_text()
+        preview = core.split('var coverSwipePreviewTracks:', 1)[1].split('private func peekNext', 1)[0]
+        self.assertIn('idx > 0 ? q[idx - 1] : nil', preview)
+        self.assertIn('guard !isYandexWavePlayback, !shuffle', preview)
+        self.assertNotIn('randomElement', preview)
+        self.assertNotIn('effectiveQueue()', preview)
+        player = (ROOT / 'Sonivo/PlayerScreenV2.swift').read_text()
+        gesture = player.split('private func artworkStage', 1)[1].split('private var coverSwipeNeighbors', 1)[0]
+        self.assertIn('animateTrackSwipe(direction: direction, width: width)', gesture)
+        self.assertNotIn('if hasNeighbor', gesture)
+        commit = player.split('private func animateTrackSwipe', 1)[1].split('private func releaseCoverSwitchLock', 1)[0]
+        for token in ['preview == nil', 'nextTrack()', 'previousTrack()', 'requestedQueue',
+                      'requestedShuffle', 'requestedRepeat', 'currentPreviewID == requestedPreviewID',
+                      'coverSwitchGeneration = UUID()', 'coverSwitchTask?.cancel()']:
+            self.assertIn(token, commit)
+        self.assertIn('if phase != .active { cancelCoverSwitch() }', player)
+        self.assertIn('isCoverSwitching && coverSwitchTask != nil', player)
+        self.assertIn('abs(coverDragX) > 0.5 { cancelCoverSwitch() }', player)
+
+    def test_feather_and_text_share_swipe_without_changing_actions(self):
+        player = (ROOT / 'Sonivo/PlayerScreenV2.swift').read_text()
+        plate = player.split('private func foldedCoverPlate', 1)[1].split('private var coverDissolveMask', 1)[0]
+        self.assertIn('.mask(coverDissolveMask)', plate)
+        self.assertNotIn('if restingCenter', plate)
+        mask = player.split('private var coverDissolveMask', 1)[1].split('private func inlineLyricsStage', 1)[0]
+        self.assertIn('.clear, location: 0.00', mask)
+        metadata = player.split('private func metadataRow', 1)[1].split('@ViewBuilder private var centerStatusLabel', 1)[0]
+        for token in ['metadataCarousel(coverWidth:', 'CoverFoldSwipeMath.progress',
+                      'coverSwipeNeighbors', 'rotation3DEffect', '.clipped()',
+                      '.accessibilityHidden(true)', '.accessibilityLabel(', 'Button(action: openArtist)',
+                      'reduceMotion', 'isFullScreenVideoShot']:
+            self.assertIn(token, metadata)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -39,7 +39,7 @@ class PlayerQualityNativeTests(unittest.TestCase):
         self.assertIn('currentBitrate = incomingQuality?.bitrate',complete)
     def test_lyrics_control_lives_on_primary_utility_not_duplicated_below(self):
         screen=source('PlayerScreenV2.swift')
-        metadata=screen.split('private var metadataRow:',1)[1].split('@ViewBuilder private var centerStatusLabel',1)[0]
+        metadata=screen.split('private func metadataRow(',1)[1].split('@ViewBuilder private var centerStatusLabel',1)[0]
         self.assertIn('library.toggleFavorite',metadata)
         self.assertIn('moreMenuButton',metadata)
         self.assertNotIn('quote.bubble',metadata)

@@ -188,7 +188,7 @@ struct PlayerScreenV2: View {
                                         .frame(width: totalWidth, height: standardArtworkStageHeight)
                                     // Nudge the control panel slightly below the cover dissolve.
                                     Spacer(minLength: 14)
-                                    lowerDeck(safeAreaBottom: safeBottom)
+                                    lowerDeck(safeAreaBottom: safeBottom, coverWidth: totalWidth)
                                 }
                                 // Fill the first screen so Spacer can drop the control panel down.
                                 .frame(maxWidth: .infinity, minHeight: totalHeight)
@@ -271,6 +271,7 @@ struct PlayerScreenV2: View {
             if showLyricsMode { revealLyricsControls() }
         }
         .onChange(of: scenePhase) { _, phase in
+            if phase != .active { cancelCoverSwitch() }
             updateVideoPlayback()
             lyricsControlsHideTask?.cancel()
             if phase == .active, showLyricsMode { revealLyricsControls() }
@@ -280,6 +281,7 @@ struct PlayerScreenV2: View {
             if !enabled { teardownVideoLooper() }
         }
         .onChange(of: track?.id) { _, _ in
+            if (isCoverSwitching && coverSwitchTask != nil) || abs(coverDragX) > 0.5 { cancelCoverSwitch() }
             trackWaveTask?.cancel()
             trackWaveRequestID = UUID()
             waveLoading = false
@@ -293,7 +295,7 @@ struct PlayerScreenV2: View {
             lyricsControlsHideTask?.cancel()
             lyricsControlsVisible = isEnabled
             if isEnabled { scheduleLyricsControlsHide() }
-            coverDragX = 0
+            cancelCoverSwitch()
             if !isEnabled {
                 // Leaving lyrics must not bounce-dismiss EQ/queue/settings opened from ⋯.
                 pendingModalTask?.cancel()
@@ -623,22 +625,19 @@ struct PlayerScreenV2: View {
                 .onChanged { value in
                     guard !isCoverSwitching, PlayerInteractionPolicy.horizontalIntent(
                         x: Double(value.translation.width), y: Double(value.translation.height)) else { return }
-                    // Full slot travel so the fold can open the neighbor flat.
-                    let limit = width * CoverFoldSwipeMath.progressLimit
-                    coverDragX = max(-limit, min(limit, value.translation.width))
+                    // An unknown destination uses a small resistance instead of
+                    // revealing a misleading cover or dragging into empty space.
+                    let neighbor = value.translation.width < 0 ? neighbors.next : neighbors.prev
+                    let limit = width * (neighbor == nil ? 0.12 : CoverFoldSwipeMath.progressLimit)
+                    coverDragX = reduceMotion ? 0 : max(-limit, min(limit, value.translation.width))
                 }
                 .onEnded { value in
                     guard !isCoverSwitching else { return }
                     if let direction = PlayerInteractionPolicy.trackDirection(
                         x: Double(value.translation.width), y: Double(value.translation.height), width: Double(width)) {
-                        let hasNeighbor = direction > 0
-                            ? coverSwipeNeighbors.next != nil
-                            : coverSwipeNeighbors.prev != nil
-                        if hasNeighbor {
-                            animateTrackSwipe(direction: direction, width: width)
-                        } else {
-                            withAnimation(reduceMotion ? nil : CoverFoldSwipeMotion.cancelAnimation) { coverDragX = 0 }
-                        }
+                        // Unknown preview must not block next() (radio refill/shuffle)
+                        // or previous() (restart at the beginning of the queue).
+                        animateTrackSwipe(direction: direction, width: width)
                     } else {
                         withAnimation(reduceMotion ? nil : CoverFoldSwipeMotion.cancelAnimation) { coverDragX = 0 }
                     }
@@ -650,28 +649,14 @@ struct PlayerScreenV2: View {
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
         }
-        .animation(.interactiveSpring(response: 0.38, dampingFraction: 0.75), value: player.isPlaying)
+        .animation(reduceMotion ? nil : .interactiveSpring(response: 0.38, dampingFraction: 0.75), value: player.isPlaying)
         .animation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion), value: showLyricsMode)
     }
 
-    /// Previous / next queue neighbors for the folding peek plates.
+    /// Only preview a destination that the playback engine can guarantee.
     private var coverSwipeNeighbors: (prev: Track?, next: Track?) {
-        let q = player.queue
-        guard let cur = player.currentTrack ?? track else {
-            return (nil, q.first)
-        }
-        guard let idx = q.firstIndex(where: { $0.id == cur.id }) else {
-            return (nil, q.first)
-        }
-        let prev: Track? = {
-            if idx > 0 { return q[idx - 1] }
-            return player.repeatMode == .all && q.count > 1 ? q.last : nil
-        }()
-        let next: Track? = {
-            if idx + 1 < q.count { return q[idx + 1] }
-            return player.repeatMode == .all && q.count > 1 ? q.first : nil
-        }()
-        return (prev, next)
+        guard !player.isTransitionActive, player.currentTrack?.id == track?.id else { return (nil, nil) }
+        return player.coverSwipePreviewTracks
     }
 
     @ViewBuilder
@@ -688,7 +673,7 @@ struct PlayerScreenV2: View {
         let opacity = CoverFoldSwipeMath.opacity(slot: slot, progress: progress)
         let offsetX = CoverFoldSwipeMath.slotOffset(slot: slot, progress: progress, width: width)
         let preferred = slotTrack.flatMap { artworkImage(for: $0) }
-            ?? (slot == 0 ? currentArtworkImage : nil)
+            ?? (slot == 0 && artworkTrackId == slotTrack?.id ? currentArtworkImage : nil)
 
         let warp = reduceMotion ? 0 : CoverFoldSwipeMath.warpAmount(slot: slot, progress: progress)
         let warpMag = CGFloat(abs(warp))
@@ -698,19 +683,13 @@ struct PlayerScreenV2: View {
             height: max(36, side * (0.18 + 0.35 * min(1, warpMag)))
         )
         let corner = side * CoverFoldSwipeMath.cornerRadiusFactor
-        let restingCenter = slot == 0 && abs(progress) < 0.12
 
         coverLayer(for: slotTrack, preferredImage: preferred)
             .frame(width: side, height: side)
             .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
-            .mask {
-                if restingCenter {
-                    // Soft alpha into the native UIBlur atmosphere — no blur strip on the art.
-                    coverDissolveMask
-                } else {
-                    RoundedRectangle(cornerRadius: corner, style: .continuous).fill(Color.black)
-                }
-            }
+            // Keep the same feather through the gesture: switching masks at a
+            // threshold made a visible line/pop on the top edge of the cover.
+            .mask(coverDissolveMask)
             .compositingGroup()
             // Mesh bend (curved jelly edges) — rigid rotation alone looks like cubes.
             .distortionEffect(
@@ -745,10 +724,11 @@ struct PlayerScreenV2: View {
     private var coverDissolveMask: some View {
         LinearGradient(
             stops: [
-                .init(color: .black.opacity(0.08), location: 0.00),
-                .init(color: .black.opacity(0.55), location: 0.035),
-                .init(color: .black.opacity(0.92), location: 0.08),
-                .init(color: .black, location: 0.14),
+                .init(color: .clear, location: 0.00),
+                .init(color: .black.opacity(0.12), location: 0.025),
+                .init(color: .black.opacity(0.48), location: 0.065),
+                .init(color: .black.opacity(0.82), location: 0.11),
+                .init(color: .black, location: 0.18),
                 .init(color: .black, location: 0.55),
                 .init(color: .black.opacity(0.78), location: 0.72),
                 .init(color: .black.opacity(0.28), location: 0.88),
@@ -1007,11 +987,11 @@ struct PlayerScreenV2: View {
         ZStack { LinearGradient(colors: palette, startPoint: .topLeading, endPoint: .bottomTrailing); Image(systemName: "music.note").font(.system(size: 70, weight: .semibold)).foregroundStyle(.white.opacity(0.85)) }
     }
 
-    private func lowerDeck(safeAreaBottom: CGFloat) -> some View {
+    private func lowerDeck(safeAreaBottom: CGFloat, coverWidth: CGFloat) -> some View {
         VStack(spacing: 0) {
             // Cover dissolve already pins this cluster low on the first screen.
             VStack(spacing: 8) {
-                metadataRow
+                metadataRow(coverWidth: coverWidth)
                 PlayerTimelineSection(player: player) { centerStatusLabel }
                 transportControls
                 FluidVolumeSlider()
@@ -1174,28 +1154,16 @@ struct PlayerScreenV2: View {
         return (catalog, active)
     }
 
-    private var metadataRow: some View {
+    private func metadataRow(coverWidth: CGFloat) -> some View {
         let current = track
         return HStack(alignment: .center, spacing: 14) {
             Button(action: openArtist) {
-                VStack(alignment: .leading, spacing: 4) {
-                    MarqueeText(
-                        text: current?.title ?? "Не играет",
-                        font: SN.rounded(.title2, .bold),
-                        color: SN.ink,
-                        height: 28
-                    )
-                    MarqueeText(
-                        text: current?.artist ?? "",
-                        font: SN.rounded(.body, .medium),
-                        color: SN.ink.opacity(0.72),
-                        height: 22
-                    )
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                metadataCarousel(coverWidth: coverWidth)
+                    .accessibilityHidden(true)
             }
             .buttonStyle(.plain)
-            .disabled(current == nil || resolvingArtist)
+            .disabled(current == nil || resolvingArtist || isCoverSwitching || abs(coverDragX) > 2)
+            .accessibilityLabel([current?.title ?? "Не играет", current?.artist ?? ""].filter { !$0.isEmpty }.joined(separator: ", "))
 
             HStack(spacing: 4) {
                 Button {
@@ -1219,6 +1187,52 @@ struct PlayerScreenV2: View {
                 moreMenuButton
             }
         }
+    }
+    /// Text follows the same gesture as the artwork. Preview labels are decorative;
+    /// the artist button and VoiceOver continue to refer only to the playing track.
+    private func metadataCarousel(coverWidth: CGFloat) -> some View {
+        let progress = CoverFoldSwipeMath.progress(dragX: coverDragX, width: coverWidth)
+        let neighbors = coverSwipeNeighbors
+        let canPreview = !reduceMotion && coverMixAmount == 0 && !isFullScreenVideoShot
+        let destination = progress < 0 ? neighbors.next : neighbors.prev
+        let activeProgress = canPreview && destination != nil ? progress : 0
+        return GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                ForEach([-1, 0, 1], id: \.self) { slot in
+                    let item = slot == 0 ? track : (slot < 0 ? neighbors.prev : neighbors.next)
+                    let distance = CGFloat(slot) + activeProgress
+                    if slot == 0 || (item != nil && abs(activeProgress) > 0.001 && abs(distance) < 1) {
+                        metadataText(item, marquee: slot == 0)
+                            .frame(width: geo.size.width, alignment: .leading)
+                            .rotation3DEffect(
+                                .degrees(reduceMotion ? 0 : -Double(distance) * 6),
+                                axis: (x: 0, y: 1, z: 0), perspective: 0.6
+                            )
+                            .offset(x: distance * geo.size.width)
+                            .opacity(Double(max(0, 1 - min(1, abs(distance)))))
+                    }
+                }
+            }
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .leading)
+            .clipped()
+        }
+        .frame(height: 54)
+    }
+
+    @ViewBuilder
+    private func metadataText(_ item: Track?, marquee: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if marquee {
+                MarqueeText(text: item?.title ?? "Не играет", font: SN.rounded(.title2, .bold), color: SN.ink, height: 28)
+                MarqueeText(text: item?.artist ?? "", font: SN.rounded(.body, .medium), color: SN.ink.opacity(0.72), height: 22)
+            } else {
+                Text(item?.title ?? "Не играет").font(SN.rounded(.title2, .bold))
+                    .foregroundStyle(SN.ink).lineLimit(1).frame(height: 28, alignment: .leading)
+                Text(item?.artist ?? "").font(SN.rounded(.body, .medium))
+                    .foregroundStyle(SN.ink.opacity(0.72)).lineLimit(1).frame(height: 22, alignment: .leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
     @ViewBuilder private var centerStatusLabel: some View {
         if aiVideoShotService.isGenerating && aiVideoShotService.currentTrackId == track?.id.uuidString {
@@ -1734,12 +1748,22 @@ struct PlayerScreenV2: View {
     }
     private func animateTrackSwipe(direction: Int, width: CGFloat) {
         guard !isCoverSwitching, track != nil else { return }
+        let preview = direction > 0 ? coverSwipeNeighbors.next : coverSwipeNeighbors.prev
+        if preview == nil || reduceMotion || coverMixAmount > 0 || isFullScreenVideoShot {
+            coverDragX = 0
+            if direction > 0 { nextTrack() } else { previousTrack() }
+            return
+        }
         isCoverSwitching = true
         coverSwitchTask?.cancel()
         let generation = UUID()
         coverSwitchGeneration = generation
         Haptics.tap(.light)
         let requestedTrackID = player.currentTrack?.id
+        let requestedQueue = player.queue.map(\.id)
+        let requestedShuffle = player.shuffle
+        let requestedRepeat = player.repeatMode
+        let requestedPreviewID = preview?.id
         // Next = fold current left (−1 slot); previous = fold current right (+1 slot).
         let targetX: CGFloat = direction > 0 ? -width : width
         withAnimation(reduceMotion ? nil : CoverFoldSwipeMotion.commitAnimation) {
@@ -1750,11 +1774,17 @@ struct PlayerScreenV2: View {
                 try await Task.sleep(for: .milliseconds(reduceMotion ? 0 : CoverFoldSwipeMotion.commitHoldMilliseconds))
             } catch { return }
             guard !Task.isCancelled, coverSwitchGeneration == generation, isPresented else { return }
-            guard player.currentTrack?.id == requestedTrackID else {
+            let currentPreviewID = direction > 0 ? coverSwipeNeighbors.next?.id : coverSwipeNeighbors.prev?.id
+            guard player.currentTrack?.id == requestedTrackID,
+                  player.queue.map(\.id) == requestedQueue,
+                  player.shuffle == requestedShuffle, player.repeatMode == requestedRepeat,
+                  currentPreviewID == requestedPreviewID else {
                 withAnimation(reduceMotion ? nil : CoverFoldSwipeMotion.cancelAnimation) { coverDragX = 0 }
                 isCoverSwitching = false
+                coverSwitchTask = nil
                 return
             }
+            coverSwitchTask = nil
             PlaybackAudioSessionCoordinator.shared.activateForPlayback()
             if direction > 0 { player.next() } else { player.previous() }
             // Neighbor is now centered — snap progress to 0 without a reverse fly-in.
@@ -1763,6 +1793,15 @@ struct PlayerScreenV2: View {
             withTransaction(transaction) { coverDragX = 0 }
             isCoverSwitching = false
         }
+    }
+    private func cancelCoverSwitch() {
+        coverSwitchTask?.cancel()
+        coverSwitchTask = nil
+        coverSwitchGeneration = UUID()
+        isCoverSwitching = false
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { coverDragX = 0 }
     }
     private func releaseCoverSwitchLock() {
         let generation = UUID()

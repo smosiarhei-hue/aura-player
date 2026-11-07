@@ -131,6 +131,8 @@ final class ActivePlayerPresentation {
         }
         self.queue = newQ
     }
+    var coverSwipePreviewTracks: (prev: Track?, next: Track?) { legacy.coverSwipePreviewTracks }
+
     var currentCodec: String? { v2OwnsPlayback ? runtime.currentCodec : legacy.currentCodec }
     var currentBitrate: Int? { v2OwnsPlayback ? runtime.currentBitrate : legacy.currentBitrate }
     var audioQuality: AudioQuality { legacy.audioQuality }

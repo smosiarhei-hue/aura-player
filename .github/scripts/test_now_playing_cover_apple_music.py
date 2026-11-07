@@ -58,8 +58,8 @@ class NowPlayingCoverAppleMusicTests(unittest.TestCase):
         self.assertIn("LinearGradient", mask)
         self.assertIn(".clear", mask)
         # Soft alpha into native UIBlur atmosphere — never a re-blurred strip (the "line").
-        self.assertIn("color: .black.opacity(0.08), location: 0.00", mask)
-        self.assertIn("color: .black, location: 0.14", mask)
+        self.assertIn("color: .clear, location: 0.00", mask)
+        self.assertIn("color: .black, location: 0.18", mask)
         self.assertNotIn("coverTopProgressiveBlur", PLAYER)
         self.assertNotIn(".blur(radius: reduceMotion ? 0 : 22)", stage)
         self.assertIn("never painted over the cover", PLAYER)
