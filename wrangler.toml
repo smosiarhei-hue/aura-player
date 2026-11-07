@@ -1,0 +1,9 @@
+# Cloudflare Workers Builds for `sonivo-ai` defaults to the repo root when
+# the dashboard Root directory is empty. Keep this in sync with
+# cloudflare-worker/wrangler.jsonc.
+name = "sonivo-ai"
+main = "cloudflare-worker/src/worker.js"
+compatibility_date = "2026-08-27"
+
+[observability]
+enabled = true

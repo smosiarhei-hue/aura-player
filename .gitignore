@@ -49,3 +49,5 @@ tools/videoshot-studio/*.mp4
 
 # Large screen-recording sources (rebuild from Drive / local)
 marketing/threads-promo/raw/
+node_modules/
+cloudflare-worker/node_modules/
