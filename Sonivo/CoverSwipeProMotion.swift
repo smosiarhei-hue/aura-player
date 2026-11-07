@@ -57,8 +57,8 @@ final class CoverSwipeProMotionView: UIView {
     }
 
     private func configureRate() {
-        let maximum = window?.windowScene?.screen.maximumFramesPerSecond
-            ?? UIScreen.main.maximumFramesPerSecond
+        // Prefer the hosting scene's screen; fall back to 120 (no deprecated screen singleton).
+        let maximum = window?.windowScene?.screen.maximumFramesPerSecond ?? 120
         let desired = min(120, max(60, maximum))
         guard desired != wantedFPS else { return }
         wantedFPS = desired
@@ -77,12 +77,10 @@ final class CoverSwipeProMotionView: UIView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window != nil, link != nil {
+        if window == nil {
+            stop()
+        } else if link != nil {
             configureRate()
         }
-    }
-
-    deinit {
-        link?.invalidate()
     }
 }

@@ -30,6 +30,11 @@ class CoverFoldSwipeTests(unittest.TestCase):
         self.assertIn("preferredFrameRateRange", gate)
         self.assertIn("maximum: Float(desired)", gate)
         self.assertIn("min(120", gate)
+        # Swift 6: no CADisplayLink touch from nonisolated deinit.
+        self.assertNotIn("deinit", gate)
+        self.assertNotIn("UIScreen.main.maximumFramesPerSecond", gate)
+        self.assertIn("dismantleUIView", gate)
+        self.assertIn("window == nil", gate)
         self.assertIn("coverFoldWarp", metal)
         self.assertIn("[[ stitchable ]] float2 coverFoldWarp", metal)
 
