@@ -29,7 +29,12 @@ class NowPlayingCoverAppleMusicTests(unittest.TestCase):
         geometry = PLAYER.split("GeometryReader { geo in", 1)[1].split(
             "ZStack(alignment: .top)", 1
         )[0]
-        self.assertIn("min(\n                    totalWidth,\n                    totalHeight - reservedFirstScreenControls\n                )", geometry)
+        self.assertIn(
+            "min(\n                    totalWidth,\n                    totalHeight - reservedFirstScreenControls - coverTopClearance\n                )",
+            geometry,
+        )
+        self.assertIn("coverTopClearance", geometry)
+        self.assertIn("playerTopNativeBlur", PLAYER)
         self.assertNotIn("totalHeight * 0.58", geometry)
         self.assertNotIn("max(totalWidth,", geometry)
         self.assertIn("coverAccentWash", PLAYER)
@@ -85,11 +90,15 @@ class NowPlayingCoverAppleMusicTests(unittest.TestCase):
     def test_first_screen_utility_row_matches_apple_music(self):
         self.assertIn("primaryUtilityRow", PLAYER)
         utility = PLAYER.split("private var primaryUtilityRow:", 1)[1].split(
-            "private var trackWaveButton", 1
+            "private var sleepTimerUtilityButton", 1
         )[0]
         self.assertIn("quote.bubble", utility)
         self.assertIn("AirPlayButtonView()", utility)
         self.assertIn("list.bullet", utility)
+        self.assertIn("sleepTimerUtilityButton", utility)
+        self.assertIn("SonivoEqualizerGlyph()", utility)
+        self.assertIn("playerTopNativeBlur", PLAYER)
+        self.assertIn("coverTopClearance", PLAYER)
 
 
 if __name__ == "__main__":

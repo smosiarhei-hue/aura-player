@@ -84,8 +84,8 @@ class LiveActivityBrandTests(unittest.TestCase):
         self.assertIn('КОММИТА НЕТ',source('design/dynamic-island/preview.svg')) # Versioned approved pre-commit mock.
     def test_eq_icon_preserves_action_audio_and_touch_target(self):
         player=source('Sonivo/PlayerScreenV2.swift')
-        controls=player.split('private var secondaryPlayerActions',1)[1].split('private var sleepTimerBottomButton',1)[0]
-        for required in ['SonivoEqualizerGlyph()','openModal(.equalizer)','SN.tapTarget','SN.accent','accessibilityLabel("Эквалайзер")']:self.assertIn(required,controls)
+        controls=player.split('private var primaryUtilityRow',1)[1].split('private var sleepTimerUtilityButton',1)[0]
+        for required in ['SonivoEqualizerGlyph()','openModal(.equalizer)','SN.accent','accessibilityLabel("Эквалайзер")']:self.assertIn(required,controls)
         glyph=source('Sonivo/SonivoEqualizerGlyph.swift')
         self.assertIn('StrokeStyle(lineWidth: 2 * unit, lineCap: .round)',glyph)
         for bad in ['PlayerCore','eqGains','AVAudio','setGain']:self.assertNotIn(bad,glyph)

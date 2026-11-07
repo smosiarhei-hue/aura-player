@@ -43,15 +43,15 @@ class PlayerQualityNativeTests(unittest.TestCase):
         self.assertIn('library.toggleFavorite',metadata)
         self.assertIn('moreMenuButton',metadata)
         self.assertNotIn('quote.bubble',metadata)
-        utility=screen.split('private var primaryUtilityRow:',1)[1].split('private var trackWaveButton',1)[0]
+        utility=screen.split('private var primaryUtilityRow:',1)[1].split('private var sleepTimerUtilityButton',1)[0]
         self.assertIn('quote.bubble',utility)
         self.assertIn('accessibilityLabel("Текст песни")',utility)
         self.assertIn('AirPlayButtonView()',utility)
         self.assertIn('list.bullet',utility)
-        secondary=screen.split('private var secondaryPlayerActions:',1)[1].split('private var sleepTimerBottomButton',1)[0]
-        self.assertNotIn('quote.bubble',secondary)
-        self.assertNotIn('lyricsToggleButton',secondary)
+        self.assertIn('sleepTimerUtilityButton',utility)
+        self.assertIn('SonivoEqualizerGlyph()',utility)
         self.assertNotIn('lyricsToggleButton',screen)
+        self.assertNotIn('private var secondaryPlayerActions',screen)
     @unittest.skipUnless(sys.platform=='darwin','Swift value-model runtime check requires macOS')
     def test_quality_value_model_runtime(self):
         checks='''

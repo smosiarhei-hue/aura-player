@@ -36,28 +36,32 @@ class PlayerTrackWaveTests(unittest.TestCase):
         self.assertIn('ym.accountGeneration == account',refill)
         self.assertNotIn('filterAndRankWave',refill)
         self.assertIn('remainingAhead <= (isYandexWavePlayback ? 5 : 0)',refill)
-    def test_native_secondary_actions_are_below_primary_wave_and_scrollable(self):
+    def test_native_utility_row_hosts_sleep_eq_and_wave_lives_in_menu(self):
         screen=source('PlayerScreenV2.swift')
         body=screen.split('var body: some View',1)[1].split('.sheet(item:',1)[0]
         self.assertIn('ScrollView(.vertical)',body)
+        self.assertIn('playerTopNativeBlur',body)
+        self.assertIn('coverTopClearance',body)
         self.assertNotIn('playerDismissGesture',body)
         self.assertNotIn('.background(SN.bg.ignoresSafeArea())\n        .simultaneousGesture',body)
-        deck=screen.split('private func lowerDeck',1)[1].split('private var primaryUtilityRow',1)[0]
+        deck=screen.split('private func lowerDeck',1)[1].split('private func playerTopNativeBlur',1)[0]
         for first,second in [
             ('metadataRow','transportControls'),
             ('FluidVolumeSlider()','primaryUtilityRow'),
-            ('primaryUtilityRow','trackWaveButton'),
-            ('trackWaveButton','secondaryPlayerActions'),
         ]:
             self.assertLess(deck.index(first),deck.index(second))
-        utility=screen.split('private var primaryUtilityRow',1)[1].split('private var trackWaveButton',1)[0]
-        for expected in ['AirPlayButtonView','quote.bubble','list.bullet','"Очередь"']:
+        self.assertNotIn('trackWaveButton',deck)
+        self.assertNotIn('secondaryPlayerActions',deck)
+        self.assertNotIn('Действия ниже',deck)
+        utility=screen.split('private var primaryUtilityRow',1)[1].split('private var sleepTimerUtilityButton',1)[0]
+        for expected in ['AirPlayButtonView','quote.bubble','list.bullet','"Очередь"','sleepTimerUtilityButton','SonivoEqualizerGlyph()','"Эквалайзер"']:
             self.assertIn(expected,utility)
-        actions=screen.split('private var secondaryPlayerActions',1)[1].split('private var sleepTimerBottomButton',1)[0]
-        for expected in ['sleepTimerBottomButton','"Эквалайзер"']:
-            self.assertIn(expected,actions)
-        self.assertNotIn('AirPlayButtonView',actions)
-        self.assertNotIn('"Очередь"',actions)
+        menu=screen.split('private var moreMenuButton',1)[1].split('private var artistSelectionSheet',1)[0]
+        self.assertIn('startTrackWave()',menu)
+        self.assertIn('"Моя волна по текущему треку"',menu)
+        self.assertIn('trackWaveMenuAvailability',menu)
+        self.assertNotIn('private var trackWaveButton',screen)
+        self.assertNotIn('private var secondaryPlayerActions',screen)
     def test_dismissal_is_explicit_fullscreen_at_every_player_entry_point(self):
         presentation=source('PlayerSheetPresentation.swift')
         self.assertIn('struct PlayerFullscreenPresentation',presentation)
@@ -86,28 +90,14 @@ class PlayerTrackWaveTests(unittest.TestCase):
         self.assertIn('private func close() { Haptics.tap(.light); isPresented = false }',text)
         sliders=text.split('struct FluidVolumeSlider:',1)[1].split('struct VideoShotPlayerView:',1)[0]
         self.assertNotIn('DragGesture(minimumDistance: 15)',sliders)
-    def test_button_is_accessible_and_loading_or_local_track_is_disabled(self):
-        button=source('PlayerScreenV2.swift').split('private var trackWaveButton',1)[1].split('private var secondaryPlayerActions',1)[0]
-        for expected in ['Button(action: startTrackWave)','minHeight: 56','.disabled(!catalogTrack || waveLoading)','ProgressView()','.accessibilityValue(','.accessibilityHint(','.fixedSize(horizontal: false, vertical: true)']: self.assertIn(expected,button)
-    def test_button_is_native_glass_and_has_no_provider_brand(self):
-        button=source('PlayerScreenV2.swift').split('private var trackWaveButton',1)[1].split('private var secondaryPlayerActions',1)[0]
-        self.assertIn('"Моя волна по текущему треку"',button)
-        self.assertNotIn('Яндекс',button)
-        self.assertIn('.glassEffect(.regular.tint(glassTint).interactive(), in: .rect(cornerRadius: SN.radius))',button)
-        self.assertIn('.buttonStyle(.plain)',button)
-        self.assertNotIn('.strokeBorder',button)
-        self.assertNotIn('.ultraThinMaterial',button)
-        self.assertIn('minHeight: 56',button)
-    def test_button_tint_uses_only_current_artwork_not_mood_or_random_palette(self):
-        text=source('PlayerScreenV2.swift')
-        button=text.split('private var trackWaveButton',1)[1].split('private var secondaryPlayerActions',1)[0]
-        self.assertIn('resolvedArtworkPaletteTrackID == track?.id ? artworkPaletteColors : []',button)
-        self.assertIn('coverColors.first?.opacity(0.12) ?? Color.clear',button)
-        self.assertNotIn('PlayerTrackWaveBackdrop',text)
-        self.assertNotIn('Image(systemName: "waveform")',button)
-        update=text.split('private func updatePalette',1)[1].split('private func refreshPalette',1)[0]
-        self.assertIn('!Task.isCancelled, track?.id == trackID, paletteTrackId == trackID',update)
-        self.assertIn('resolvedArtworkPaletteTrackID = trackID',update)
+    def test_wave_menu_item_is_accessible_and_loading_or_local_track_is_disabled(self):
+        menu=source('PlayerScreenV2.swift').split('private var moreMenuButton',1)[1].split('private var artistSelectionSheet',1)[0]
+        for expected in ['startTrackWave()','trackWaveMenuAvailability','.disabled(!waveAvailability.catalog || waveLoading)','"Моя волна по текущему треку"']:
+            self.assertIn(expected,menu)
+    def test_wave_menu_has_no_provider_brand(self):
+        menu=source('PlayerScreenV2.swift').split('private var moreMenuButton',1)[1].split('private var artistSelectionSheet',1)[0]
+        self.assertIn('"Моя волна по текущему треку"',menu)
+        self.assertNotIn('Яндекс',menu)
     def test_player_background_is_uniform_cover_tint_and_home_is_untouched(self):
         text=source('PlayerScreenV2.swift')
         block=text.split('private var background:',1)[1].split('private var topHeader:',1)[0]
@@ -117,9 +107,8 @@ class PlayerTrackWaveTests(unittest.TestCase):
         normal_player = block.split('let base =',1)[1]
         for forbidden in ['LinearGradient','RadialGradient','PlayerMusicReactiveBackdrop','VideoShotPlayerView','TimelineView','Image(uiImage:']:
             self.assertNotIn(forbidden,normal_player)
-        button=text.split('private var trackWaveButton',1)[1].split('private var secondaryPlayerActions',1)[0]
-        for forbidden in ['Canvas','TimelineView','PlayerTrackWaveBackdrop','waveform','Image(uiImage:']:
-            self.assertNotIn(forbidden,button)
+        self.assertIn('playerTopNativeBlur',text)
+        self.assertIn('.fill(.ultraThinMaterial)',text)
     def test_server_wave_does_not_enter_local_vibe_refill(self):
         text=source('MoodRadioEngine.swift').split('func activateYandexTrackWave',1)[1].split('func startTrackWave',1)[0]
         self.assertIn('moodRequestID = UUID()',text)

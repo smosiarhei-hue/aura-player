@@ -24,9 +24,9 @@ class LiquidMetalTests(unittest.TestCase):
         for p in (ROOT/'Sonivo').glob('*.swift'):
             for line in p.read_text().splitlines():
                 if '.sonivoMetal(' in line and 'animated:' in line: sites.append((p.name,line))
-        self.assertEqual(len(sites),1)
-        self.assertEqual(sites[0][0],'PlayerScreenV2.swift')
-        self.assertIn('animated: player.isPlaying',sites[0][1])
+        # Wave banner (the only animated call site) moved into the ⋯ menu — no live
+        # metal animation on the player surface; TimelineView still gates on `animated`.
+        self.assertEqual(len(sites),0)
     def test_fallback_removes_shader_and_clocks(self):
         s=(ROOT/'Sonivo/SonivoMetalSurface.swift').read_text()
         for token in ['scenePhase == .active','!constrained','!reduceMotion','!reduceTransparency',
@@ -49,7 +49,8 @@ class LiquidMetalTests(unittest.TestCase):
         s=(ROOT/'Sonivo/PlayerScreenV2.swift').read_text()
         for token in ['Button(action: togglePlayback)','Button(action: previousTrack)',
                       'Button(action: nextTrack)', '.disabled(player.isLoading)',
-                      '.regular.tint(glassTint).interactive()', 'SonivoEqualizerGlyph(']:
+                      'SonivoEqualizerGlyph(', 'startTrackWave()', 'primaryUtilityRow',
+                      'playerTopNativeBlur']:
             self.assertIn(token,s)
         self.assertNotIn('sonivoMetal',(ROOT/'SonivoLiveActivity/SonivoLiveActivityWidget.swift').read_text())
         lifecycle=(ROOT/'Sonivo/SonivoCaptureBrand.swift').read_text()

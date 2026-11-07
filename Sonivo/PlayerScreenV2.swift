@@ -119,12 +119,16 @@ struct PlayerScreenV2: View {
                 let totalHeight = geo.size.height
                 let totalWidth = geo.size.width
                 let topInset = max(safeTop, 12)
+                // Cover sits a hair under the Dynamic Island; top blur softens that edge.
+                let coverTopClearance: CGFloat = max(10, topInset * 0.42)
                 // Apple Music: edge-to-edge square. Height == width — never taller.
                 // A taller stage made scaledToFill upscale the art and soften it.
-                let reservedFirstScreenControls: CGFloat = 298 + max(safeBottom, 8)
+                // Wave banner + secondary glass row left the player; keep room for
+                // lyrics · AirPlay · queue · sleep · EQ and a slight downward nudge.
+                let reservedFirstScreenControls: CGFloat = 248 + max(safeBottom, 8)
                 let standardArtworkStageHeight = min(
                     totalWidth,
-                    totalHeight - reservedFirstScreenControls
+                    totalHeight - reservedFirstScreenControls - coverTopClearance
                 )
 
                 ZStack(alignment: .top) {
@@ -172,12 +176,17 @@ struct PlayerScreenV2: View {
                         .transition(LyricsPresentationMotion.transition(reduceMotion: reduceMotion))
                         .zIndex(2)
                     } else {
-                        // Art bleeds under the status bar; grabber floats on top of it.
+                        // Cover clears the Island slightly; native material softens the top.
                         ZStack(alignment: .top) {
                             ScrollView(.vertical) {
                                 VStack(spacing: 0) {
+                                    Color.clear
+                                        .frame(height: coverTopClearance)
+                                        .accessibilityHidden(true)
                                     artworkStage(width: totalWidth, height: standardArtworkStageHeight)
                                         .frame(width: totalWidth, height: standardArtworkStageHeight)
+                                    // Nudge the control panel slightly below the cover dissolve.
+                                    Spacer(minLength: 14)
                                     lowerDeck(safeAreaBottom: safeBottom)
                                 }
                                 // Fill the first screen so Spacer can drop the control panel down.
@@ -185,6 +194,11 @@ struct PlayerScreenV2: View {
                             }
                             .scrollIndicators(.hidden)
                             .accessibilityLabel("Плеер и дополнительные действия")
+
+                            playerTopNativeBlur(height: topInset + 18)
+                                .frame(width: totalWidth, height: topInset + 18)
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
 
                             topHeader
                                 .padding(.top, topInset)
@@ -857,7 +871,7 @@ struct PlayerScreenV2: View {
 
     private func lowerDeck(safeAreaBottom: CGFloat) -> some View {
         VStack(spacing: 0) {
-            // Full-bleed art already pins this cluster low on the first screen.
+            // Cover dissolve already pins this cluster low on the first screen.
             VStack(spacing: 8) {
                 metadataRow
                 PlayerTimelineSection(player: player) { centerStatusLabel }
@@ -870,12 +884,10 @@ struct PlayerScreenV2: View {
             .padding(.top, 0)
             .padding(.bottom, 4)
 
-            trackWaveButton
-                .padding(.horizontal, 28)
-                .padding(.top, 6)
             if let error = YandexMusicService.shared.waveError {
                 Text(error).font(SN.text(.caption)).foregroundStyle(SN.inkMuted)
                     .padding(.horizontal, 28)
+                    .padding(.top, 6)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -885,19 +897,34 @@ struct PlayerScreenV2: View {
                     .foregroundStyle(SN.ink)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 28)
+                    .padding(.top, 4)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Label("Действия ниже", systemImage: "chevron.down")
-                .font(SN.text(.caption, .medium))
-                .foregroundStyle(SN.inkMuted)
-                .padding(.top, 8)
-            secondaryPlayerActions
-                .padding(.horizontal, 28)
-                .padding(.top, 6)
-                .padding(.bottom, max(safeAreaBottom, 16))
+            Color.clear
+                .frame(height: max(safeAreaBottom, 16))
+                .accessibilityHidden(true)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// Soft native material under the Dynamic Island / status bar — no custom paint.
+    private func playerTopNativeBlur(height: CGFloat) -> some View {
+        Rectangle()
+            .fill(.ultraThinMaterial)
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: .black, location: 0.00),
+                        .init(color: .black.opacity(0.72), location: 0.42),
+                        .init(color: .black.opacity(0.22), location: 0.78),
+                        .init(color: .clear, location: 1.00)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .frame(height: height)
     }
 
     /// Soft palette bloom under the dissolving cover — gives the control deck its color.
@@ -920,7 +947,7 @@ struct PlayerScreenV2: View {
         .blendMode(.plusLighter)
     }
 
-    /// Apple Music first-screen footer: lyrics · AirPlay · queue.
+    /// First-screen footer: lyrics · AirPlay · queue · sleep · EQ.
     private var primaryUtilityRow: some View {
         HStack(spacing: 0) {
             Button {
@@ -951,114 +978,55 @@ struct PlayerScreenV2: View {
             .buttonStyle(TactileButtonStyle(scale: 0.92))
             .frame(maxWidth: .infinity)
             .accessibilityLabel("Очередь")
-        }
-    }
 
-    private var trackWaveButton: some View {
-        let catalogTrack = track.flatMap { YandexMusicService.ymId(fromFileName: $0.fileName) } != nil
-        let station = YandexMusicService.shared.activeStationId
-        let isTrackRadio = station?.hasPrefix("track:") == true
-        // Only a palette extracted from this track's actual cover may tint the button.
-        let coverColors = resolvedArtworkPaletteTrackID == track?.id ? artworkPaletteColors : []
-        let glassTint = coverColors.first?.opacity(0.12) ?? Color.clear
-        return Button(action: startTrackWave) {
-            HStack(spacing: 14) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(waveLoading ? "Настраиваем волну…" : "Моя волна по текущему треку")
-                        .font(SN.text(.headline, .bold))
-                        .fixedSize(horizontal: false, vertical: true)
-                    if !catalogTrack {
-                        Text("Недоступна для этого трека")
-                            .font(SN.text(.caption, .medium))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                if waveLoading {
-                    ProgressView().tint(SN.ink)
-                } else {
-                    Image(systemName: isTrackRadio ? "checkmark" : "arrow.right")
-                        .accessibilityHidden(true)
-                }
-            }
-            .foregroundStyle(SN.ink)
-            .padding(14)
-            .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
-            .glassEffect(.regular.tint(glassTint).interactive(), in: .rect(cornerRadius: SN.radius))
-            .sonivoMetal(corner: SN.radius, emphasis: 0.60, animated: player.isPlaying)
-            .contentShape(RoundedRectangle(cornerRadius: SN.radius, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .disabled(!catalogTrack || waveLoading)
-        .opacity(catalogTrack ? 1 : 0.55)
-        .accessibilityLabel("Моя волна по текущему треку")
-        .accessibilityValue(waveLoading ? "Загрузка рекомендаций" : (isTrackRadio ? "Волна по треку активна" : "Не запущена"))
-        .accessibilityHint("Заменяет следующие треки волной по текущей песне, не прерывая её")
-    }
-
-    private var secondaryPlayerActions: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Дополнительно")
-                .font(SN.text(.caption, .semibold))
-                .foregroundStyle(SN.inkMuted)
-            // First-screen Apple Music utilities live in primaryUtilityRow.
-            // Keep Sonivo-only extras (sleep / EQ) below the track-wave button.
-            HStack(spacing: 0) {
-                sleepTimerBottomButton
-                    .frame(maxWidth: .infinity)
-
-                Button { openModal(.equalizer) } label: {
-                    SonivoEqualizerGlyph()
-                        .foregroundStyle(player.eqEnabled ? SN.accent : SN.inkMuted)
-                        .frame(width: SN.tapTarget, height: SN.tapTarget)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .glassCircle()
-                .accessibilityLabel("Эквалайзер")
-                .accessibilityValue(player.eqEnabled ? "Включён" : "Выключен")
+            sleepTimerUtilityButton
                 .frame(maxWidth: .infinity)
+
+            Button { openModal(.equalizer) } label: {
+                SonivoEqualizerGlyph()
+                    .foregroundStyle(player.eqEnabled ? SN.accent : SN.ink.opacity(0.88))
+                    .frame(width: tapSide, height: tapSide)
+                    .contentShape(Rectangle())
             }
-            .padding(.horizontal, 4)
+            .buttonStyle(TactileButtonStyle(scale: 0.92))
+            .frame(maxWidth: .infinity)
+            .accessibilityLabel("Эквалайзер")
+            .accessibilityValue(player.eqEnabled ? "Включён" : "Выключен")
         }
-        .accessibilityElement(children: .contain)
     }
 
-    private var sleepTimerBottomButton: some View {
+    private var sleepTimerUtilityButton: some View {
         Button {
             Haptics.tap(.light)
             openModal(.sleepTimer)
         } label: {
             if let timerText = player.sleepTimerFormatted {
-                HStack(spacing: 5) {
+                VStack(spacing: 1) {
                     Image(systemName: "moon.zzz.fill")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: 16, weight: .semibold))
                     Text(timerText)
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
                 }
                 .foregroundStyle(Color.orange)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .background(
-                    Capsule()
-                        .fill(Color.orange.opacity(0.18))
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(Color.orange.opacity(0.50), lineWidth: 1)
-                        )
-                        .shadow(color: Color.orange.opacity(0.28), radius: 8, y: 0)
-                )
+                .frame(width: tapSide, height: tapSide)
+                .contentShape(Rectangle())
             } else {
                 Image(systemName: "moon.zzz")
-                    .font(.system(size: 19, weight: .semibold))
-                    .foregroundStyle(SN.inkMuted)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(SN.ink.opacity(0.88))
                     .frame(width: tapSide, height: tapSide)
-                    .glassCircle()
+                    .contentShape(Rectangle())
             }
         }
         .buttonStyle(TactileButtonStyle(scale: 0.92))
         .accessibilityLabel((player.sleepTimerRemaining ?? 0) > 0 ? "Таймер сна активен: \(player.sleepTimerFormatted ?? "")" : "Таймер сна")
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: (player.sleepTimerRemaining ?? 0) > 0)
+    }
+
+    private var trackWaveMenuAvailability: (catalog: Bool, active: Bool) {
+        let catalog = track.flatMap { YandexMusicService.ymId(fromFileName: $0.fileName) } != nil
+        let active = YandexMusicService.shared.activeStationId?.hasPrefix("track:") == true
+        return (catalog, active)
     }
 
     private var metadataRow: some View {
@@ -1268,6 +1236,21 @@ struct PlayerScreenV2: View {
             }
 
             Section {
+                let waveAvailability = trackWaveMenuAvailability
+                Button {
+                    startTrackWave()
+                } label: {
+                    Label(
+                        waveLoading
+                            ? "Настраиваем волну…"
+                            : (waveAvailability.active
+                                ? "Моя волна по треку · активна"
+                                : "Моя волна по текущему треку"),
+                        systemImage: waveAvailability.active ? "checkmark.circle.fill" : "dot.radiowaves.left.and.right"
+                    )
+                }
+                .disabled(!waveAvailability.catalog || waveLoading)
+
                 Button {
                     startAIVibeWave()
                 } label: {
