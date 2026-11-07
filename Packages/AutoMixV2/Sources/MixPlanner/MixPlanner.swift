@@ -716,40 +716,58 @@ public enum MixPlanner {
 
 public enum BeatGridSynchronization {
     public struct TempoMatch: Sendable, Equatable { public let targetBPM: Float; public let rateA: Float; public let rateB: Float }
+    /// Pick a shared grid tempo. Rates are always `target / naturalFileBPM` so both
+    /// decks actually land on the same perceived BPM (field 1148 log: half-time used
+    /// `target/bBest` so A slowed to 57 while B raced at ~114 — fake "beatmatch").
     public static func tempoMatch(aBPM: Float, bBPM: Float, maximumRateChange: Float = 0.16) -> TempoMatch? {
         guard aBPM.isFinite, bBPM.isFinite, aBPM > 30, bBPM > 30 else { return nil }
 
-        // Find the best octave / multiple for B (1x, 0.5x half-time, 2x double-time)
-        var candidates: [Float] = [bBPM, bBPM * 2.0, bBPM * 0.5]
-        if bBPM > 175 { candidates.append(bBPM / 2.0) }
-        if bBPM < 75 { candidates.append(bBPM * 2.0) }
-
-        // Pick candidate closest to aBPM
-        let bBest = candidates.min(by: { abs($0 - aBPM) < abs($1 - aBPM) }) ?? bBPM
-
-        // 1. Direct match: only Track B adjusts if within 8%
-        let directRatio = aBPM / bBest
-        if abs(directRatio - 1.0) <= 0.08 {
-            return TempoMatch(targetBPM: aBPM, rateA: 1.0, rateB: directRatio)
+        func octaveCandidates(_ bpm: Float) -> [Float] {
+            var out: [Float] = [bpm]
+            let half = bpm * 0.5
+            let dbl = bpm * 2
+            // Half / double only as metrical interpretations — rates still vs file BPM.
+            if half > 40 { out.append(half) }
+            if dbl < 200 { out.append(dbl) }
+            return out
         }
 
-        // 2. Mutual match: A and B meet at target tempo (geometric mean)
-        // e.g. 115 vs 128 -> target 121.3 BPM. rateA = 0.948 (-5.2%), rateB = 1.055 (+5.5%).
-        let targetBPM = sqrt(aBPM * bBest)
-        let rateA = targetBPM / aBPM
-        let rateB = targetBPM / bBest
-
-        let maxShift = max(abs(rateA - 1.0), abs(rateB - 1.0))
-        if maxShift <= maximumRateChange {
-            return TempoMatch(targetBPM: targetBPM, rateA: rateA, rateB: rateB)
+        struct Cand {
+            let target: Float
+            let rateA: Float
+            let rateB: Float
+            var cost: Float { max(abs(rateA - 1), abs(rateB - 1)) }
         }
 
-        // 3. Direct shift up to 16% on Track B alone if Track A is at natural tempo
-        if abs(directRatio - 1.0) <= 0.16 {
-            return TempoMatch(targetBPM: aBPM, rateA: 1.0, rateB: directRatio)
+        let slack = maximumRateChange + 0.005
+        var cands: [Cand] = []
+        for aEff in octaveCandidates(aBPM) {
+            for bEff in octaveCandidates(bBPM) {
+                let target = sqrt(aEff * bEff)
+                let rateA = target / aBPM
+                let rateB = target / bBPM
+                // Reject chipmunk / sludge — wide gaps return nil so Echo Freeze
+                // can run without a fake common grid (66 vs 99 used to meet at 57).
+                guard abs(rateA - 1) <= slack, abs(rateB - 1) <= slack else { continue }
+                cands.append(Cand(target: target, rateA: rateA, rateB: rateB))
+            }
         }
 
-        return nil
+        // A locked: only B shifts toward A.
+        let directB = aBPM / bBPM
+        if abs(directB - 1) <= slack {
+            cands.append(Cand(target: aBPM, rateA: 1, rateB: directB))
+        }
+        // B locked: only A shifts toward B.
+        let directA = bBPM / aBPM
+        if abs(directA - 1) <= slack {
+            cands.append(Cand(target: bBPM, rateA: directA, rateB: 1))
+        }
+
+        guard let best = cands.min(by: { $0.cost < $1.cost }), best.cost <= slack else {
+            return nil
+        }
+        return TempoMatch(targetBPM: best.target, rateA: best.rateA, rateB: best.rateB)
     }
     public static func duration(bars: Double, bpm: Float) -> Double { bpm > 0 ? bars * 240 / Double(bpm) : 0 }
     public static func outgoingCue(profile: TrackProfile, duration: Double) -> Double {
