@@ -324,6 +324,7 @@ final class AutoMixV2AnalysisRuntime {
         guard key != observedPair else { return }
 
         let request = UUID()
+        let diagnosticID = String(request.uuidString.prefix(8))
         analysisGeneration = request
         observedPair = key
         plannedPair = ""
@@ -343,8 +344,13 @@ final class AutoMixV2AnalysisRuntime {
         analysisTask = Task { @MainActor [weak self] in
             guard let self else { return }
             pipelineStatus = allowDownload ? "Анализ / подготовка BPM пары" : "Анализ текущего трека"
-            if allowDownload, HTDemucsModelStore.shared.installedPackageURL() == nil {
+            let modelInstalled = HTDemucsModelStore.shared.installedPackageURL() != nil
+            AutoMixSessionLog.shared.event(
+                "demucs.pair id=\(diagnosticID) A=\(String(current.id.uuidString.prefix(6))) B=\(next.map { String($0.id.uuidString.prefix(6)) } ?? "-") modelInstalled=\(modelInstalled ? 1 : 0) downloadAllowed=\(allowDownload ? 1 : 0)"
+            )
+            if allowDownload, !modelInstalled {
                 stemStatus = "HTDemucs · модель 0%"
+                AutoMixSessionLog.shared.event("demucs.download.start id=\(diagnosticID)")
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     do {
@@ -356,7 +362,11 @@ final class AutoMixV2AnalysisRuntime {
                                 }
                             }
                         }
+                        AutoMixSessionLog.shared.event("demucs.download.ready id=\(diagnosticID)")
                     } catch {
+                        AutoMixSessionLog.shared.event(
+                            "demucs.download.failed id=\(diagnosticID) reason=\(HTDemucsMashupBake.diagnosticError(error))"
+                        )
                         if self.stemStatus?.hasPrefix("HTDemucs · модель") == true {
                             let text = (error as? HTDemucsModelError)?.description ?? "нет сети, повторю"
                             SonivoDiagnostics.log("[HTDemucs] \(text)", tag: "AUDIO")
@@ -379,6 +389,7 @@ final class AutoMixV2AnalysisRuntime {
                 currentProfile = a
                 guard let next, let nextID else {
                     pipelineStatus = "Следующего трека нет"
+                    AutoMixSessionLog.shared.event("demucs.prewarm.skipped id=\(diagnosticID) reason=no-next-track")
                     return
                 }
                 pipelineStatus = "Анализ следующего трека"
@@ -419,6 +430,7 @@ final class AutoMixV2AnalysisRuntime {
                         plan.type.rawValue, plan.reason
                     )
                 )
+                AutoMixSessionLog.shared.event("demucs.plan id=\(diagnosticID) type=\(plan.type.rawValue)")
                 if plan.type != .none && plan.type != .crossfade {
                     let outFile = currentFile
                     let inFile = nextFile
@@ -442,7 +454,12 @@ final class AutoMixV2AnalysisRuntime {
                         await HTDemucsMashupBake.prewarm(
                             outgoingFile: outFile, incomingFile: inFile,
                             incomingWindowStart: incomingWindow.start,
-                            incomingWindowSeconds: incomingWindow.duration
+                            incomingWindowSeconds: incomingWindow.duration,
+                            onDiagnostic: { message in
+                                Task { @MainActor in
+                                    AutoMixSessionLog.shared.event("demucs.\(message) id=\(diagnosticID)")
+                                }
+                            }
                         ) { message in
                             Task { @MainActor in
                                 guard self?.analysisGeneration == request, self?.observedPair == pairToken else { return }
@@ -459,6 +476,10 @@ final class AutoMixV2AnalysisRuntime {
                             }
                         }
                     }
+                } else {
+                    AutoMixSessionLog.shared.event(
+                        "demucs.prewarm.skipped id=\(diagnosticID) reason=plan-\(plan.type.rawValue)"
+                    )
                 }
             } catch {
                 guard analysisGeneration == request, observedPair == key, !Task.isCancelled,
@@ -466,6 +487,9 @@ final class AutoMixV2AnalysisRuntime {
                 transitionPlan = nil
                 plannedPair = ""
                 lastError = String(describing: error)
+                AutoMixSessionLog.shared.event(
+                    "demucs.prewarm.skipped id=\(diagnosticID) reason=analysis-failed error=\(HTDemucsMashupBake.diagnosticError(error))"
+                )
                 // Profiles may still be partially filled; live mashup falls back to heuristics.
                 pipelineStatus = "Эвристика mashup (анализ недоступен)"
             }

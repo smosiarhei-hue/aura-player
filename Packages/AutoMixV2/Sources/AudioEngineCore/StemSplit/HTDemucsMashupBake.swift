@@ -7,6 +7,26 @@ import Foundation
 public enum HTDemucsMashupBake {
     public static let prewarmSeconds: Double = 36
 
+    /// Safe, path-free error categories for the user-exported session log.
+    public static func diagnosticError(_ error: Error) -> String {
+        if error is CancellationError { return "cancelled" }
+        if let model = error as? HTDemucsModelError {
+            switch model.description {
+            case "мало места на iPhone": return "insufficient-storage"
+            case "битая ссылка модели": return "invalid-model-url"
+            case "модель скачалась не целиком": return "incomplete-download"
+            case "модель не открылась": return "model-load-refused"
+            case "окно перехода вне кэша": return "window-outside-cache"
+            default:
+                return model.description.hasPrefix("файл модели ") ? "model-file-size-mismatch" : "model-error"
+            }
+        }
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain { return "network-\(ns.code)" }
+        if ns.domain == NSCocoaErrorDomain { return "cocoa-\(ns.code)" }
+        return "other-error"
+    }
+
     /// Classify a nil result without exposing paths or model data in field logs.
     /// This is a snapshot: preparation can change between the attempt and logging.
     public static func unavailableReason() async -> String {
@@ -24,27 +44,47 @@ public enum HTDemucsMashupBake {
         incomingFile: URL,
         incomingWindowStart: Double = 0,
         incomingWindowSeconds: Double = prewarmSeconds,
+        onDiagnostic: @escaping @Sendable (String) -> Void = { _ in },
         onStatus: @escaping @Sendable (String) -> Void
     ) async {
-        if await HTDemucsRuntime.shared.loadWasRefused() { return }
+        if await HTDemucsRuntime.shared.loadWasRefused() {
+            onDiagnostic("prewarm.skipped reason=model-load-refused")
+            return
+        }
+        onDiagnostic("prewarm.start")
         do {
             onStatus("HTDemucs · модель 0%")
             _ = try await HTDemucsModelStore.shared.prepare { fraction in
                 onStatus("HTDemucs · модель \(Int(fraction * 100))%")
             }
+            try Task.checkCancellation()
+            onDiagnostic("prewarm.package-ready")
             onStatus("HTDemucs · компилирую")
+            onDiagnostic("prewarm.model-load-start")
             try await HTDemucsRuntime.shared.prewarm(
                 outgoingFile: outgoingFile,
                 incomingFile: incomingFile,
                 seconds: prewarmSeconds,
                 incomingStart: incomingWindowStart,
                 incomingSeconds: incomingWindowSeconds,
-                onStatus: onStatus
+                onStatus: { status in
+                    switch status {
+                    case "HTDemucs · аутро": onDiagnostic("prewarm.outgoing-window")
+                    case "HTDemucs · интро": onDiagnostic("prewarm.incoming-window")
+                    default: break
+                    }
+                    onStatus(status)
+                }
             )
+            try Task.checkCancellation()
+            onDiagnostic("prewarm.ready")
             onStatus("HTDemucs · готово")
         } catch is CancellationError {
+            onDiagnostic("prewarm.cancelled")
             return
         } catch {
+            let refused = await HTDemucsRuntime.shared.loadWasRefused()
+            onDiagnostic("prewarm.failed reason=\(diagnosticError(error)) loadRefused=\(refused ? 1 : 0)")
             let text = (error as? HTDemucsModelError)?.description ?? error.localizedDescription
             // The player badge must not keep a Core ML path. The host logs this and clears it.
             onStatus("HTDemucs · скрыть · \(text)")
