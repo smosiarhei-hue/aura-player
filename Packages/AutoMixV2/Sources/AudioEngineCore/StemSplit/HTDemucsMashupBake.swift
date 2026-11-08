@@ -113,6 +113,16 @@ public actor HTDemucsRuntime {
         loopSec: Double,
         echoDelaySec: Double
     ) async throws -> (outgoing: URL, incoming: URL)? {
+        // Prewarm and materialization share the actor, but window() suspends
+        // during inference. A busy prewarm is not a failure: allow it a bounded,
+        // cancellation-aware runway to finish before falling back. The caller
+        // starts this job ahead of the cue and retains its own live fallback.
+        for _ in 0..<100 {
+            guard jobs > 0 else { break }
+            try Task.checkCancellation()
+            try await Task.sleep(nanoseconds: 200_000_000)
+        }
+        try Task.checkCancellation()
         if jobs > 0 {
             return try cachedPair(
                 duet: duet,
