@@ -45,9 +45,9 @@ public enum MixPlanner {
 
         // Подбор темпа через динамический питч-фейдер
         guard let tempo = BeatGridSynchronization.tempoMatch(aBPM: a.bpm, bBPM: b.bpm) else {
-            if bpmDiffPct > 0.15 || !harmonic.isHarmonicallyViable {
-                return planEchoFreeze(from: a, to: b, tempo: nil, settings: settings, harmonic: harmonic)
-            }
+            // A long natural-rate mashup here cannot hold a common beat. Do not
+            // apply rhythmic FX or stem separation to an unalignable pair.
+            // PlayerCore routes this plan to the neutral, short safe fade.
             return crossfade(a, b, settings, "Fallback: темпы нельзя безопасно совместить")
         }
 
@@ -760,7 +760,7 @@ public enum BeatGridSynchronization {
             cands.append(Cand(target: bBPM, rateA: directA, rateB: 1))
         }
 
-        // Wide gaps (66↔99, 91↔120) return nil → Echo Freeze at natural rates.
+        // Wide gaps (66↔99, 91↔120) return nil; AutoMix uses a safe fade.
         guard let best = cands.min(by: { $0.cost < $1.cost }) else { return nil }
         guard abs(best.rateA - 1) <= slack, abs(best.rateB - 1) <= slack else { return nil }
         return TempoMatch(targetBPM: best.target, rateA: best.rateA, rateB: best.rateB)

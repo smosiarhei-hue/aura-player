@@ -175,12 +175,15 @@ final class AutoMixV2AnalysisRuntime {
             published = true
             pipelineStatus = plan.type == .none
                 ? "План запретил переход; трек доиграет до конца"
-                : "План перехода готов · \(plan.archetype.rawValue) · A@\(String(format: "%.0f", a.mixOutSec))s"
+                : (plan.type == .crossfade && planMode == .automix
+                   ? "Безопасный кроссфейд · \(plan.reason)"
+                   : "План перехода готов · \(plan.archetype.rawValue) · A@\(String(format: "%.0f", a.mixOutSec))s")
             let ok = a.bpm > 30 && b.bpm > 30
             AutoMixSessionLog.shared.event(
                 String(
-                    format: "analysis.bake-local bpmA=%.0f bpmB=%.0f rateA=%.3f rateB=%.3f plan=%@ ok=%d",
-                    a.bpm, b.bpm, plan.rateA, plan.rateB, plan.archetype.rawValue, ok ? 1 : 0
+                    format: "analysis.bake-local bpmA=%.0f bpmB=%.0f rateA=%.3f rateB=%.3f plan=%@ type=%@ reason=%@ ok=%d",
+                    a.bpm, b.bpm, plan.rateA, plan.rateB, plan.archetype.rawValue,
+                    plan.type.rawValue, plan.reason, ok ? 1 : 0
                 )
             )
             // Profiles with BPM still unlock beatmatch even when MixPlanner declines.
@@ -406,11 +409,14 @@ final class AutoMixV2AnalysisRuntime {
                 plannedPair = pairKey(currentID, nextID)
                 pipelineStatus = plan.type == .none
                     ? "План запретил переход; трек доиграет до конца"
-                    : "План перехода готов · \(plan.archetype.rawValue) · A@\(String(format: "%.0f", a.mixOutSec))s"
+                    : (plan.type == .crossfade && planMode == .automix
+                       ? "Безопасный кроссфейд · \(plan.reason)"
+                       : "План перехода готов · \(plan.archetype.rawValue) · A@\(String(format: "%.0f", a.mixOutSec))s")
                 AutoMixSessionLog.shared.event(
                     String(
-                        format: "analysis.pair bpmA=%.0f bpmB=%.0f rateA=%.3f rateB=%.3f plan=%@",
-                        a.bpm, b.bpm, plan.rateA, plan.rateB, plan.archetype.rawValue
+                        format: "analysis.pair bpmA=%.0f bpmB=%.0f rateA=%.3f rateB=%.3f plan=%@ type=%@ reason=%@",
+                        a.bpm, b.bpm, plan.rateA, plan.rateB, plan.archetype.rawValue,
+                        plan.type.rawValue, plan.reason
                     )
                 )
                 if plan.type != .none && plan.type != .crossfade {
