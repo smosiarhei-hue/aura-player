@@ -3028,7 +3028,14 @@ final class PlayerCore {
         let stemNode = idlePlayer
         // Keep the audible stem level — snapping 0.77→1.0 then dry from 0 felt like
         // a volume stutter at LAND (field 1137).
-        let stemFrom = min(1, max(0.35, stemNode.volume))
+        let stemFrom = min(1, max(0, stemNode.volume))
+        // The dry file is the same track as B; preserve B's current tempo and
+        // pitch during the replacement, then release them after the overlap.
+        let stemPitch = idleTimePitch
+        let dryPitch = activeTimePitch
+        dryPitch.rate = stemPitch.bypass ? 1 : stemPitch.rate
+        dryPitch.pitch = stemPitch.bypass ? 0 : stemPitch.pitch
+        dryPitch.bypass = stemPitch.bypass
 
         localSegmentTokens.removeValue(forKey: ObjectIdentifier(dryNode))
         // Keep stemNode token until after dry is audible.
@@ -3050,13 +3057,6 @@ final class PlayerCore {
         // stem before the glide's first tick and left ~1s of volA=0/volB=0 stutter.
         activePlayer = dryNode == playerA ? playerA : playerB
         startLandGlide(stem: stemNode, dry: dryNode, overlap: glide, stemFrom: stemFrom)
-        timePitchA.rate = 1
-        timePitchA.pitch = 0
-        timePitchA.bypass = true
-        timePitchB.rate = 1
-        timePitchB.pitch = 0
-        timePitchB.bypass = true
-
         isPlaying = true
         anchorDate = Date()
         anchorOffset = pos
@@ -3080,9 +3080,7 @@ final class PlayerCore {
     }
 
     /// Short overlap so the dry song replaces the baked vocal in place.
-    /// Field 1148/1153: stem and dry are the same musical content at LAND —
-    /// a long dual fade (0.48–0.72s) logged as volA+volB ≫ 1. Keep dry at the
-    /// live stem level and kill the stem in ~150ms so LAND is a cut, not a bump.
+    /// A short complementary crossfade avoids summing two full-level copies.
     private func startLandGlide(
         stem: AVAudioPlayerNode,
         dry: AVAudioPlayerNode,
@@ -3093,23 +3091,21 @@ final class PlayerCore {
         let token = UUID()
         landOverlapToken = token
         // Same-content replace — ignore long mood glides; they only fatten LAND.
-        let overlap = min(0.18, max(0.10, requested * 0.28))
+        let overlap = min(0.18, max(0.10, requested))
         let started = Date()
         // Player nodes are not Sendable. Remember which deck is the bake and
         // touch both only on the main actor, or Swift 6 rejects the timer hop.
         guard dry !== stem else { return }
         let stemIsA = stem === playerA
-        let from = min(1, max(0.35, stemFrom))
-        // Dry carries the song immediately; stem only covers the first buffers.
-        dry.volume = from
-        stem.volume = min(0.22, from * 0.22)
-        let stemStart = stem.volume
+        let from = min(1, max(0, stemFrom))
+        dry.volume = 0
+        stem.volume = from
         let timer = Timer(timeInterval: overlap / 16.0, repeats: true) { [weak self] timer in
             let elapsed = -started.timeIntervalSinceNow
             let u = min(1, max(0, elapsed / overlap))
             let ease = u * u * (3 - 2 * u)
-            let stemGain = stemStart * Float(1 - ease)
-            let dryGain = from + (1 - from) * Float(ease)
+            let stemGain = from * Float(1 - ease)
+            let dryGain = Float(ease)
             let done = u >= 1
             if done { timer.invalidate() }
             Task { @MainActor [weak self] in
@@ -5400,17 +5396,18 @@ final class PlayerCore {
             // Hold B stem (idle) at unity while we prepare dry B on active.
             // Do NOT delete bake temps until after dry B is playing — deleting under
             // a live AVAudioFile read can glitch/cut the LAND.
-            idlePlayer.volume = 1
             activeStreamingPlayer.pause()
             idleStreamingPlayer.pause()
             activeStreamingPlayer.volume = 0
             idleStreamingPlayer.volume = 0
-            activeTimePitch.rate = 1
-            activeTimePitch.pitch = 0
-            activeTimePitch.bypass = true
-            idleTimePitch.rate = 1
-            idleTimePitch.pitch = 0
-            idleTimePitch.bypass = true
+            if !usedBake {
+                activeTimePitch.rate = 1
+                activeTimePitch.pitch = 0
+                activeTimePitch.bypass = true
+                idleTimePitch.rate = 1
+                idleTimePitch.pitch = 0
+                idleTimePitch.bypass = true
+            }
             incomingTrack = nil
             incomingLaneReady = false
             incomingAudioFile = nil
@@ -5447,6 +5444,7 @@ final class PlayerCore {
                     try landAutomixOntoDryB(track: nextTrack, fileURL: realURL, at: safePos, glide: glideSec)
                     handedOff = true
                     syncLocal = 1
+                    releaseActiveTimePitchToUnity()
                 } catch {
                     SonivoDiagnostics.log("[AutoMix] sync LAND handoff failed: \(error)", tag: "AUTOMIX")
                     localSegmentTokens.removeAll()
@@ -5715,11 +5713,14 @@ final class PlayerCore {
         rateReleaseTimer?.invalidate()
         let node = activeTimePitch
         let from = node.rate
-        guard abs(from - 1.0) > 0.0005 else {
+        let fromPitch = node.pitch
+        guard abs(from - 1.0) > 0.0005 || abs(fromPitch) > 0.5 else {
             node.rate = 1.0
+            node.pitch = 0
             node.bypass = true
             return
         }
+        node.bypass = false
         let releaseStart = Date()
         let duration: TimeInterval = 4.0
         let timer = Timer(timeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
@@ -5729,10 +5730,12 @@ final class PlayerCore {
                 let eased = Float(progress * progress * (3 - 2 * progress))
                 let value = from + (1.0 - from) * eased
                 node.rate = value
+                node.pitch = fromPitch * (1 - eased)
                 if progress >= 1 {
                     self.rateReleaseTimer?.invalidate()
                     self.rateReleaseTimer = nil
                     node.rate = 1.0
+                    node.pitch = 0
                     node.bypass = true
                 }
             }

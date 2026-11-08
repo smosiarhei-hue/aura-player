@@ -424,6 +424,12 @@ public actor HTDemucsRuntime {
                 left: &left, right: &right, rate: cached.rate, delaySec: echoDelaySec, untilFrame: until
             )
         }
+        if stem == .instrumental {
+            HTDemucsWindowMixer.fadeFromDry(
+                left: &left, right: &right, dryL: slice.dryL, dryR: slice.dryR,
+                fadeFrames: Int(max(0.4, min(2.5, fadeSec)) * cached.rate)
+            )
+        }
         return try Self.writeCAF(left: left, right: right, rate: cached.rate)
     }
 

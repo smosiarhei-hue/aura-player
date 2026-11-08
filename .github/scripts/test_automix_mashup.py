@@ -411,7 +411,7 @@ class AutoMixMashupTests(unittest.TestCase):
         ).read_text()
         # Field 1153: stem path must reuse Apple Automix volumes (no volA=0.64 bed hold).
         self.assertIn("stemNeuralVolumes", style_vol)
-        self.assertIn("return volumes(progress: progress)", style_vol)
+        self.assertIn("let base = volumes(progress: progress)", style_vol)
         self.assertIn("karaoke plateau", style_vol)
 
     def test_session_log_does_not_reenter_playercore_during_shared_init(self):
@@ -459,12 +459,12 @@ class AutoMixMashupTests(unittest.TestCase):
         # Swift 6: bake Task.detached must snapshot blend before concurrent grace read.
         self.assertIn("let bakeBlend = blend", player)
         self.assertIn("blendSec: bakeBlend", player)
-        # LAND: match dry to stem level — equal-power from 0 bumped correlated decks.
-        self.assertIn("dry.volume = from", player)
+        # LAND: use complementary rather than equal-power gains for correlated audio.
         land_glide = player.split("private func startLandGlide(", 1)[1].split(
             "private var isMashupTransitionMode", 1
         )[0]
-        self.assertIn("from + (1 - from) * Float(ease)", land_glide)
+        self.assertIn("from * Float(1 - ease)", land_glide)
+        self.assertIn("let dryGain = Float(ease)", land_glide)
         self.assertNotIn("Float(sin(ease * Double.pi * 0.5))", land_glide)
         # Bake lead must not light Mixing chrome. Field: "Сведение" shimmered from
         # cue−22s (~32s) while audio was still A alone; isTransitionActive flips
@@ -572,8 +572,9 @@ class AutoMixMashupTests(unittest.TestCase):
         glide_fn = player.split("private func startLandGlide", 1)[1].split(
             "private var isMashupTransitionMode", 1
         )[0]
-        self.assertIn("requested * 0.28", glide_fn)
-        self.assertIn("stem.volume = min(0.22, from * 0.22)", glide_fn)
+        self.assertIn("min(0.18, max(0.10, requested))", glide_fn)
+        self.assertIn("stem.volume = from", glide_fn)
+        self.assertIn("dry.volume = 0", glide_fn)
         self.assertIn("Ease into stem decks", player)
         self.assertIn("mashupStemEntryDuration = fromStream ? 0.42 : (priorIn > 0.05 ? 0.55 : 0.32)", player)
         self.assertIn("stemFrom:", player)
@@ -586,7 +587,7 @@ class AutoMixMashupTests(unittest.TestCase):
         style_src = (
             ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupLiveStyle.swift"
         ).read_text()
-        self.assertIn("return volumes(progress: progress)", style_src)
+        self.assertIn("let base = volumes(progress: progress)", style_src)
         self.assertIn("snapLandToBarGrid", style_src)
         # Always rebuild tempoMatch when plan rates are flat but profiles have BPM.
         self.assertIn("always rebuild the mutual grid when possible", style_src)

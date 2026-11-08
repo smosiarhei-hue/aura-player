@@ -93,6 +93,15 @@ let identical = HTDemucsWindowMixer.render(
     amount: HTDemucsWindowMixer.automixIncomingVocalAmount,
     untilFrame: 900, fadeFrames: 200)
 precondition(identical.left.allSatisfy { close($0, 0.9) }, "B mix doubles correlated audio")
+var entryL = [Float](repeating: 0.2, count: 1000)
+var entryR = entryL
+HTDemucsWindowMixer.fadeFromDry(left: &entryL, right: &entryR,
+                               dryL: dryB, dryR: dryB, fadeFrames: 500)
+precondition(close(entryL[0], 0.6) && close(entryR[0], 0.6), "entry must start dry")
+precondition(close(entryL[499], 0.2) && close(entryL[500], 0.2), "entry must end at stem")
+for i in 1..<500 {
+    precondition(entryL[i] <= entryL[i-1] && entryL[i] >= 0.2, "entry gain jump")
+}
 var previous: Float = -1
 for i in 0...1000 {
     let gains = AutoMixSafeCrossfade.gains(progress: Double(i) / 1000)

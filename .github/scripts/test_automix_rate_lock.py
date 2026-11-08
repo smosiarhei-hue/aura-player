@@ -38,6 +38,19 @@ check(1, 1.05, expectNaturalAtLand: true)
 check(1, 0.95, expectNaturalAtLand: true)
 check(1.07, 1, expectNaturalAtLand: true)
 check(0.92, 1.08, expectNaturalAtLand: false)
+var entry = MashupLiveStyle.fallback
+entry.applyAutomixPlaybackCharacter()
+entry.targetBPM = 129
+entry.pitchCentsB = 100
+entry.moodLand = 0.78
+let bar = (240.0 / 129.0) / 12.0
+let first = entry.stemNeuralVolumes(progress: 0.03, blendSec: 12).incoming
+let middle = entry.stemNeuralVolumes(progress: bar / 2, blendSec: 12).incoming
+let full = entry.stemNeuralVolumes(progress: bar, blendSec: 12).incoming
+let bloom = entry.stemNeuralVolumes(progress: entry.automixLandProgress - 0.02, blendSec: 12).incoming
+precondition(first < middle && middle < full, "B bed should enter gradually")
+precondition(abs(full - entry.automixIncomingBedGain) < 0.001, "bed must reach target")
+precondition(bloom > full, "entry ramp must not cap LAND bloom")
 var duet = MashupLiveStyle.fallback
 duet.isDuet = true
 duet.isBeatmatched = true
@@ -66,6 +79,10 @@ precondition(abs(duetEnd.outgoing - 1) < 0.00001 && abs(duetEnd.incoming - 1) < 
         self.assertIn('activeMashupStyle.playbackRates(progress: p)', tick)
         self.assertIn('rate: beatRates.outgoing', tick)
         self.assertIn('rate: beatRates.incoming', tick)
+        land = player.split('private func landAutomixOntoDryB', 1)[1].split('private func renderedFileSeconds', 1)[0]
+        self.assertIn('dryPitch.pitch = stemPitch.bypass ? 0 : stemPitch.pitch', land)
+        release = player.split('private func releaseActiveTimePitchToUnity()', 1)[1].split('private func releaseActiveStreamRateToUnity()', 1)[0]
+        self.assertIn('node.pitch = fromPitch * (1 - eased)', release)
 
 if __name__ == '__main__':
     unittest.main()

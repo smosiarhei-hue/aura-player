@@ -296,8 +296,15 @@ public struct MashupLiveStyle: Sendable, Equatable {
     /// Apple Automix grammar: A leads, quiet B bed, bloom + hard LAND in the
     /// final ~18%. `blendSec` kept for call-site compatibility.
     public func stemNeuralVolumes(progress: Double, blendSec: Double) -> (outgoing: Float, incoming: Float) {
-        _ = blendSec
-        return volumes(progress: progress)
+        let base = volumes(progress: progress)
+        guard !isDuet, blendSec.isFinite, blendSec > 0 else { return base }
+        // Give the incoming bed about one bar to enter. The generic envelope
+        // reached it in <0.5s on short blends, producing an audible jump.
+        let bar = targetBPM > 30 ? 240.0 / Double(targetBPM) : 1.5
+        let ramp = min(automixLandProgress * 0.40, max(0.08, bar / blendSec))
+        guard progress < ramp else { return base }
+        let entry = Self.smoothstep(progress / max(0.001, ramp))
+        return (base.outgoing, min(base.incoming, automixIncomingBedGain * entry))
     }
 
     /// How loud B sits under A during ONE VOCAL Automix (before LAND bloom).

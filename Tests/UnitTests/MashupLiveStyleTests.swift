@@ -141,6 +141,27 @@ struct MashupLiveStyleTests {
         #expect(mid.outgoing > 0.75)
     }
 
+    @Test("Neural bed enters over a bar without suppressing the LAND bloom")
+    func neuralBedEntry() {
+        var style = MashupLiveStyle.fallback
+        style.applyAutomixPlaybackCharacter()
+        style.targetBPM = 129
+        style.pitchCentsB = 100
+        style.moodLand = 0.78
+        let duration = 12.0
+        let barFraction = (240.0 / 129.0) / duration
+        let early = style.stemNeuralVolumes(progress: 0.03, blendSec: duration)
+        let halfway = style.stemNeuralVolumes(progress: barFraction / 2, blendSec: duration)
+        let atBar = style.stemNeuralVolumes(progress: barFraction, blendSec: duration)
+        let bloom = style.stemNeuralVolumes(progress: style.automixLandProgress - 0.02, blendSec: duration)
+        #expect(early.incoming < halfway.incoming)
+        #expect(halfway.incoming < atBar.incoming)
+        #expect(abs(atBar.incoming - style.automixIncomingBedGain) < 0.001)
+        #expect(bloom.incoming > style.automixIncomingBedGain)
+        let beforeBar = style.stemNeuralVolumes(progress: barFraction - 0.00001, blendSec: duration)
+        #expect(abs(beforeBar.incoming - atBar.incoming) < 0.001)
+    }
+
     @Test("Duet plan keeps dual vocal volumes and DUET phase labels")
     func duetVolumesAndPhases() {
         let plan = TransitionPlan(

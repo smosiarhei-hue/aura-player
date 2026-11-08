@@ -44,6 +44,22 @@ public enum HTDemucsWindowMixer {
         return (start, min(44, needed + 4))
     }
 
+    /// Start the outgoing bake as the original recording and gradually remove
+    /// its vocal. A convex blend avoids a correlated dry/stem gain boost.
+    public static func fadeFromDry(
+        left: inout [Float], right: inout [Float],
+        dryL: [Float], dryR: [Float], fadeFrames: Int
+    ) {
+        let count = min(left.count, right.count, dryL.count, dryR.count, max(0, fadeFrames))
+        guard count > 1 else { return }
+        for i in 0..<count {
+            let t = Float(i) / Float(count - 1)
+            let wet = t * t * (3 - 2 * t)
+            left[i] = dryL[i] * (1 - wet) + left[i] * wet
+            right[i] = dryR[i] * (1 - wet) + right[i] * wet
+        }
+    }
+
     public static func render(
         dryL: [Float],
         dryR: [Float],
