@@ -131,6 +131,8 @@ public enum MashupBlendScheduler {
     /// After mood retargeting, recover a nearby detected downbeat on both
     /// tracks without exceeding the intro, outro or remaining-audio bounds.
     /// Returns nil instead of inventing a grid or moving either cue too far.
+    /// A tail-aligned cue can search backwards up to one bar: it otherwise has
+    /// almost no legal snap range because the blend already ends at file end.
     public static func retargetToDownbeats(
         outgoingCue: Double, incomingCue: Double,
         outgoingDuration: Double, incomingDuration: Double,
@@ -151,13 +153,15 @@ public enum MashupBlendScheduler {
         // Never push B forward into a possible vocal onset merely to hit grid.
         let inMax = min(incomingCue + 0.02, min(18, max(8, incomingDuration * 0.18)))
         guard outMin <= outMax, inMin <= inMax else { return nil }
-        func nearby(_ beats: [Double], cue: Double, lower: Double, upper: Double, bpm: Double) -> Double? {
-            let maxShift = min(0.75, 60 / bpm)
+        func nearby(_ beats: [Double], cue: Double, lower: Double, upper: Double, maxShift: Double) -> Double? {
             return beats.filter { $0.isFinite && $0 >= lower && $0 <= upper && abs($0 - cue) <= maxShift }
                 .min { abs($0 - cue) < abs($1 - cue) }
         }
-        guard let a = nearby(outgoingDownbeats, cue: outgoingCue, lower: outMin, upper: outMax, bpm: outgoingBPM),
-              let b = nearby(incomingDownbeats, cue: incomingCue, lower: inMin, upper: inMax, bpm: incomingBPM) else { return nil }
+        let isTailAligned = abs(outgoingCue - outMax) <= 0.02
+        let outgoingShift = isTailAligned ? min(8, 240 / outgoingBPM) : min(0.75, 60 / outgoingBPM)
+        let outgoingUpper = isTailAligned ? min(outMax, outgoingCue) : outMax
+        guard let a = nearby(outgoingDownbeats, cue: outgoingCue, lower: outMin, upper: outgoingUpper, maxShift: outgoingShift),
+              let b = nearby(incomingDownbeats, cue: incomingCue, lower: inMin, upper: inMax, maxShift: min(0.75, 60 / incomingBPM)) else { return nil }
         return (a, b)
     }
 

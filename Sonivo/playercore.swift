@@ -4193,7 +4193,21 @@ final class PlayerCore {
                                 String(format: "cue.downbeats A=%.2f B=%.2f", cueA, cueB)
                             )
                         } else {
-                            AutoMixSessionLog.shared.event("cue.downbeats unavailable")
+                            func nearestOffset(_ beats: [Double], cue: Double) -> String {
+                                guard let beat = beats.filter({ $0.isFinite }).min(by: {
+                                    abs($0 - cue) < abs($1 - cue)
+                                }) else { return "-" }
+                                return String(format: "%.3f", beat - cue)
+                            }
+                            let outMin = max(total * MashupBlendScheduler.minimumPlayedFraction,
+                                             max(self.playbackProgress + 0.25, outP.mixOutSec))
+                            let outMax = total - blend * max(1, Double(style.rateA))
+                            AutoMixSessionLog.shared.event(
+                                String(format: "cue.downbeats unavailable cueA=%.3f cueB=%.3f blend=%.3f outMin=%.3f outMax=%.3f nearA=%@ nearB=%@",
+                                       cueA, cueB, blend, outMin, outMax,
+                                       nearestOffset(outP.downbeatsSec, cue: cueA),
+                                       nearestOffset(inP.downbeatsSec, cue: cueB))
+                            )
                         }
                     }
                     // Retargeting may invalidate the planner's earlier grid check.

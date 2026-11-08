@@ -90,6 +90,25 @@ struct MashupBlendSchedulerTests {
         #expect(abs(total - (cue + blend)) < 0.05)
     }
 
+    @Test("Tail-aligned blend can recover an earlier detected downbeat")
+    func tailAlignedGridRecovery() {
+        func snap(outgoing: [Double], incoming: [Double] = [8.8],
+                  notBefore: Double = 147.45, cue: Double = 191.9) -> (outgoing: Double, incoming: Double)? {
+            MashupBlendScheduler.retargetToDownbeats(
+                outgoingCue: cue, incomingCue: 8.8,
+                outgoingDuration: 198.3, incomingDuration: 125.3,
+                blend: 6.4, outgoingRate: 1, notBefore: notBefore,
+                outgoingBPM: 117.45, incomingBPM: 109.96,
+                outgoingDownbeats: outgoing, incomingDownbeats: incoming
+            )
+        }
+        #expect(snap(outgoing: [190.3])?.outgoing == 190.3)
+        #expect(snap(outgoing: [189.7]) == nil)
+        #expect(snap(outgoing: [190.3], notBefore: 190.4) == nil)
+        #expect(snap(outgoing: [190.3], incoming: [9.0]) == nil)
+        #expect(snap(outgoing: [190.3], cue: 189.3) == nil)
+    }
+
     @Test("Automix incoming cue stays in the intro")
     func clampIncomingCueToIntro() {
         let midBody = MashupBlendScheduler.clampAutomixIncomingCue(

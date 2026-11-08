@@ -30,6 +30,22 @@ precondition(cues(b: 3.9, beatsB: [3.9]) == nil, "must not bypass intro floor")
 precondition(cues(b: 9.8, beatsB: [10]) == nil, "must not snap forward into incoming vocal")
 precondition(cues(a: .nan) == nil, "nonfinite cue accepted")
 precondition(cues(beatsA: [.nan, .infinity]) == nil, "invalid grid accepted")
+func tail(outgoing: [Double], incoming: [Double] = [8.8],
+          notBefore: Double = 147.45, cue: Double = 191.9) -> (outgoing: Double, incoming: Double)? {
+    MashupBlendScheduler.retargetToDownbeats(
+        outgoingCue: cue, incomingCue: 8.8, outgoingDuration: 198.3, incomingDuration: 125.3,
+        blend: 6.4, outgoingRate: 1, notBefore: notBefore,
+        outgoingBPM: 117.45, incomingBPM: 109.96,
+        outgoingDownbeats: outgoing, incomingDownbeats: incoming)
+}
+// Build 1195: mood retarget moved 164.5 to 191.9, leaving no room
+// to snap forward. Recover a real earlier downbeat, not a synthetic grid.
+precondition(tail(outgoing: [190.3])?.outgoing == 190.3)
+precondition(tail(outgoing: [189.7]) == nil, "must not move more than one bar")
+precondition(tail(outgoing: [190.3], notBefore: 190.4) == nil, "must not move behind the playhead")
+precondition(tail(outgoing: [190.3], incoming: [9.0]) == nil, "must not move B into a later vocal")
+precondition(tail(outgoing: [190.3], cue: 190.0) != nil, "normal nearby snap should still work")
+precondition(tail(outgoing: [190.3], cue: 189.3) == nil, "non-tail cue must retain strict radius")
 '''
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp)
