@@ -15,7 +15,6 @@ const FRAME_H = 2822;
 const HOLE_X = 100;
 const HOLE_Y = 100;
 const HOLE_W = 1206;
-const HOLE_H = 2622;
 /** Logical CSS points for iPhone 17 Pro. */
 const SCREEN_PT_W = 402;
 const SCREEN_PT_H = 874;
