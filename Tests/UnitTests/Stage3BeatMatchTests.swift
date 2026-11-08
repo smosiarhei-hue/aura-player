@@ -79,25 +79,15 @@ struct Stage3BeatMatchTests {
         let low = MixPlanner.plan(from: profile("a", bpm: 120, key: "8A", confidence: 0.60, stability: 0.78),
                                   to: profile("b", bpm: 128, key: "8B", confidence: 0.60, stability: 0.78),
                                   aMeta: meta("a"), bMeta: meta("b"), settings: MixSettings())
-        #expect(low.type == .beatmatchedShort); #expect(low.bars == 4)
+        #expect(low.type == .crossfade)
     }
 
-    @Test("Phase error greater than 80ms falls back to crossfade")
-    func phaseErrorFallback() {
-        var b = profile("b", bpm: 128, key: "8B")
-        b = TrackProfile(trackID: b.trackID, durationSec: b.durationSec,
-                         sourceSampleRate: b.sourceSampleRate, sourceBitrateKbps: b.sourceBitrateKbps,
-                         bpm: b.bpm, beatsSec: b.beatsSec,
-                         downbeatsSec: Array(stride(from: 0.09, to: 240, by: 2)),
-                         phraseStartsSec: [], tempoStability: 1, camelotKey: b.camelotKey,
-                         integratedLUFS: b.integratedLUFS, loudnessCurveLUFS: [], energyCurve: [],
-                         hasFadeOut: false, endsInSilence: false, vocalPresence: [], segments: [],
-                         mixInSec: 0, mixOutSec: b.mixOutSec, mixable: true,
-                         confidence: b.confidence)
-        let plan = MixPlanner.plan(from: profile("a", bpm: 120, key: "8A"), to: b,
-                                   aMeta: meta("a"), bMeta: meta("b"), settings: MixSettings())
-        #expect(plan.type == .crossfade)
-        #expect(plan.reason.contains("80ms"))
+    @Test("Phase comparison preserves opposite signs")
+    func signedPhaseError() {
+        let error = BeatGridSynchronization.phaseErrorMilliseconds(
+            outgoingBeat: 0.1, incomingBeat: -0.1, rateA: 1, rateB: 1
+        )
+        #expect(abs(error - 200) < 0.001)
     }
 
     @Test("Low confidence uses crossfade")

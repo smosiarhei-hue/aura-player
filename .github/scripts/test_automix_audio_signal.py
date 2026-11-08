@@ -41,6 +41,19 @@ let mixed = HTDemucsWindowMixer.render(dryL: signal, dryR: signal, stemL: signal
                                         amount: 1, untilFrame: 900, fadeFrames: 200)
 precondition(mixed.left.allSatisfy { close($0, 0.9) }, "correlated fade gain bump")
 precondition(mixed.right.allSatisfy { close($0, 0.9) }, "stereo fade gain bump")
+var previous: Float = -1
+for i in 0...1000 {
+    let gains = AutoMixSafeCrossfade.gains(progress: Double(i) / 1000)
+    precondition(gains.incoming >= previous, "non-monotonic fallback")
+    precondition(close(gains.outgoing + gains.incoming, 1), "fallback gain boost")
+    precondition(gains.outgoing >= 0 && gains.incoming >= 0, "negative gain")
+    previous = gains.incoming
+}
+let start = AutoMixSafeCrossfade.gains(progress: 0)
+let end = AutoMixSafeCrossfade.gains(progress: 1)
+precondition(start.outgoing == 1 && start.incoming == 0, "fallback start")
+precondition(end.outgoing == 0 && end.incoming == 1, "fallback end")
+precondition(AutoMixSafeCrossfade.gains(progress: .nan).outgoing == 1, "nonfinite fallback")
 '''
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp)
@@ -48,7 +61,7 @@ precondition(mixed.right.allSatisfy { close($0, 0.9) }, "stereo fade gain bump")
             binary = path / "signal-test"
             subprocess.run(["swiftc", str(CORE / "StemMashupGlue.swift"),
                             str(CORE / "StemSplit/HTDemucsWindowMixer.swift"),
-                            str(path / "main.swift"), "-o", str(binary)],
+                            str(CORE / "CrossfadeCurve.swift"), str(path / "main.swift"), "-o", str(binary)],
                            check=True, capture_output=True, text=True, timeout=120)
             subprocess.run([str(binary)], check=True, capture_output=True, text=True, timeout=30)
 
@@ -57,6 +70,19 @@ precondition(mixed.right.allSatisfy { close($0, 0.9) }, "stereo fade gain bump")
         handoff = player.split("private func safeAutomixHandoffPosition", 1)[1].split("private func verifyAutomixHandoffPlayback", 1)[0]
         self.assertNotIn("downbeatsSec", handoff)
         self.assertIn("plan.type == .none { return }", player)
+        self.assertIn("plan == nil || plan?.type == .crossfade", player)
+        self.assertIn("safeAutomixFallback: true", player)
+        self.assertGreaterEqual(player.count("AutoMixSafeCrossfade.gains(progress:"), 2)
+        self.assertIn("targetStream.timeControlStatus == .playing", player)
+        self.assertIn("automixSafeCrossfade && (!incomingLaneReady", player)
+        self.assertIn("safeCrossfadeStalledAt", player)
+        self.assertIn("activeTransitionMode = transitionMode", player)
+        self.assertIn("activeTransitionMode ?? transitionMode", player)
+        self.assertIn("analysisGeneration == request", (ROOT / "Sonivo/AutoMixV2AnalysisRuntime.swift").read_text())
+        runtime = (ROOT / "Sonivo/AutoMixV2AnalysisRuntime.swift").read_text()
+        self.assertIn('observedPair == key + "|" + mixSettingsMode.rawValue', runtime)
+        self.assertIn("observedPair == bakeToken", runtime)
+        self.assertIn("try await Self.prepareAnalysisURL", runtime)
         style = (ROOT / "Packages/AutoMixV2/Sources/MixPlanner/MashupLiveStyle.swift").read_text()
         self.assertIn("plan.type != .crossfade, plan.type != .none", style)
         analyzer = (ROOT / "Packages/AutoMixV2/Sources/TrackAnalysis/TrackAnalyzer.swift").read_text()

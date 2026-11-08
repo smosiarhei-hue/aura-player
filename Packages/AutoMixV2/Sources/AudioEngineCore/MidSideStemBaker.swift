@@ -737,6 +737,8 @@ public enum MidSideStemBaker {
         }
         let outURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("sonivo-pcm-\(UUID().uuidString).caf")
+        var completed = false
+        defer { if !completed { try? FileManager.default.removeItem(at: outURL) } }
         let output = try openLinearPCMCAFWriter(at: outURL, format: outFormat)
         guard let converter = AVAudioConverter(from: source.processingFormat, to: outFormat),
               let inBuf = AVAudioPCMBuffer(pcmFormat: source.processingFormat, frameCapacity: 8_192),
@@ -763,6 +765,7 @@ public enum MidSideStemBaker {
             }
             if status == .endOfStream { break }
         }
+        completed = true
         return outURL
     }
 

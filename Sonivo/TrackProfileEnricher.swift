@@ -5,9 +5,14 @@ import TrackAnalysis
 
 nonisolated enum TrackProfileEnricher {
     static func enrich(_ profile: TrackProfile, fileURL: URL) async -> TrackProfile {
-        let key = await Task.detached(priority: .utility) {
+        let worker = Task.detached(priority: .utility) {
             (try? chroma(fileURL: fileURL)).map(HarmonicKeyDetector.estimate)
-        }.value ?? nil
+        }
+        let key = await withTaskCancellationHandler {
+            await worker.value
+        } onCancel: {
+            worker.cancel()
+        } ?? nil
         guard let key else { return profile }
         return TrackProfile(profileVersion: profile.profileVersion,
                             trackID: profile.trackID,

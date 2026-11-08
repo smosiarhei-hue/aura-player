@@ -32,7 +32,7 @@ class AutoMixMashupTests(unittest.TestCase):
         player = (ROOT / "Sonivo/playercore.swift").read_text()
         # Automix + Duet share the beatmatched mashup path via isMashupTransitionMode.
         self.assertIn("isMashupTransitionMode", player)
-        self.assertIn("transitionMode == .automix || transitionMode == .duet", player)
+        self.assertIn("executionTransitionMode == .automix || executionTransitionMode == .duet", player)
         self.assertIn("transitionMode == .crossfade || isMashupTransitionMode", player)
         self.assertIn("applyMashupTransitionEQ(progress: p)", player)
         self.assertIn("applyMashupTransitionEQ(progress: 0)", player)
@@ -211,7 +211,7 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("applyDuetPlaybackCharacter", player)
         self.assertIn("applyAutomixPlaybackCharacter", player)
         self.assertIn("Mashup/Duet need real local PCM for stem bake", player)
-        self.assertIn("transitionMode == .duet || style.isDuet", player)
+        self.assertIn("executionTransitionMode == .duet || style.isDuet", player)
         self.assertIn("bakeDuetStemPair", player)
         self.assertIn("bakeAutomixStemPair", player)
         self.assertIn("playMashupStemPair", player)

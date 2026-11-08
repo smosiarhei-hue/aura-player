@@ -22,6 +22,15 @@ public enum MixPlanner {
             return crossfade(a, b, settings, "Fallback: трек не предназначен для сведения")
         }
 
+        // Existing confidence is a coarse heuristic, not a calibrated proof of
+        // beat phase. Decline tempo/loop effects for obviously uncertain grids.
+        guard a.bpm.isFinite, b.bpm.isFinite,
+              a.confidence.bpm >= 0.70, b.confidence.bpm >= 0.70,
+              a.confidence.downbeats >= 0.65, b.confidence.downbeats >= 0.65,
+              !a.downbeatsSec.isEmpty, !b.downbeatsSec.isEmpty else {
+            return crossfade(a, b, settings, "Fallback: недостаточно надёжная сетка")
+        }
+
         // ±1 semitone max for Automix — ±200¢ TimePitch sounded cheap/dirty in field 1055.
         let harmonic = CamelotCompatibility.match(a.camelotKey, b.camelotKey, maxSemitones: 1)
         let bpmDiffPct: Float = (a.bpm > 30 && b.bpm > 30) ? abs(a.bpm - b.bpm) / a.bpm : 1.0

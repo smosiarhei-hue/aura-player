@@ -26,6 +26,7 @@ final class AutoMixV2AnalysisRuntime {
     private var stemPrepTask: Task<Void, Never>?
     private var observedPair = ""
     private var plannedPair = ""
+    private var analysisGeneration = UUID()
     private(set) var currentProfile: TrackProfile?
     private(set) var nextProfile: TrackProfile?
     private(set) var transitionPlan: MixModels.TransitionPlan?
@@ -61,6 +62,7 @@ final class AutoMixV2AnalysisRuntime {
         let track = AutoMixV2Runtime.shared.currentTrack ?? PlayerCore.shared.currentTrack
         guard let track else { return }
         let id = trackID(for: track)
+        analysisGeneration = UUID()
         analysisTask?.cancel()
         transitionPlan = nil; plannedPair = ""; observedPair = ""
         pipelineStatus = "Перезапуск анализа"
@@ -93,7 +95,7 @@ final class AutoMixV2AnalysisRuntime {
         }
         let planMode = mixSettingsMode
         let key = currentID.raw + "|" + nextID.raw + "|" + planMode.rawValue
-        if plannedPair == pairKey(currentID, nextID),
+        if observedPair == key, plannedPair == pairKey(currentID, nextID),
            let plan = transitionPlan, plan.type != .none,
            let a = currentProfile, a.bpm > 30,
            let b = nextProfile, b.bpm > 30 {
@@ -104,10 +106,25 @@ final class AutoMixV2AnalysisRuntime {
         }
         // Cancel background pair work and wait so it releases any live AVAudioFile
         // handle before we re-open the same caches (field 1145 GenericObjCError 0).
+        guard observedPair == key else { return false }
+        let request = UUID()
+        analysisGeneration = request
+        var published = false
+        defer {
+            // A cancelled bake must not leave this pair marked observed forever;
+            // allow the observer to retry it without touching a newer request.
+            if !published, Task.isCancelled, analysisGeneration == request, observedPair == key {
+                observedPair = ""
+            }
+        }
         let previous = analysisTask
         analysisTask?.cancel()
         analysisTask = nil
         _ = await previous?.value
+        // Awaiting the old task yields the main actor: a new pair may have
+        // arrived (including A→B→A). Do not overwrite its state.
+        guard !Task.isCancelled, analysisGeneration == request,
+              observedPair == key, mixSettingsMode == planMode, shouldAnalyse else { return false }
         let bakeToken = key
         observedPair = key
         plannedPair = ""
@@ -121,9 +138,9 @@ final class AutoMixV2AnalysisRuntime {
         }
         do {
             // Float32 CAF / private copy — never fight the live Automix deck.
-            let safeOut = try Self.analysisSafeURL(outgoingFile)
+            let safeOut = try await Self.prepareAnalysisURL(outgoingFile)
             if let scratch = safeOut.cleanup { cleanup.append(scratch) }
-            let safeIn = try Self.analysisSafeURL(incomingFile)
+            let safeIn = try await Self.prepareAnalysisURL(incomingFile)
             if let scratch = safeIn.cleanup { cleanup.append(scratch) }
 
             let rawA = try await analyzer.profile(for: currentID, fileURL: safeOut.url)
@@ -132,7 +149,10 @@ final class AutoMixV2AnalysisRuntime {
             let rawB = try await analyzer.profile(for: nextID, fileURL: safeIn.url)
             var b = await TrackProfileEnricher.enrich(rawB, fileURL: safeIn.url)
             b = await applyNeuralCue(to: b, track: incoming, role: .incoming)
-            // Publish profiles even if the observer raced — PlayerCore reads these next.
+            // A track/queue/mode change can happen while decode and enrichment await.
+            // Never publish a stale pair into the current player's plan.
+            guard !Task.isCancelled, analysisGeneration == request,
+                  observedPair == bakeToken, mixSettingsMode == planMode, shouldAnalyse else { return false }
             currentProfile = a
             nextProfile = b
             observedPair = bakeToken
@@ -152,8 +172,9 @@ final class AutoMixV2AnalysisRuntime {
             )
             transitionPlan = plan
             plannedPair = pairKey(currentID, nextID)
+            published = true
             pipelineStatus = plan.type == .none
-                ? "План запретил музыкальный переход; будет кроссфейд"
+                ? "План запретил переход; трек доиграет до конца"
                 : "План перехода готов · \(plan.archetype.rawValue) · A@\(String(format: "%.0f", a.mixOutSec))s"
             let ok = a.bpm > 30 && b.bpm > 30
             AutoMixSessionLog.shared.event(
@@ -165,7 +186,9 @@ final class AutoMixV2AnalysisRuntime {
             // Profiles with BPM still unlock beatmatch even when MixPlanner declines.
             return ok
         } catch {
-            if Self.isCancellation(error) {
+            guard analysisGeneration == request, observedPair == bakeToken,
+                  mixSettingsMode == planMode, shouldAnalyse else { return false }
+            if Self.isCancellation(error) || Task.isCancelled {
                 AutoMixSessionLog.shared.event("analysis.bake-local cancel")
                 return false
             }
@@ -179,8 +202,32 @@ final class AutoMixV2AnalysisRuntime {
         }
     }
 
+    /// Preparing a private analysis file can decode an entire compressed track.
+    /// Keep that work off the main actor and remove scratch files if cancelled.
+    private static func prepareAnalysisURL(_ fileURL: URL) async throws -> (url: URL, cleanup: URL?) {
+        let worker = Task.detached(priority: .utility) {
+            try Task.checkCancellation()
+            let result = try Self.analysisSafeURL(fileURL)
+            if Task.isCancelled {
+                if let scratch = result.cleanup { try? FileManager.default.removeItem(at: scratch) }
+                throw CancellationError()
+            }
+            return result
+        }
+        let result = try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
+        if Task.isCancelled {
+            if let scratch = result.cleanup { try? FileManager.default.removeItem(at: scratch) }
+            throw CancellationError()
+        }
+        return result
+    }
+
     /// CAF / private copy for BPM analysis while the live deck holds the cache.
-    private static func analysisSafeURL(_ fileURL: URL) throws -> (url: URL, cleanup: URL?) {
+    nonisolated private static func analysisSafeURL(_ fileURL: URL) throws -> (url: URL, cleanup: URL?) {
         let ext = fileURL.pathExtension.lowercased()
         let compressed = ["m4a", "mp3", "aac", "m4b", "mp4"].contains(ext)
         if compressed {
@@ -204,7 +251,8 @@ final class AutoMixV2AnalysisRuntime {
 
     func plan(for currentID: TrackID, nextID: TrackID) -> MixModels.TransitionPlan? {
         let key = pairKey(currentID, nextID)
-        guard plannedPair == key else { return nil }
+        guard plannedPair == key,
+              observedPair == key + "|" + mixSettingsMode.rawValue else { return nil }
         return transitionPlan
     }
 
@@ -232,6 +280,9 @@ final class AutoMixV2AnalysisRuntime {
     private func refreshPairIfNeeded() {
         guard shouldAnalyse else {
             if !observedPair.isEmpty || transitionPlan != nil || currentProfile != nil {
+                analysisGeneration = UUID()
+                analysisTask?.cancel()
+                stemPrepTask?.cancel()
                 observedPair = ""
                 plannedPair = ""
                 transitionPlan = nil
@@ -269,6 +320,8 @@ final class AutoMixV2AnalysisRuntime {
         let key = currentID.raw + "|" + (nextID?.raw ?? "") + "|" + mixSettingsMode.rawValue
         guard key != observedPair else { return }
 
+        let request = UUID()
+        analysisGeneration = request
         observedPair = key
         plannedPair = ""
         transitionPlan = nil
@@ -312,14 +365,14 @@ final class AutoMixV2AnalysisRuntime {
             do {
                 let currentFile = try await self.resolveFile(for: current, id: currentID, allowDownload: allowDownload)
                 // Same live-deck lock as bake-local — profile a private CAF/copy.
-                let safeOut = try Self.analysisSafeURL(currentFile)
+                let safeOut = try await Self.prepareAnalysisURL(currentFile)
                 defer { if let scratch = safeOut.cleanup { try? FileManager.default.removeItem(at: scratch) } }
                 let rawA = try await analyzer.profile(for: currentID, fileURL: safeOut.url)
                 var a = await TrackProfileEnricher.enrich(rawA, fileURL: safeOut.url)
                 // LRC / synced lyrics refine mixOut while the song plays (lab neuralAutomix).
                 pipelineStatus = planMode == .duet ? "Duet · текст / neural cue…" : "Automix · текст / neural cue…"
                 a = await self.applyNeuralCue(to: a, track: current, role: .outgoing)
-                guard !Task.isCancelled, observedPair == key else { return }
+                guard !Task.isCancelled, analysisGeneration == request, observedPair == key else { return }
                 currentProfile = a
                 guard let next, let nextID else {
                     pipelineStatus = "Следующего трека нет"
@@ -327,12 +380,12 @@ final class AutoMixV2AnalysisRuntime {
                 }
                 pipelineStatus = "Анализ следующего трека"
                 let nextFile = try await self.resolveFile(for: next, id: nextID, allowDownload: allowDownload)
-                let safeIn = try Self.analysisSafeURL(nextFile)
+                let safeIn = try await Self.prepareAnalysisURL(nextFile)
                 defer { if let scratch = safeIn.cleanup { try? FileManager.default.removeItem(at: scratch) } }
                 let rawB = try await analyzer.profile(for: nextID, fileURL: safeIn.url)
                 var b = await TrackProfileEnricher.enrich(rawB, fileURL: safeIn.url)
                 b = await self.applyNeuralCue(to: b, track: next, role: .incoming)
-                guard !Task.isCancelled, observedPair == key else { return }
+                guard !Task.isCancelled, analysisGeneration == request, observedPair == key else { return }
                 nextProfile = b
                 let settings = MixSettings(
                     mode: planMode == .duet ? .duet : .automix,
@@ -348,11 +401,11 @@ final class AutoMixV2AnalysisRuntime {
                     bMeta: metadata(for: next, id: nextID),
                     settings: settings
                 )
-                guard !Task.isCancelled, observedPair == key else { return }
+                guard !Task.isCancelled, analysisGeneration == request, observedPair == key else { return }
                 transitionPlan = plan
                 plannedPair = pairKey(currentID, nextID)
                 pipelineStatus = plan.type == .none
-                    ? "План запретил музыкальный переход; будет кроссфейд"
+                    ? "План запретил переход; трек доиграет до конца"
                     : "План перехода готов · \(plan.archetype.rawValue) · A@\(String(format: "%.0f", a.mixOutSec))s"
                 AutoMixSessionLog.shared.event(
                     String(
@@ -360,7 +413,7 @@ final class AutoMixV2AnalysisRuntime {
                         a.bpm, b.bpm, plan.rateA, plan.rateB, plan.archetype.rawValue
                     )
                 )
-                if plan.type != .none {
+                if plan.type != .none && plan.type != .crossfade {
                     let outFile = currentFile
                     let inFile = nextFile
                     stemPrepTask?.cancel()
@@ -368,7 +421,7 @@ final class AutoMixV2AnalysisRuntime {
                     stemPrepTask = Task { @MainActor [weak self] in
                         await HTDemucsMashupBake.prewarm(outgoingFile: outFile, incomingFile: inFile) { message in
                             Task { @MainActor in
-                                guard self?.observedPair == pairToken else { return }
+                                guard self?.analysisGeneration == request, self?.observedPair == pairToken else { return }
                                 if message.hasPrefix("HTDemucs · скрыть") {
                                     SonivoDiagnostics.log("[HTDemucs] \(message)", tag: "AUDIO")
                                     self?.stemStatus = nil
@@ -384,7 +437,8 @@ final class AutoMixV2AnalysisRuntime {
                     }
                 }
             } catch {
-                guard observedPair == key, !Self.isCancellation(error) else { return }
+                guard analysisGeneration == request, observedPair == key, !Task.isCancelled,
+                      !Self.isCancellation(error) else { return }
                 transitionPlan = nil
                 plannedPair = ""
                 lastError = String(describing: error)

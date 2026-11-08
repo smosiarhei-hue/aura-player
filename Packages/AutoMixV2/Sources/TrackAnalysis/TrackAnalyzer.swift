@@ -35,10 +35,15 @@ public actor TrackAnalyzer {
         }
         // Drop stale bpm0 / unreadable cache so the next analyze can replace it.
         try? FileManager.default.removeItem(at: destination)
-        let profile = try await Task.detached(priority: .utility) {
+        let worker = Task.detached(priority: .utility) {
             try Task.checkCancellation()
             return try TrackAnalysisComputer.analyze(id: id, fileURL: fileURL)
-        }.value
+        }
+        let profile = try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
         try Task.checkCancellation()
         // Never persist a dead profile — Automix would lock rate=1 / bpm0 for good.
         guard profile.bpm > 30 else {
@@ -93,8 +98,9 @@ private enum TrackAnalysisComputer {
 
         let analysisSampleRate = 22_050.0
         let rhythm = try AudioDecoder.decodeMono(fileURL: analysisURL, sampleRate: analysisSampleRate)
-        try Task.checkCancellation()
-        let loudness = try AudioDecoder.decodeMono(fileURL: analysisURL, sampleRate: analysisSampleRate)
+        // Rhythm and loudness use the same mono rate. Share the immutable PCM
+        // instead of decoding the complete track a second time.
+        let loudness = rhythm
         try Task.checkCancellation()
         guard !rhythm.isEmpty, !loudness.isEmpty else { throw TrackAnalysisError.noAudioSamples }
 

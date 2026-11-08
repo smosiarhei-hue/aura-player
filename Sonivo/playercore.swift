@@ -296,8 +296,10 @@ final class PlayerCore {
         engine.mainMixerNode.outputVolume = volume
         var outgoing: Float = 1, incoming: Float = 0
         if isTransitioning, let start = transitionStartTime {
-            let elapsed = (transitionPausedAt ?? Date()).timeIntervalSince(start)
-            let gains = CrossfadeCurve.gains(progress: elapsed / max(0.001, transitionDuration))
+            let elapsed = (transitionPausedAt ?? safeCrossfadeStalledAt ?? Date()).timeIntervalSince(start)
+            let p = elapsed / max(0.001, transitionDuration)
+            let gains = automixSafeCrossfade ? AutoMixSafeCrossfade.gains(progress: p)
+                : CrossfadeCurve.gains(progress: p)
             outgoing = gains.outgoing; incoming = gains.incoming
         }
         activeStreamingPlayer.volume = outgoing * volume
@@ -680,6 +682,14 @@ final class PlayerCore {
     /// Stem bake failed or still cooking — dry decks with Automix EQ/echo/plate
     /// instead of dual full-volume stems (which muddies two dry streams).
     private var mashupBakeFailedUseCrossfade = false
+    /// Frozen when scheduling; never promotes a running safe fade into mashup.
+    private var automixSafeCrossfade = false
+    private var safeCrossfadeStalledAt: Date?
+    /// The chosen mode remains fixed until this particular transition ends.
+    private var activeTransitionMode: TransitionMode?
+    private var executionTransitionMode: TransitionMode {
+        isTransitioning ? (activeTransitionMode ?? transitionMode) : transitionMode
+    }
     /// Outgoing track whose mix already failed. The playhead stays past the cue,
     /// so a cancel used to schedule the same bake again (fail → cancel → bake.start).
     private var mashupGiveUpTrackID: UUID?
@@ -1213,7 +1223,7 @@ final class PlayerCore {
     /// then opens a short tempo-synced echo-out into LAND — DJ tail, not delay soup.
     @discardableResult
     private func applyLivePlanFX(progress: Double, elapsed: Double, outgoingVolume: Float) -> Float {
-        let isAppleAutomix = transitionMode == .automix
+        let isAppleAutomix = executionTransitionMode == .automix
             && isMashupTransitionMode
             && !activeMashupStyle.isDuet
         if isAppleAutomix {
@@ -1940,8 +1950,13 @@ final class PlayerCore {
         anchorDate = nil
         progress = pausedProgress
 
-        if isTransitioning, transitionStartTime != nil {
-            transitionPausedAt = Date()
+        if isTransitioning, let start = transitionStartTime {
+            let now = Date()
+            if let stalled = safeCrossfadeStalledAt {
+                transitionStartTime = start.addingTimeInterval(now.timeIntervalSince(stalled))
+                safeCrossfadeStalledAt = nil
+            }
+            transitionPausedAt = now
         }
         isPlaying = false
         metadataTrack = nil
@@ -2989,7 +3004,8 @@ final class PlayerCore {
 
     /// Beatmatched mashup modes (AutoMix ONE VOCAL + Modern Duet).
     private var isMashupTransitionMode: Bool {
-        transitionMode == .automix || transitionMode == .duet
+        (executionTransitionMode == .automix || executionTransitionMode == .duet)
+            && !(isTransitioning && automixSafeCrossfade)
     }
 
     /// Park until the musical cue. Pause does not cancel the mix; the playhead
@@ -3313,6 +3329,8 @@ final class PlayerCore {
     /// and if the song is already over (or silent), start the next one a single time.
     private func giveUpMashupAndKeepPlaying(_ error: Error) {
         if !isMashupTransitionMode {
+            // Do not retry a failed fallback on every playhead tick.
+            if automixSafeCrossfade { mashupGiveUpTrackID = currentTrack?.id }
             cancelTransition()
             return
         }
@@ -3365,9 +3383,32 @@ final class PlayerCore {
             // reach the next track rather than overriding it with a mashup.
             if transitionMode == .automix {
                 let analysis = AutoMixV2AnalysisRuntime.shared
+                let plan: TransitionPlan?
                 if let a = analysis.currentProfile, let b = analysis.nextProfile,
-                   mashupProfileMatches(a, track: current), mashupProfileMatches(b, track: nextTrack),
-                   let plan = analysis.transitionPlan, plan.type == .none { return }
+                   mashupProfileMatches(a, track: current), mashupProfileMatches(b, track: nextTrack) {
+                    plan = analysis.plan(for: a.trackID, nextID: b.trackID)
+                } else {
+                    plan = nil
+                }
+                if let plan, plan.type == .none { return }
+                if plan == nil || plan?.type == .crossfade {
+                    // Unknown/weak grid: preserve the outro and the beginning of B;
+                    // do not invent a beat grid, force stems, pitch or rhythmic FX.
+                    let suggested = plan?.bars ?? 4
+                    let fade = min(5, max(3, suggested.isFinite ? suggested : 4))
+                    let cue = max(0, totalDur - fade)
+                    guard currentPos >= cue else { return }
+                    let remaining = max(0, totalDur - currentPos)
+                    guard remaining >= 1 else { return }
+                    AutoMixSessionLog.shared.event("transition.safe-crossfade reason=\(plan?.reason ?? "analysis unavailable")")
+                    scheduleSimpleTransition(
+                        current: current, nextTrack: nextTrack,
+                        blendDuration: min(fade, remaining), incomingStart: 0,
+                        mashupBadge: nil, mashupStyle: nil, outgoingCue: nil,
+                        safeAutomixFallback: true
+                    )
+                    return
+                }
             }
             let blend = resolveMashupBlend(outgoing: current, incoming: nextTrack, duration: totalDur)
             let leadIn = max(0, blend.outgoingCueSec - Self.automixBakeLeadSec)
@@ -3416,9 +3457,9 @@ final class PlayerCore {
             incomingDuration: incomingDur
         )
         // User selected Duet → keep dual-vocal grammar (never slide into ONE VOCAL Automix).
-        if transitionMode == .duet {
+        if executionTransitionMode == .duet {
             style.applyDuetPlaybackCharacter()
-        } else if transitionMode == .automix {
+        } else if executionTransitionMode == .automix {
             // Live/stream Automix without stems must ONE-VOCAL carve — two dry mixes = mud.
             style.applyAutomixPlaybackCharacter()
         }
@@ -3435,7 +3476,8 @@ final class PlayerCore {
         reason: String,
         preserveLand: Bool = true
     ) -> Bool {
-        guard isMashupTransitionMode, isTransitioning else { return false }
+        guard isMashupTransitionMode, isTransitioning,
+              activeTransitionMode == transitionMode else { return false }
         let previous = activeMashupStyle
         var style = resolveMashupStyle(
             outgoing: outgoing,
@@ -3538,7 +3580,7 @@ final class PlayerCore {
             )
             var land = 0.86
             var reason = plan.reason
-            if transitionMode == .automix {
+            if executionTransitionMode == .automix {
                 let mood = MoodAutomix.window(
                     outgoingDuration: totalDur,
                     incomingDuration: incomingDur,
@@ -3580,7 +3622,7 @@ final class PlayerCore {
                 outgoing: outProfile,
                 incoming: inProfile
             )
-            if transitionMode == .automix {
+            if executionTransitionMode == .automix {
                 let mood = MoodAutomix.window(
                     outgoingDuration: totalDur,
                     incomingDuration: incomingDur,
@@ -3619,7 +3661,7 @@ final class PlayerCore {
             return scheduled
         }
 
-        if transitionMode == .automix {
+        if executionTransitionMode == .automix {
             let placed = MoodAutomix.placed(
                 outgoingDuration: totalDur,
                 incomingDuration: incomingDur,
@@ -3787,6 +3829,15 @@ final class PlayerCore {
             max(MashupBlendScheduler.minimumBlendSec, value))
     }
 
+    /// Check the selected fallback target without re-randomising a shuffle pick.
+    private func safeFallbackTargetStillValid(_ track: Track) -> Bool {
+        guard !queue.isEmpty else { return true }
+        if shuffle && !isYandexWavePlayback {
+            return queue.contains { $0.id == track.id }
+        }
+        return peekNext(auto: true)?.id == track.id
+    }
+
     private func scheduleSimpleTransition(
         current: Track,
         nextTrack: Track,
@@ -3794,7 +3845,8 @@ final class PlayerCore {
         incomingStart: Double,
         mashupBadge: String?,
         mashupStyle: MashupLiveStyle?,
-        outgoingCue: Double?
+        outgoingCue: Double?,
+        safeAutomixFallback: Bool = false
     ) {
         // Drop any leftover prep / MIXING timer from a prior land (field zombie badge).
         transitionPreparationTask?.cancel()
@@ -3805,6 +3857,9 @@ final class PlayerCore {
         incomingLaneReady = false
         pendingMashupLiveArm = nil
 
+        automixSafeCrossfade = safeAutomixFallback
+        safeCrossfadeStalledAt = nil
+        activeTransitionMode = transitionMode
         transitionScheduled = true
         isTransitioning = true
         mashupBakeFailedUseCrossfade = false
@@ -3859,8 +3914,8 @@ final class PlayerCore {
         // lighting isTransitionActive here made "Сведение" shimmer from ~32s while
         // audio was still A alone. Mashup flips the flag only at audible start
         // (markMashupProgress / beginLiveAutomixAtCue / bake.ready).
-        AutoMixDJEngine.shared.isTransitionActive = transitionMode == .crossfade
-        AutoMixDJEngine.shared.activeStrategyName = mashup ? strategyName : (transitionMode == .crossfade ? "CROSSFADE" : "GAPLESS")
+        AutoMixDJEngine.shared.isTransitionActive = transitionMode == .crossfade || safeAutomixFallback
+        AutoMixDJEngine.shared.activeStrategyName = mashup ? strategyName : ((transitionMode == .crossfade || safeAutomixFallback) ? "CROSSFADE" : "GAPLESS")
         AutoMixDJEngine.shared.transitionProgress = 0
         // Mixing badge only when the blend is actually audible (lane ready) — not while baking.
         AutoMixDJEngine.shared.statusBadge = nil
@@ -3922,6 +3977,22 @@ final class PlayerCore {
                         outgoingFile: outURL,
                         incomingFile: inURL
                     )
+                    guard !Task.isCancelled, self.generation == token,
+                          self.transitionRequestID == transitionID,
+                          self.currentTrack?.id == current.id,
+                          self.incomingTrack?.id == nextTrack.id, self.isTransitioning else { return }
+                    if self.executionTransitionMode == .automix,
+                       self.activeTransitionMode == self.transitionMode,
+                       let a = AutoMixV2AnalysisRuntime.shared.currentProfile,
+                       let b = AutoMixV2AnalysisRuntime.shared.nextProfile,
+                       self.mashupProfileMatches(a, track: current),
+                       self.mashupProfileMatches(b, track: nextTrack),
+                       let plan = AutoMixV2AnalysisRuntime.shared.plan(for: a.trackID, nextID: b.trackID),
+                       plan.type == .crossfade || plan.type == .none {
+                        // Not audible yet; retry scheduling under the newly resolved policy.
+                        self.cancelTransition()
+                        return
+                    }
                     // Local A/B are ready — pick up BPM/plan if analysis finished during lead-in
                     // so stem bake and live rates are not stuck at provisional rate=1.
                     _ = self.refreshMashupStyleFromAnalysis(
@@ -3931,7 +4002,7 @@ final class PlayerCore {
                     )
                     var blend = self.transitionDuration
                     var style = self.activeMashupStyle
-                    let duetBake = self.transitionMode == .duet || style.isDuet
+                    let duetBake = self.executionTransitionMode == .duet || style.isDuet
                     // Window is the musical outro, not the playhead while we prepare.
                     var cueA = max(0, musicalOutgoingCue ?? cueAForBake)
                     var cueB = max(0, startAt)
@@ -4353,6 +4424,7 @@ final class PlayerCore {
                         targetNode.stop()
                         targetNode.volume = 0
                         self.incomingAudioFile = nil
+                        if safeAutomixFallback { throw error }
                         self.incomingIsStream = true
                         AutoMixSessionLog.shared.fault(
                             "fallback.file \(error.localizedDescription) → stream"
@@ -4362,7 +4434,12 @@ final class PlayerCore {
                     do {
                         // Private copy / CAF decode — the live m4a/mp3 open is what
                         // field-logged as bake.fail + fallback.file 'dta?' → stream.
-                        let file = try self.openAutomixPlaybackFile(localIncomingURL)
+                        // A fallback should not synchronously copy/decode a whole
+                        // file on the UI thread seconds before the outgoing EOF.
+                        let file = try safeAutomixFallback
+                            ? AVAudioFile(forReading: localIncomingURL)
+                            : self.openAutomixPlaybackFile(localIncomingURL)
+                        guard file.length > 0 else { throw CocoaError(.fileReadCorruptFile) }
                         guard !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
                               self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else { return }
                         try self.armPreparedMashupIncoming(
@@ -4377,6 +4454,7 @@ final class PlayerCore {
                         targetNode.stop()
                         targetNode.volume = 0
                         self.incomingAudioFile = nil
+                        if safeAutomixFallback { throw error }
                         self.incomingIsStream = true
                         AutoMixSessionLog.shared.fault(
                             "fallback.file \(error.localizedDescription) → stream"
@@ -4424,7 +4502,30 @@ final class PlayerCore {
                         // stalled at inCue (field log: frozen pos=16 after LAND).
                         let startRate = self.activeMashupStyle.playbackRates(progress: 0).incoming
                         let armID = transitionID
-                        if startAt > 0.25 {
+                        if safeAutomixFallback {
+                            // Only fade A after B has actually started, not merely
+                            // because AVPlayerItem was created. B starts at zero.
+                            targetStream.play()
+                            var ready = false
+                            for _ in 0..<60 {
+                                guard !Task.isCancelled, self.generation == token,
+                                      self.transitionRequestID == transitionID,
+                                      self.currentTrack?.id == current.id,
+                                      self.incomingTrack?.id == nextTrack.id,
+                                      self.isTransitioning else { return }
+                                guard self.safeFallbackTargetStillValid(nextTrack) else {
+                                    throw URLError(.cancelled)
+                                }
+                                if item.status == .failed { break }
+                                if self.isPlaying, item.status == .readyToPlay,
+                                   targetStream.timeControlStatus == .playing {
+                                    ready = true
+                                    break
+                                }
+                                try await Task.sleep(for: .milliseconds(50))
+                            }
+                            guard ready else { throw URLError(.timedOut) }
+                        } else if startAt > 0.25 {
                             let seekTime = CMTime(seconds: startAt, preferredTimescale: 600)
                             targetStream.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero) { finished in
                                 Task { @MainActor [weak self] in
@@ -4450,6 +4551,14 @@ final class PlayerCore {
                     targetNode.volume = 0
                     if !self.engine.isRunning { try self.engine.start() }
                     targetNode.play()
+                }
+                if safeAutomixFallback {
+                    guard self.safeFallbackTargetStillValid(nextTrack) else { throw URLError(.cancelled) }
+                    let now = self.isUsingStreamPlayer ? self.progress : self.liveProgress()
+                    let remaining = max(0, self.duration - now)
+                    // A may have nearly finished while B was loading.
+                    guard self.isPlaying, remaining >= 0.25 else { throw URLError(.timedOut) }
+                    self.transitionDuration = min(self.transitionDuration, remaining)
                 }
                 self.incomingLaneReady = true
                 self.transitionStartTime = Date()
@@ -4520,7 +4629,24 @@ final class PlayerCore {
 
     private func tickTransition() {
         guard isPlaying, let start = transitionStartTime, isTransitioning else { return }
-        let elapsed = -start.timeIntervalSinceNow
+        if automixSafeCrossfade, let target = incomingTrack, !safeFallbackTargetStillValid(target) {
+            giveUpMashupAndKeepPlaying(URLError(.cancelled))
+            return
+        }
+        if automixSafeCrossfade && incomingIsStream {
+            if idleStreamingPlayer.timeControlStatus != .playing {
+                if safeCrossfadeStalledAt == nil { safeCrossfadeStalledAt = Date() }
+                if let stalled = safeCrossfadeStalledAt, Date().timeIntervalSince(stalled) >= 1 {
+                    giveUpMashupAndKeepPlaying(URLError(.timedOut))
+                }
+                return
+            }
+            if let stalled = safeCrossfadeStalledAt {
+                transitionStartTime = start.addingTimeInterval(Date().timeIntervalSince(stalled))
+                safeCrossfadeStalledAt = nil
+            }
+        }
+        let elapsed = -(transitionStartTime ?? start).timeIntervalSinceNow
         let p = min(elapsed / transitionDuration, 1.0)
         AutoMixDJEngine.shared.transitionProgress = p
 
@@ -4550,7 +4676,8 @@ final class PlayerCore {
             let useMashupVolumes = mashup
             let gains = useMashupVolumes
                 ? mashupHeardVolumes(progress: p)
-                : CrossfadeCurve.gains(progress: p)
+                : (automixSafeCrossfade ? AutoMixSafeCrossfade.gains(progress: p)
+                   : CrossfadeCurve.gains(progress: p))
             let gatedOutgoing: Float = mashup
                 ? applyLivePlanFX(progress: p, elapsed: elapsed, outgoingVolume: gains.outgoing)
                 : gains.outgoing
@@ -4649,7 +4776,7 @@ final class PlayerCore {
         // The Automix seek loop cuts the waveform abruptly and can click; use
         // only the crossfaded baked loop for Automix until live looping is seamless.
         // Preserve the existing non-Automix path.
-        if mashup, transitionMode != .automix,
+        if mashup, executionTransitionMode != .automix,
            mashupBakeRealIncomingURL == nil,
            !mashupPlayingMasterBake,
            activeMashupStyle.targetBPM > 30,
@@ -5293,6 +5420,9 @@ final class PlayerCore {
         localSegmentTokens.removeValue(forKey: ObjectIdentifier(idlePlayer))
         transitionScheduled = false
         isTransitioning = false
+        automixSafeCrossfade = false
+        safeCrossfadeStalledAt = nil
+        activeTransitionMode = nil
         isCompletingTransition = false
         // Keep live LAND guards: start(at:) calls cancelTransition and used to
         // wipe suppressTrackFinishUntil, letting end-of-A notifications skip B.
@@ -5405,7 +5535,29 @@ final class PlayerCore {
             }
             suppressTrackFinishUntil = nil
         }
+        if (isTransitioning || transitionScheduled), automixSafeCrossfade,
+           let target = incomingTrack, !safeFallbackTargetStillValid(target) {
+            // Queue can change between the last fader tick and EOF.
+            cancelTransition()
+        }
         if isTransitioning || transitionScheduled {
+            if automixSafeCrossfade && (!incomingLaneReady ||
+                (incomingIsStream && idleStreamingPlayer.timeControlStatus != .playing)) {
+                // An AVPlayerItem is not proof that B is ready or audible.
+                // If A ends while preparing, advance once using the normal start path.
+                let forced = incomingTrack.flatMap { safeFallbackTargetStillValid($0) ? $0 : nil }
+                    ?? peekNext(auto: true)
+                cancelTransition()
+                if let forced {
+                    flushListeningStats()
+                    reportWaveFinishedIfNeeded()
+                    currentTrack = forced
+                    isPlaying = true
+                    start(at: 0)
+                    refillQueueIfNeeded()
+                    return
+                }
+            }
             if let start = transitionStartTime, isMashupTransitionMode {
                 let elapsed = -start.timeIntervalSinceNow
                 let p = elapsed / max(0.001, transitionDuration)
