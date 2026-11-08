@@ -4999,6 +4999,28 @@ final class PlayerCore {
             throw CocoaError(.fileReadCorruptFile)
         }
 
+        let offset = startOffsetSec.isFinite ? max(0, startOffsetSec) : 0
+        // Until this pre-cue bake starts, only A has advanced. Map its heard
+        // source offset to B's matching beat rather than seeking both files by
+        // the same seconds at different natural tempos. Live Duet upgrades
+        // keep their existing path; they have an already-audible B clock.
+        let incomingOffset = !activeMashupStyle.isDuet && activeMashupStyle.isBeatmatched
+            ? HTDemucsWindowMixer.alignedIncomingOffset(
+                outgoingOffset: offset,
+                rateA: Double(activeMashupStyle.rateA),
+                rateB: Double(activeMashupStyle.rateB)
+            )
+            : offset
+        let inRate = inFile.processingFormat.sampleRate
+        let outRate = outFile.processingFormat.sampleRate
+        guard inRate > 0, outRate > 0,
+              incomingOffset < Double(inFile.length) / inRate,
+              offset < Double(outFile.length) / outRate else {
+            // Reject before stopping the audible decks; never clamp a missed
+            // cue to the last frame and pretend B is ready.
+            throw CocoaError(.fileReadCorruptFile)
+        }
+
         let fromStream = isUsingStreamPlayer
         // Capture live deck levels BEFORE stop — bake.upgrade must ease from these
         // (field 1137: zeroing B then blooming it sounded like a stutter).
@@ -5032,14 +5054,13 @@ final class PlayerCore {
         activePlayer.stop()
         idlePlayer.stop()
 
-        let offset = max(0, startOffsetSec)
         activeAudioFile = outFile
         incomingAudioFile = inFile
         activeLocalURL = outgoingURL
         // Keep `incomingStartPosition` as musical cue B (set by beginTransition).
 
         scheduleLocalSegment(outFile, on: activePlayer, at: offset)
-        scheduleLocalSegment(inFile, on: idlePlayer, at: offset)
+        scheduleLocalSegment(inFile, on: idlePlayer, at: incomingOffset)
         // Seed at prior live levels — never start B at 0 after it was already audible.
         activePlayer.volume = mashupStemEntryFromOut
         idlePlayer.volume = mashupStemEntryFromIn

@@ -52,6 +52,15 @@ precondition(HTDemucsWindowMixer.sourceLoopSeconds(bars: 2, targetBPM: .nan, rat
 precondition(HTDemucsWindowMixer.sourceLoopSeconds(bars: 2, targetBPM: 128, rateA: .nan) == 0)
 precondition(HTDemucsWindowMixer.sourceLoopSeconds(bars: 2, targetBPM: 128, rateA: Double(Float(1.08))) > 0)
 precondition(HTDemucsWindowMixer.sourceLoopSeconds(bars: 2, targetBPM: 128, rateA: 1.12) == 0)
+// A late stem start maps the amount already heard on A to B's own grid.
+for (a, b) in [(1.0, 1.05), (1.0, 0.95), (1.07, 1.0), (0.92, 1.08)] {
+    let offset = HTDemucsWindowMixer.alignedIncomingOffset(outgoingOffset: 2.3, rateA: a, rateB: b)
+    precondition(abs(offset / b - 2.3 / a) < 0.000001, "late bake phase drift")
+}
+precondition(HTDemucsWindowMixer.alignedIncomingOffset(outgoingOffset: -1, rateA: 1, rateB: 1) == 0)
+precondition(HTDemucsWindowMixer.alignedIncomingOffset(outgoingOffset: .nan, rateA: 1, rateB: 1) == 0)
+precondition(HTDemucsWindowMixer.alignedIncomingOffset(outgoingOffset: 2, rateA: .nan, rateB: 1) == 2)
+precondition(HTDemucsWindowMixer.alignedIncomingOffset(outgoingOffset: 2, rateA: 0, rateB: 1) == 2)
 let signal = [Float](repeating: 0.9, count: 1000)
 let mixed = HTDemucsWindowMixer.render(dryL: signal, dryR: signal, stemL: signal, stemR: signal,
                                         amount: 1, untilFrame: 900, fadeFrames: 200)
@@ -145,6 +154,12 @@ precondition(HTDemucsTensorLayout.checked(shape: [1, 8, 4], strides: [40, 5, 1],
         self.assertIn("return try cachedPair(", materialize)
         self.assertIn("defer { jobs -= 1 }", materialize)
         self.assertIn("HTDemucsWindowMixer.automixBakeRate(playbackRate)", hybrid_bake)
+        self.assertIn("HTDemucsWindowMixer.alignedIncomingOffset(", player)
+        self.assertIn("on: idlePlayer, at: incomingOffset", player)
+        stem_mount = player.split("private func playMashupStemPair(", 1)[1].split("private func mashupHeardVolumes", 1)[0]
+        self.assertLess(stem_mount.index("incomingOffset < Double(inFile.length) / inRate"),
+                        stem_mount.index("activePlayer.stop()"))
+        self.assertIn("!activeMashupStyle.isDuet && activeMashupStyle.isBeatmatched", stem_mount)
         self.assertIn("HTDemucsWindowMixer.sourceLoopSeconds(", player)
         self.assertIn("rateA: Double(style.rateA)", player)
         self.assertEqual(neural_bake.count("stem: duet ? .vocal : .vocalWithBacking"), 2)

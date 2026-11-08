@@ -23,6 +23,18 @@ public enum HTDemucsWindowMixer {
         return Double(bars) * 240.0 / targetBPM * rateA
     }
 
+    /// Convert an already-heard A source offset to the equivalent position on
+    /// B's grid. This only applies before a beatmatched AutoMix has started;
+    /// live deck replacement needs its actual B playhead instead.
+    public static func alignedIncomingOffset(outgoingOffset: Double, rateA: Double, rateB: Double) -> Double {
+        guard outgoingOffset.isFinite, outgoingOffset >= 0 else { return 0 }
+        guard rateA.isFinite, rateB.isFinite,
+              rateA >= 0.9199, rateA <= 1.0801,
+              rateB >= 0.9199, rateB <= 1.0801 else { return outgoingOffset }
+        let result = outgoingOffset * rateB / rateA
+        return result.isFinite ? result : outgoingOffset
+    }
+
     public static func render(
         dryL: [Float],
         dryR: [Float],
