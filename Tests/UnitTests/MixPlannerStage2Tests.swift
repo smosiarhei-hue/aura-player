@@ -49,6 +49,30 @@ struct MixPlannerStage2Tests {
         #expect(short.type == .none)
     }
 
+    @Test("Automix uses safe fade for a confirmed large key clash")
+    func automixKeyClashFallsBack() {
+        let plan = MixPlanner.plan(
+            from: profile("a", bpm: 129.2, key: "6A"),
+            to: profile("b", bpm: 120.19, key: "12A"),
+            aMeta: meta("a"), bMeta: meta("b"),
+            settings: MixSettings(mode: .automix, skipTransitionsWithinAlbum: false)
+        )
+        #expect(plan.type == .crossfade)
+        #expect(plan.pitchShiftCentsB == 0)
+        #expect(plan.reason.contains("Тональный конфликт"))
+    }
+
+    @Test("Short tracks still receive an automatic safe transition")
+    func automixShortTrackUsesSafeFade() {
+        let plan = MixPlanner.plan(
+            from: profile("a", duration: 30), to: profile("b"),
+            aMeta: meta("a", duration: 30), bMeta: meta("b"),
+            settings: MixSettings(mode: .automix, skipTransitionsWithinAlbum: false)
+        )
+        #expect(plan.type == .crossfade)
+        #expect(plan.rateA == 1 && plan.rateB == 1)
+    }
+
     @Test("Duet plans vocal stack when tempo and Camelot lock")
     func duetQualityGatePass() {
         let a = profile("a", bpm: 124, key: "8A")

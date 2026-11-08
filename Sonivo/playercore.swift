@@ -714,6 +714,10 @@ final class PlayerCore {
     private var mashupBakeFailedUseCrossfade = false
     /// Frozen when scheduling; never promotes a running safe fade into mashup.
     private var automixSafeCrossfade = false
+    /// A final cue retarget can fail after scheduling; remember that exact pair
+    /// so the next scheduling tick takes the safe path rather than retrying bake.
+    private var automixUnalignedPair: (outgoing: UUID, incoming: UUID)?
+    private var automixFallbackTarget: Track?
     private var safeCrossfadeStalledAt: Date?
     /// The chosen mode remains fixed until this particular transition ends.
     private var activeTransitionMode: TransitionMode?
@@ -1343,9 +1347,23 @@ final class PlayerCore {
 
         // Half-beat delay — tempo-locked, low feedback so it trails instead of doubling.
         let delaySec = Float(min(0.75, max(0.12, 60 / Double(safeBPM) * 0.5)))
-        let echoWet = 0.34 * amount
+        // These are the effects actually rendered on the outgoing deck. Match
+        // the sound to the selected archetype instead of treating every plan alike.
+        let echoLevel: Float
+        let plateLevel: Float
+        switch activeTransitionPlan?.archetype {
+        case .echoFreeze?:
+            echoLevel = 0.50; plateLevel = 0.16
+        case .spaceReverb?:
+            echoLevel = 0.16; plateLevel = 0.50
+        case .seamlessLoop?:
+            echoLevel = 0.26; plateLevel = 0.28
+        default:
+            echoLevel = 0.34; plateLevel = 0.22
+        }
+        let echoWet = echoLevel * amount
         let echoFb = 0.22 * amount
-        let plate = 0.22 * amount
+        let plate = plateLevel * amount
         publishLiveMixFX(
             echoWet: echoWet,
             echoFeedback: echoFb,
@@ -2238,6 +2256,8 @@ final class PlayerCore {
         incomingTrack = nil
         guard let track = currentTrack else { return }
         mashupGiveUpTrackID = nil
+        automixUnalignedPair = nil
+        automixFallbackTarget = nil
         waveListening.reset()
         streamDuration = track.duration
         progress = PlaybackResumePolicy.position(seconds, duration: track.duration)
@@ -3421,7 +3441,20 @@ final class PlayerCore {
 
         let currentPos = isUsingStreamPlayer ? progress : liveProgress()
         let totalDur = duration
-        guard totalDur > 5, let nextTrack = peekNext(auto: true) else { return }
+        guard totalDur > 5 else { return }
+        // Keep the same selected B after aborting an unaligned bake. In shuffle,
+        // another call to peekNext would otherwise randomly choose a new song.
+        let retainedTarget: Track?
+        if let pair = automixUnalignedPair, let target = automixFallbackTarget,
+           pair.outgoing == current.id, pair.incoming == target.id,
+           safeFallbackTargetStillValid(target) {
+            retainedTarget = target
+        } else {
+            automixUnalignedPair = nil
+            automixFallbackTarget = nil
+            retainedTarget = nil
+        }
+        guard let nextTrack = retainedTarget ?? peekNext(auto: true) else { return }
 
         if isMashupTransitionMode {
             if mashupGiveUpTrackID == current.id { return }
@@ -3436,8 +3469,14 @@ final class PlayerCore {
                 } else {
                     plan = nil
                 }
+                if let pair = automixUnalignedPair,
+                   (pair.outgoing != current.id || pair.incoming != nextTrack.id) {
+                    automixUnalignedPair = nil
+                }
+                let finalGridFailed = automixUnalignedPair?.outgoing == current.id
+                    && automixUnalignedPair?.incoming == nextTrack.id
                 if let plan, plan.type == .none { return }
-                if plan == nil || plan?.type == .crossfade {
+                if finalGridFailed || plan == nil || plan?.type == .crossfade {
                     // Unknown/weak grid: preserve the outro and the beginning of B;
                     // do not invent a beat grid, force stems, pitch or rhythmic FX.
                     let suggested = plan?.bars ?? 4
@@ -3446,7 +3485,8 @@ final class PlayerCore {
                     guard currentPos >= cue else { return }
                     let remaining = max(0, totalDur - currentPos)
                     guard remaining >= 1 else { return }
-                    AutoMixSessionLog.shared.event("transition.safe-crossfade reason=\(plan?.reason ?? "analysis unavailable")")
+                    let reason = finalGridFailed ? "final cue grid unavailable" : (plan?.reason ?? "analysis unavailable")
+                    AutoMixSessionLog.shared.event("transition.safe-crossfade reason=\(reason) fx=reverb-wash")
                     scheduleSimpleTransition(
                         current: current, nextTrack: nextTrack,
                         blendDuration: min(fade, remaining), incomingStart: 0,
@@ -4019,6 +4059,10 @@ final class PlayerCore {
                     if inURLForBake == nil {
                         inURLForBake = try? await self.materializeLocalAudio(for: nextTrack)
                     }
+                    guard !Task.isCancelled, self.generation == token,
+                          self.transitionRequestID == transitionID,
+                          self.currentTrack?.id == current.id,
+                          self.incomingTrack?.id == nextTrack.id, self.isTransitioning else { return }
                     if outURLForBake == nil || inURLForBake == nil {
                         SonivoDiagnostics.log(
                             "[Mashup] stem bake skipped — missing local A/B (out:\(outURLForBake != nil) in:\(inURLForBake != nil))",
@@ -4027,6 +4071,14 @@ final class PlayerCore {
                         AutoMixSessionLog.shared.event(
                             "bake.skip missingLocal out=\(outURLForBake != nil) in=\(inURLForBake != nil)"
                         )
+                        if self.executionTransitionMode == .automix {
+                            // Without local PCM the final beat/cue validation and
+                            // stem mix cannot be performed; do not start a dry mashup.
+                            self.automixUnalignedPair = (current.id, nextTrack.id)
+                            self.automixFallbackTarget = nextTrack
+                            self.cancelTransition()
+                            return
+                        }
                     } else {
                         AutoMixSessionLog.shared.event("bake.start blend=\(String(format: "%.1f", self.transitionDuration))s")
                     }
@@ -4114,6 +4166,7 @@ final class PlayerCore {
                     // off-grid. Recover only nearby detected downbeats with enough
                     // runway; this is not a substitute for audio-clock scheduling.
                     let cueAnalysis = AutoMixV2AnalysisRuntime.shared
+                    var finalGridVerified = false
                     if !duetBake, style.isBeatmatched,
                        let plan = cueAnalysis.transitionPlan,
                        plan.type != .none, plan.type != .crossfade,
@@ -4131,6 +4184,7 @@ final class PlayerCore {
                             outgoingBPM: Double(outP.bpm), incomingBPM: Double(inP.bpm),
                             outgoingDownbeats: outP.downbeatsSec, incomingDownbeats: inP.downbeatsSec
                         ) {
+                            finalGridVerified = true
                             cueA = snapped.outgoing
                             cueB = snapped.incoming
                             self.incomingStartPosition = cueB
@@ -4141,6 +4195,16 @@ final class PlayerCore {
                         } else {
                             AutoMixSessionLog.shared.event("cue.downbeats unavailable")
                         }
+                    }
+                    // Retargeting may invalidate the planner's earlier grid check.
+                    // Do not claim a beatmatched stem mix when the actual cues did
+                    // not snap. Cancel while still silent and retry as a safe fade.
+                    if !duetBake && !finalGridVerified {
+                        AutoMixSessionLog.shared.event("transition.safe-required reason=final-cue-grid")
+                        self.automixUnalignedPair = (current.id, nextTrack.id)
+                        self.automixFallbackTarget = nextTrack
+                        self.cancelTransition()
+                        return
                     }
                     // Snap LAND onto a whole bar so B's vocal hits the kick grid.
                     if !duetBake, style.targetBPM > 30 {
@@ -4810,6 +4874,16 @@ final class PlayerCore {
                 ? mashupHeardVolumes(progress: p)
                 : (automixSafeCrossfade ? AutoMixSafeCrossfade.gains(progress: p)
                    : CrossfadeCurve.gains(progress: p))
+            // No invented tempo on unaligned tracks: a bounded, non-rhythmic
+            // reverb wash is applied only to A, and clears before the handoff.
+            if automixSafeCrossfade {
+                let wash = Float(sin(min(1, max(0, p)) * .pi)) * 0.50
+                if wash > 0.001 {
+                    publishLiveMixFX(echoWet: 0, echoFeedback: 0, delaySec: 0.35, reverbWet: wash)
+                } else {
+                    clearLiveMixFX()
+                }
+            }
             let gatedOutgoing: Float = mashup
                 ? applyLivePlanFX(progress: p, elapsed: elapsed, outgoingVolume: gains.outgoing)
                 : gains.outgoing

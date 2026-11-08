@@ -11,6 +11,10 @@ public enum MixPlanner {
             return none(a: a, reason: "Сохранён непрерывный альбомный переход")
         }
         if a.durationSec < 45 || b.durationSec < 45 {
+            // Short tracks still get an automatic transition, without a long stem mix.
+            if settings.mode == .automix {
+                return crossfade(a, b, settings, "Fallback: короткий трек")
+            }
             return none(a: a, reason: "Трек короче 45 секунд")
         }
         if settings.mode == .duet {
@@ -33,6 +37,11 @@ public enum MixPlanner {
 
         // ±1 semitone max for Automix — ±200¢ TimePitch sounded cheap/dirty in field 1055.
         let harmonic = CamelotCompatibility.match(a.camelotKey, b.camelotKey, maxSemitones: 1)
+        // A capped partial shift is NOT a harmonic match. Do not layer two
+        // conflicting tonal sources for the full mashup window.
+        guard harmonic.isHarmonicallyViable else {
+            return crossfade(a, b, settings, "Fallback: \(harmonic.description)")
+        }
         let bpmDiffPct: Float = (a.bpm > 30 && b.bpm > 30) ? abs(a.bpm - b.bpm) / a.bpm : 1.0
 
         // 1. Оценка уверенности сетки и выбор длины перехода по DJ Confidence Ladder (8-16 тактов)
