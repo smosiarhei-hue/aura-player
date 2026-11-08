@@ -46,7 +46,7 @@ class PlayerQualityNativeTests(unittest.TestCase):
         utility=screen.split('private var primaryUtilityRow:',1)[1].split('private var sleepTimerUtilityButton',1)[0]
         self.assertIn('quote.bubble',utility)
         self.assertIn('accessibilityLabel("Текст песни")',utility)
-        self.assertIn('AirPlayButtonView()',utility)
+        self.assertIn('AirPlayButtonView(tintColor: playerUsesDarkInk',utility)
         self.assertIn('list.bullet',utility)
         self.assertIn('sleepTimerUtilityButton',utility)
         self.assertIn('SonivoEqualizerGlyph()',utility)

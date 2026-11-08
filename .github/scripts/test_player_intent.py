@@ -47,7 +47,9 @@ class PlayerIntentTests(unittest.TestCase):
         block=SCREEN.split('private var background:',1)[1].split('private var topHeader:',1)[0]
         self.assertIn('dominantArtworkColor',block)
         self.assertIn('Color.black.overlay',block)
-        self.assertIn('opacity(0.28)',block)
+        self.assertIn('opacity(showLyricsMode ? 0.22 : 1)',block)
+        self.assertIn('PlayerArtworkToneMath.prefersDarkInk(rgb: tone)',SCREEN)
+        self.assertIn('playerUsesDarkInk ? .light : .dark',SCREEN)
         layers=SCREEN.split('ZStack(alignment: .top)',1)[1].split('// Attach the native rendering layer',1)[0]
         self.assertIn('.opacity(isFullScreenVideoShot || !showLyricsMode ? 0 : 1)', layers)
         self.assertIn('.opacity(isFullScreenVideoShot || !showLyricsMode ? 0 : 0.40)', layers)

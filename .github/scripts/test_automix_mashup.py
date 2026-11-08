@@ -94,6 +94,8 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("headroom", badge)
         self.assertIn("extendedLinear", badge)
         self.assertIn("plusLighter", badge)
+        self.assertIn("if colorScheme == .light", badge)
+        self.assertIn("Text(title).foregroundStyle(Color.black)", badge)
 
         timeline = (ROOT / "Sonivo/PlayerScreenV2.swift").read_text()
         self.assertIn("struct PlayerTimelineSection", timeline)

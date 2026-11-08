@@ -103,7 +103,7 @@ class PlayerTrackWaveTests(unittest.TestCase):
         text=source('PlayerScreenV2.swift')
         block=text.split('private var background:',1)[1].split('private var topHeader:',1)[0]
         self.assertIn('resolvedArtworkPaletteTrackID == track?.id',block)
-        self.assertIn('Color.black.overlay((coverColor ?? Color.clear).opacity(0.28))',block)
+        self.assertIn('Color.black.overlay((coverColor ?? Color.clear).opacity(showLyricsMode ? 0.22 : 1))',block)
         self.assertIn('? dominantArtworkColor : nil',block)
         normal_player = block.split('return AnyView(',1)[1]
         for forbidden in ['LinearGradient','RadialGradient','PlayerMusicReactiveBackdrop','VideoShotPlayerView','TimelineView','Image(uiImage:']:

@@ -18,6 +18,17 @@ nonisolated enum PlayerInteractionPolicy {
 
 /// Pixel-area ranking, without saturation bonuses that let a small bright accent win.
 nonisolated enum PlayerArtworkToneMath {
+    /// Choose the higher-contrast monochrome ink against the actual sRGB background.
+    static func prefersDarkInk(rgb: SIMD3<Float>?) -> Bool {
+        guard let rgb, rgb.x.isFinite, rgb.y.isFinite, rgb.z.isFinite else { return false }
+        func linear(_ value: Float) -> Double {
+            let c = Double(min(1, max(0, value)))
+            return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+        }
+        let luminance = 0.2126 * linear(rgb.x) + 0.7152 * linear(rgb.y) + 0.0722 * linear(rgb.z)
+        return luminance > 0.179
+    }
+
     static func dominantRGB(rgba: [UInt8]) -> SIMD3<Float>? {
         guard !rgba.isEmpty, rgba.count % 4 == 0 else { return nil }
         var buckets: [Int: (weight: Float, sum: SIMD3<Float>)] = [:]

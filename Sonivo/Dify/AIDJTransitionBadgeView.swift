@@ -15,6 +15,7 @@ struct AIDJTransitionBadgeView: View {
     @State private var appeared = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.colorScheme) private var colorScheme
 
     private var title: String {
         let raw = phaseLabel ?? ""
@@ -27,15 +28,21 @@ struct AIDJTransitionBadgeView: View {
 
     var body: some View {
         VStack(spacing: 1) {
-            AutomixHDRShimmerText(title)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+            Group {
+                if colorScheme == .light {
+                    Text(title).foregroundStyle(Color.black)
+                } else {
+                    AutomixHDRShimmerText(title)
+                }
+            }
+            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
 
             if let phase {
                 Text(phase)
                     .font(.system(size: 8, weight: .medium, design: .rounded))
-                    .foregroundStyle(Color.white.opacity(0.72))
+                    .foregroundStyle((colorScheme == .light ? Color.black : Color.white).opacity(0.72))
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
             }

@@ -50,6 +50,12 @@ def verify_player_dismiss(root):
         precondition(PlayerArtworkToneMath.dominantRGB(rgba: transparent)!.x > 0.99)
         precondition(PlayerArtworkToneMath.dominantRGB(rgba: [1]) == nil)
         precondition(PlayerArtworkToneMath.dominantRGB(rgba: pixels([0,0,0,0], count: 20)) == nil)
+        precondition(PlayerArtworkToneMath.prefersDarkInk(rgb: SIMD3<Float>(repeating: 1)), "white background needs black ink")
+        precondition(!PlayerArtworkToneMath.prefersDarkInk(rgb: SIMD3<Float>(repeating: 0)), "black background needs white ink")
+        precondition(PlayerArtworkToneMath.prefersDarkInk(rgb: SIMD3<Float>(repeating: 0.5)))
+        precondition(!PlayerArtworkToneMath.prefersDarkInk(rgb: SIMD3<Float>(repeating: 0.4)))
+        precondition(!PlayerArtworkToneMath.prefersDarkInk(rgb: nil))
+        precondition(!PlayerArtworkToneMath.prefersDarkInk(rgb: SIMD3<Float>(.nan, 0, 0)))
         let black = PlayerArtworkToneMath.dominantRGB(rgba: pixels([0,0,0,255], count: 20))!
         precondition(black == SIMD3<Float>(repeating: 0), "Neutral artwork must not acquire a made-up hue")
         print("Player swipe dismissal direction, scroll boundary, short/fast/reversed drag checks passed")

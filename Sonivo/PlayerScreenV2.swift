@@ -35,6 +35,7 @@ struct PlayerScreenV2: View {
     @State private var coverTransitionOutgoingImage: UIImage?
     @State private var coverTransitionDirection = 0
     @State private var dominantArtworkColor: Color?
+    @State private var dominantArtworkPrefersDarkInk = false
     @State private var waveLoading = false
     @State private var waveActive = false
     @State private var waveMessage: String?
@@ -117,6 +118,11 @@ struct PlayerScreenV2: View {
         if !artworkPaletteColors.isEmpty { return artworkPaletteColors }
         if let colors = track?.palette, !colors.isEmpty { return colors }
         return Palette.seeded(42).colors
+    }
+
+    private var playerUsesDarkInk: Bool {
+        !showLyricsMode && !isFullScreenVideoShot && resolvedArtworkPaletteTrackID == track?.id
+            && dominantArtworkPrefersDarkInk
     }
 
     var body: some View {
@@ -213,8 +219,8 @@ struct PlayerScreenV2: View {
                 }
                 .frame(width: totalWidth, height: totalHeight, alignment: .top)
                 .animation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion), value: showLyricsMode)
-                // Apple Music Now Playing is always dark over the blurred cover wash.
-                .environment(\.colorScheme, (isFullScreenVideoShot || !showLyricsMode) ? .dark : preferredScheme)
+                // Resolve semantic controls from the cover tone; video stays dark.
+                .environment(\.colorScheme, isFullScreenVideoShot ? .dark : (showLyricsMode ? preferredScheme : (playerUsesDarkInk ? .light : .dark)))
             }
             .ignoresSafeArea(.container, edges: .all)
         }
@@ -360,9 +366,9 @@ struct PlayerScreenV2: View {
         // A spatially uniform, contrast-safe tone derived from the cover.
         // Never display a previous track's extracted palette while the new cover is loading.
         let coverColor = resolvedArtworkPaletteTrackID == track?.id ? dominantArtworkColor : nil
-        // Cap luminance even for white artwork to keep white controls readable.
-        // Missing/transparent artwork falls back to neutral black, never an invented hue.
-        return AnyView(Color.black.overlay((coverColor ?? Color.clear).opacity(0.28))
+        // Preserve the actual tone, including white. Missing artwork is neutral black.
+        // Lyrics keep their existing dim overlay over the blurred atmosphere.
+        return AnyView(Color.black.overlay((coverColor ?? Color.clear).opacity(showLyricsMode ? 0.22 : 1))
             .ignoresSafeArea()
             .allowsHitTesting(false))
     }
@@ -803,7 +809,7 @@ struct PlayerScreenV2: View {
         }
     }
 
-    /// Soft native dissolve into the UIBlur atmosphere — alpha only, never a tinted
+    /// Soft dissolve into the player background — alpha only, never a tinted
     /// or re-blurred strip painted over the art (that seam reads as "the line").
     /// Mid art stays fully opaque — color bloom never punches through.
     private var coverDissolveMask: some View {
@@ -827,10 +833,10 @@ struct PlayerScreenV2: View {
     /// A narrow side fade avoids hard edges without obscuring the artwork.
     private var coverSideDissolveMask: some View {
         LinearGradient(stops: [
-            .init(color: .black.opacity(0.42), location: 0),
+            .init(color: .clear, location: 0),
             .init(color: .black, location: 0.045),
             .init(color: .black, location: 0.955),
-            .init(color: .black.opacity(0.42), location: 1)
+            .init(color: .clear, location: 1)
         ], startPoint: .leading, endPoint: .trailing)
     }
 
@@ -1186,7 +1192,8 @@ struct PlayerScreenV2: View {
             .disabled(track == nil)
             .accessibilityLabel("Текст песни")
 
-            AirPlayButtonView()
+            AirPlayButtonView(tintColor: playerUsesDarkInk
+                ? UIColor.black.withAlphaComponent(0.70) : UIColor.white.withAlphaComponent(0.70))
                 .frame(width: tapSide, height: tapSide)
                 .frame(maxWidth: .infinity)
 
@@ -1339,7 +1346,7 @@ struct PlayerScreenV2: View {
                     .scaleEffect(0.65)
                 Text(aiVideoShotService.statusMessage)
                     .font(SN.text(.caption2, .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(SN.ink)
                     .lineLimit(1)
             }
             .padding(.horizontal, 10)
@@ -1355,12 +1362,12 @@ struct PlayerScreenV2: View {
         } else if let stem = stemBadgeText(analysis.stemStatus) {
             Text(stem)
                 .font(SN.text(.caption2, .semibold))
-                .foregroundStyle(Color.white.opacity(0.88))
+                .foregroundStyle(SN.ink.opacity(0.88))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(Capsule().fill(Color.white.opacity(0.08)))
+                .background(Capsule().fill(SN.ink.opacity(0.08)))
                 .transition(.opacity)
         } else {
             qualityBadgeButton
@@ -1393,7 +1400,7 @@ struct PlayerScreenV2: View {
             .padding(.vertical, 4)
             .background(
                 Capsule()
-                    .fill(Color.white.opacity(0.06))
+                    .fill(SN.ink.opacity(0.06))
             )
         }
         .buttonStyle(.plain)
@@ -1633,11 +1640,12 @@ struct PlayerScreenV2: View {
         }.value
         guard !Task.isCancelled, track?.id == trackID, paletteTrackId == trackID else { return }
         let colors = hexes.compactMap(Color.init(hex:)); guard !colors.isEmpty else { return }
-        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.85)) {
-            artworkPaletteColors = colors
-            dominantArtworkColor = tone.map { Color(.sRGB, red: Double($0.x), green: Double($0.y), blue: Double($0.z), opacity: 1) }
-            resolvedArtworkPaletteTrackID = trackID
-        }
+        // Change tone and contrast together: an independent fade could briefly
+        // put black controls on a still-dark intermediate background (or vice versa).
+        artworkPaletteColors = colors
+        dominantArtworkColor = tone.map { Color(.sRGB, red: Double($0.x), green: Double($0.y), blue: Double($0.z), opacity: 1) }
+        dominantArtworkPrefersDarkInk = PlayerArtworkToneMath.prefersDarkInk(rgb: tone)
+        resolvedArtworkPaletteTrackID = trackID
     }
     private func refreshPalette() async {
         guard let track, paletteTrackId != track.id || resolvedArtworkPaletteTrackID != track.id else { return }
@@ -2219,12 +2227,12 @@ struct PlayerTimelineSection<Center: View>: View {
 
                 ZStack(alignment: .leading) {
                     Capsule(style: .continuous)
-                        .fill(Color.white.opacity(isScrubbing ? 0.28 : 0.22))
+                        .fill(SN.ink.opacity(isScrubbing ? 0.28 : 0.22))
                         .frame(height: trackHeight)
 
                     if let bufferFraction = player.bufferedProgress, bufferFraction > 0.005, !mixing {
                         Capsule(style: .continuous)
-                            .fill(Color.white.opacity(isScrubbing ? 0.40 : 0.32))
+                            .fill(SN.ink.opacity(isScrubbing ? 0.40 : 0.32))
                             .frame(
                                 width: max(trackHeight, geo.size.width * min(1.0, CGFloat(bufferFraction))),
                                 height: trackHeight
@@ -2233,7 +2241,7 @@ struct PlayerTimelineSection<Center: View>: View {
                     }
 
                     Capsule(style: .continuous)
-                        .fill(Color.white.opacity(mixing ? 1.0 : 0.92))
+                        .fill(SN.ink.opacity(mixing ? 1.0 : 0.92))
                         .frame(width: max(0, width), height: trackHeight)
                         // Hard snap on Automix handoff (display track / duration change) — no morph.
                         .transaction { tx in
@@ -2242,7 +2250,7 @@ struct PlayerTimelineSection<Center: View>: View {
 
                     if isScrubbing {
                         Circle()
-                            .fill(Color.white)
+                            .fill(SN.ink)
                             .frame(width: thumbSize, height: thumbSize)
                             .offset(x: max(0, min(width - thumbSize / 2, geo.size.width - thumbSize)))
                             .shadow(color: .black.opacity(0.22), radius: 2, y: 1)
@@ -2316,14 +2324,14 @@ struct PlayerTimelineSection<Center: View>: View {
             HStack {
                 Text(player.formatted(effectiveProgress))
                     .font(SN.text(.caption2, .medium).monospacedDigit())
-                    .foregroundStyle(Color.white.opacity(0.62))
+                    .foregroundStyle(SN.ink.opacity(0.62))
                     .contentTransition(.numericText())
                 Spacer()
                 center
                 Spacer()
                 Text("-" + player.formatted(max(0, timelineDuration - effectiveProgress)))
                     .font(SN.text(.caption2, .medium).monospacedDigit())
-                    .foregroundStyle(Color.white.opacity(0.62))
+                    .foregroundStyle(SN.ink.opacity(0.62))
                     .contentTransition(.numericText())
             }
         }
@@ -2526,7 +2534,7 @@ struct FluidVolumeSlider: View {
         HStack(alignment: .center, spacing: 12) {
             Image(systemName: "speaker.fill")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Color.white.opacity(0.72))
+                .foregroundStyle(SN.ink.opacity(0.72))
                 .frame(width: 18, height: 18, alignment: .center)
 
             GeometryReader { geo in
@@ -2538,11 +2546,11 @@ struct FluidVolumeSlider: View {
 
                 ZStack(alignment: .leading) {
                     Capsule(style: .continuous)
-                        .fill(Color.white.opacity(isDragging ? 0.28 : 0.22))
+                        .fill(SN.ink.opacity(isDragging ? 0.28 : 0.22))
                         .frame(height: trackHeight)
 
                     Capsule(style: .continuous)
-                        .fill(Color.white.opacity(0.92))
+                        .fill(SN.ink.opacity(0.92))
                         .frame(width: max(trackHeight, filledWidth), height: trackHeight)
                 }
                 .animation(.smooth(duration: 0.16), value: isDragging)
@@ -2579,7 +2587,7 @@ struct FluidVolumeSlider: View {
 
             Image(systemName: "speaker.wave.3.fill")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color.white.opacity(0.72))
+                .foregroundStyle(SN.ink.opacity(0.72))
                 .frame(width: 20, height: 18, alignment: .center)
         }
         .frame(height: 44)

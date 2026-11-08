@@ -97,7 +97,7 @@ class NowPlayingCoverAppleMusicTests(unittest.TestCase):
         mask = PLAYER.split("private var coverSideDissolveMask:", 1)[1].split(
             "private func inlineLyricsStage", 1
         )[0]
-        for token in [".black.opacity(0.42)", "location: 0.045", "location: 0.955"]:
+        for token in [".clear, location: 0", ".clear, location: 1", "location: 0.045", "location: 0.955"]:
             self.assertIn(token, mask)
 
     def test_seek_and_volume_match_apple_music_bars(self):
@@ -106,7 +106,7 @@ class NowPlayingCoverAppleMusicTests(unittest.TestCase):
         )[0]
         self.assertIn("let trackHeight: CGFloat = isScrubbing ? 6 : 3", timeline)
         self.assertIn("if isScrubbing", timeline)
-        self.assertIn("Color.white.opacity", timeline)
+        self.assertIn("SN.ink.opacity", timeline)
         volume = PLAYER.split("struct FluidVolumeSlider", 1)[1].split(
             "struct VideoShotPlayerView", 1
         )[0]
@@ -116,11 +116,9 @@ class NowPlayingCoverAppleMusicTests(unittest.TestCase):
         self.assertIn("speaker.fill", volume)
         self.assertIn("speaker.wave.3.fill", volume)
 
-    def test_now_playing_forces_dark_over_atmosphere(self):
-        self.assertIn(
-            "(isFullScreenVideoShot || !showLyricsMode) ? .dark : preferredScheme",
-            PLAYER,
-        )
+    def test_now_playing_uses_contrast_aware_scheme(self):
+        self.assertIn("playerUsesDarkInk ? .light : .dark", PLAYER)
+        self.assertIn("isFullScreenVideoShot ? .dark", PLAYER)
 
     def test_first_screen_utility_row_matches_apple_music(self):
         self.assertIn("primaryUtilityRow", PLAYER)
@@ -128,7 +126,7 @@ class NowPlayingCoverAppleMusicTests(unittest.TestCase):
             "private var sleepTimerUtilityButton", 1
         )[0]
         self.assertIn("quote.bubble", utility)
-        self.assertIn("AirPlayButtonView()", utility)
+        self.assertIn("AirPlayButtonView(tintColor: playerUsesDarkInk", utility)
         self.assertIn("list.bullet", utility)
         self.assertIn("sleepTimerUtilityButton", utility)
         self.assertIn("SonivoEqualizerGlyph()", utility)
