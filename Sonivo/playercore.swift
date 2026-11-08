@@ -4137,7 +4137,11 @@ final class PlayerCore {
                     } ?? false
                     let loopBars = (!duetBake && style.isBeatmatched && bpmForGrid > 30 && reliableGrid)
                         ? planLoopBars : 0
-                    let loopSec = Double(loopBars) * barSec
+                    // The baker tiles source-file PCM. barSec is in output time;
+                    // scale it by A's locked playback rate before selecting PCM.
+                    let loopSec = HTDemucsWindowMixer.sourceLoopSeconds(
+                        bars: loopBars, targetBPM: bpmForGrid, rateA: Double(style.rateA)
+                    )
                     if loopSec > 0.25 {
                         self.liveLoopNextBar = Double(loopBars)
                         self.mashupPhraseLoopCueSec = 0

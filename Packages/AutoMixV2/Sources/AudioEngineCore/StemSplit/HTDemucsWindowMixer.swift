@@ -13,6 +13,16 @@ public enum HTDemucsWindowMixer {
         return min(1.08, max(0.92, plannedRate))
     }
 
+    /// A bake contains source-file samples, not samples at the deck's output
+    /// speed. Convert the planned wall-clock bars into source-file seconds so
+    /// the loop has the intended duration after TimePitch changes deck A's rate.
+    public static func sourceLoopSeconds(bars: Int, targetBPM: Double, rateA: Double) -> Double {
+        // Rates reach this function through Float; allow its rounding at ±8%.
+        guard bars > 0, bars <= 32, targetBPM.isFinite, targetBPM > 30,
+              rateA.isFinite, rateA >= 0.9199, rateA <= 1.0801 else { return 0 }
+        return Double(bars) * 240.0 / targetBPM * rateA
+    }
+
     public static func render(
         dryL: [Float],
         dryR: [Float],

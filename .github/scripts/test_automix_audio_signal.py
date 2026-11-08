@@ -42,6 +42,16 @@ precondition(abs(HTDemucsWindowMixer.automixBakeRate(0.93) - 0.93) < 0.000001)
 precondition(HTDemucsWindowMixer.automixBakeRate(2) == 1.08)
 precondition(HTDemucsWindowMixer.automixBakeRate(0) == 0.92)
 precondition(HTDemucsWindowMixer.automixBakeRate(.nan) == 1)
+// Source loop length must play for exactly the target number of output bars.
+for r in [0.92, 0.96, 1.0, 1.05, 1.08] {
+    let seconds = HTDemucsWindowMixer.sourceLoopSeconds(bars: 2, targetBPM: 128, rateA: r)
+    precondition(abs(seconds / r - 2 * 240.0 / 128.0) < 0.000001, "loop drift at deck rate")
+}
+precondition(HTDemucsWindowMixer.sourceLoopSeconds(bars: 0, targetBPM: 128, rateA: 1) == 0)
+precondition(HTDemucsWindowMixer.sourceLoopSeconds(bars: 2, targetBPM: .nan, rateA: 1) == 0)
+precondition(HTDemucsWindowMixer.sourceLoopSeconds(bars: 2, targetBPM: 128, rateA: .nan) == 0)
+precondition(HTDemucsWindowMixer.sourceLoopSeconds(bars: 2, targetBPM: 128, rateA: Double(Float(1.08))) > 0)
+precondition(HTDemucsWindowMixer.sourceLoopSeconds(bars: 2, targetBPM: 128, rateA: 1.12) == 0)
 let signal = [Float](repeating: 0.9, count: 1000)
 let mixed = HTDemucsWindowMixer.render(dryL: signal, dryR: signal, stemL: signal, stemR: signal,
                                         amount: 1, untilFrame: 900, fadeFrames: 200)
@@ -128,6 +138,8 @@ precondition(HTDemucsTensorLayout.checked(shape: [1, 8, 4], strides: [40, 5, 1],
         hybrid_bake = (CORE / "MidSideStemBaker.swift").read_text()
         self.assertIn("HTDemucsWindowMixer.automixBakeRate(playbackRate)", neural_bake)
         self.assertIn("HTDemucsWindowMixer.automixBakeRate(playbackRate)", hybrid_bake)
+        self.assertIn("HTDemucsWindowMixer.sourceLoopSeconds(", player)
+        self.assertIn("rateA: Double(style.rateA)", player)
         self.assertEqual(neural_bake.count("stem: duet ? .vocal : .vocalWithBacking"), 2)
         self.assertIn("HTDemucsWindowMixer.automixIncomingVocalAmount", neural_bake)
         self.assertIn('return "model-not-installed"', neural_bake)
