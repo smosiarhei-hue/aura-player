@@ -3267,6 +3267,16 @@ final class PlayerCore {
             let live = self.playbackProgress
             let heard = max(0, live - cueA)
             let landAt = blend * handoff
+            if self.executionTransitionMode == .automix {
+                // Once the dry transition is audible, replacing A with an
+                // instrumental stem can cut a sung phrase even at the same gain.
+                // Finish the active live transition instead of switching sources.
+                MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
+                AutoMixSessionLog.shared.event(
+                    String(format: "bake.late-drop reason=live-started lag=%.2fs", heard)
+                )
+                return
+            }
             // Field 1148: once live Automix has been audible for >~1.2s, swapping
             // onto stems mid-window (volume thump) is worse than finishing live.
             if heard >= 1.2 || heard >= landAt - 1.5 {
@@ -4176,11 +4186,18 @@ final class PlayerCore {
                             ) {
                                 return (neural.outgoing, neural.incoming, true)
                             }
+                            await MainActor.run {
+                                AutoMixSessionLog.shared.event("bake.demucs fallback=unavailable-or-window-not-ready")
+                            }
                         } catch is CancellationError {
                             throw CancellationError()
                         } catch {
-                            // Fall through to mid/side.
+                            // Do not put file paths or model data in the field log.
+                            await MainActor.run {
+                                AutoMixSessionLog.shared.event("bake.demucs fallback=inference-or-model-error")
+                            }
                         }
+                        try Task.checkCancellation()
                         if bakeDuet {
                             let hybrid = try MidSideStemBaker.bakeDuetStemPair(
                                 outgoingURL: bakeOutURL,
@@ -4311,6 +4328,13 @@ final class PlayerCore {
                         } else if let stemPair = try? await bakeTask.value {
                             MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
                         }
+                        return
+                    }
+                    // The playhead may have started the live lane while the
+                    // probe awaited bake. Its late-result task owns cleanup;
+                    // do not mount the same result in this competing path.
+                    if self.incomingLaneReady {
+                        self.transitionPreparationTask = nil
                         return
                     }
                     let bakeResult: Result<(outgoing: URL, incoming: URL, neural: Bool), Error>

@@ -66,7 +66,7 @@ public actor CoreMLStemSeparator: StemSeparating {
 
     public func separate(_ input: StereoChunk) async throws -> [StemKind: StereoChunk] {
         let n = segmentFrames
-        guard input.frameCount == n else { throw PipelineError.unsupportedModel }
+        guard input.frameCount == n, input.right.count == n else { throw PipelineError.unsupportedModel }
         let shape: [NSNumber] = [1, 2, NSNumber(value: n)]
         let array = try MLMultiArray(shape: shape, dataType: .float32)
         let inputName = model.modelDescription.inputDescriptionsByName["mix"] != nil
@@ -77,6 +77,9 @@ public actor CoreMLStemSeparator: StemSeparating {
         let leftBase = inStrides.count > 1 ? inStrides[1] : n
         let step = inStrides.last ?? 1
         for i in 0..<n {
+            guard input.left[i].isFinite, input.right[i].isFinite else {
+                throw PipelineError.unsupportedModel
+            }
             inPtr[i * step] = input.left[i]
             inPtr[leftBase + i * step] = input.right[i]
         }
@@ -85,6 +88,7 @@ public actor CoreMLStemSeparator: StemSeparating {
         let clock = ContinuousClock()
         let t0 = clock.now
         let out = try await model.prediction(from: provider)
+        try Task.checkCancellation()
         print("HTDemucs segment \(clock.now - t0)")
         let outputName = out.featureNames.contains("sources") ? "sources" : out.featureNames.first
         guard let outputName, let y = out.featureValue(for: outputName)?.multiArrayValue else {
@@ -93,28 +97,25 @@ public actor CoreMLStemSeparator: StemSeparating {
         guard y.dataType == .float32 else { throw PipelineError.unsupportedModel }
         let yShape = y.shape.map(\.intValue)
         let yStrides = y.strides.map(\.intValue)
-        let packedPairs = yShape.count == 3 && yShape[1] == 8 && yStrides.count == 3
-        let stemMajor = yShape.count == 4 && yStrides.count == 4
-        guard packedPairs || stemMajor else { throw PipelineError.unsupportedModel }
+        guard let layout = HTDemucsTensorLayout.checked(
+            shape: yShape, strides: yStrides, count: y.count, frames: n
+        ) else { throw PipelineError.unsupportedModel }
         let yPtr = y.dataPointer.bindMemory(to: Float.self, capacity: y.count)
-        func channel(_ stem: Int, _ ch: Int) -> [Float] {
+        func channel(_ stem: Int, _ ch: Int) throws -> [Float] {
             var samples = [Float](repeating: 0, count: n)
-            if packedPairs {
-                let base = yStrides[1] * (stem * 2 + ch)
-                let hop = yStrides[2]
-                for i in 0..<n { samples[i] = yPtr[base + i * hop] }
-            } else {
-                let base = yStrides[1] * stem + yStrides[2] * ch
-                let hop = yStrides[3]
-                for i in 0..<n { samples[i] = yPtr[base + i * hop] }
+            let base = layout.channelBases[stem * 2 + ch]
+            for i in 0..<n {
+                let sample = yPtr[base + i * layout.frameStride]
+                guard sample.isFinite else { throw PipelineError.unsupportedModel }
+                samples[i] = sample
             }
             return samples
         }
         return [
-            .drums: StereoChunk(left: channel(0, 0), right: channel(0, 1)),
-            .bass: StereoChunk(left: channel(1, 0), right: channel(1, 1)),
-            .other: StereoChunk(left: channel(2, 0), right: channel(2, 1)),
-            .vocals: StereoChunk(left: channel(3, 0), right: channel(3, 1))
+            .drums: try StereoChunk(left: channel(0, 0), right: channel(0, 1)),
+            .bass: try StereoChunk(left: channel(1, 0), right: channel(1, 1)),
+            .other: try StereoChunk(left: channel(2, 0), right: channel(2, 1)),
+            .vocals: try StereoChunk(left: channel(3, 0), right: channel(3, 1))
         ]
     }
 }

@@ -54,6 +54,16 @@ let end = AutoMixSafeCrossfade.gains(progress: 1)
 precondition(start.outgoing == 1 && start.incoming == 0, "fallback start")
 precondition(end.outgoing == 0 && end.incoming == 1, "fallback end")
 precondition(AutoMixSafeCrossfade.gains(progress: .nan).outgoing == 1, "nonfinite fallback")
+let packed = HTDemucsTensorLayout.checked(shape: [1, 8, 4], strides: [32, 4, 1], count: 32, frames: 4)
+precondition(packed?.channelBases == [0,4,8,12,16,20,24,28] && packed?.frameStride == 1, "packed layout")
+let separated = HTDemucsTensorLayout.checked(shape: [1, 4, 2, 4], strides: [32, 8, 4, 1], count: 32, frames: 4)
+precondition(separated?.channelBases == packed?.channelBases, "stem-major layout")
+let transposed = HTDemucsTensorLayout.checked(shape: [1, 8, 4], strides: [32, 1, 8], count: 32, frames: 4)
+precondition(transposed?.channelBases == [0,1,2,3,4,5,6,7] && transposed?.frameStride == 8, "dense transposed layout")
+precondition(HTDemucsTensorLayout.checked(shape: [1, 8, 3], strides: [24, 3, 1], count: 24, frames: 4) == nil, "short model output")
+precondition(HTDemucsTensorLayout.checked(shape: [1, 3, 2, 4], strides: [24, 8, 4, 1], count: 24, frames: 4) == nil, "missing stem")
+precondition(HTDemucsTensorLayout.checked(shape: [1, 8, 4], strides: [32, 1, 1], count: 32, frames: 4) == nil, "overlapping strides")
+precondition(HTDemucsTensorLayout.checked(shape: [1, 8, 4], strides: [40, 5, 1], count: 32, frames: 4) == nil, "padded strides")
 '''
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp)
@@ -61,6 +71,7 @@ precondition(AutoMixSafeCrossfade.gains(progress: .nan).outgoing == 1, "nonfinit
             binary = path / "signal-test"
             subprocess.run(["swiftc", str(CORE / "StemMashupGlue.swift"),
                             str(CORE / "StemSplit/HTDemucsWindowMixer.swift"),
+                            str(CORE / "StemSplit/HTDemucsTensorLayout.swift"),
                             str(CORE / "CrossfadeCurve.swift"), str(path / "main.swift"), "-o", str(binary)],
                            check=True, capture_output=True, text=True, timeout=120)
             subprocess.run([str(binary)], check=True, capture_output=True, text=True, timeout=30)
@@ -87,6 +98,14 @@ precondition(AutoMixSafeCrossfade.gains(progress: .nan).outgoing == 1, "nonfinit
         self.assertIn("plan.type != .crossfade, plan.type != .none", style)
         analyzer = (ROOT / "Packages/AutoMixV2/Sources/TrackAnalysis/TrackAnalyzer.swift").read_text()
         self.assertIn("guard maxLag >= minLag else { return (0, 0) }", analyzer)
+        separator = (CORE / "StemSplit/CoreMLStemSeparator.swift").read_text()
+        self.assertIn("HTDemucsTensorLayout.checked(", separator)
+        self.assertIn("input.right.count == n", separator)
+        self.assertIn("guard sample.isFinite", separator)
+        late = player.split("let late = await bakeTask.result", 1)[1].split("do {", 1)[0]
+        self.assertIn('reason=live-started', late)
+        self.assertIn("self.executionTransitionMode == .automix", late)
+        self.assertIn("MidSideStemBaker.removeTempFiles", late)
 
 if __name__ == "__main__":
     unittest.main()
