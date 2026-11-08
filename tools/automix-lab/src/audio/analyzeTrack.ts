@@ -108,73 +108,113 @@ function onsetEnvelope(energy: number[]): number[] {
 const BPM_HOP_SEC = 0.01;
 
 /**
- * BPM via autocorrelation of a fine onset envelope (10 ms hops).
- * Old 250 ms hops mapped ~110–130 BPM onto the same lag (= always “120”).
+ * Autocorrelation of 10 ms onset envelopes. Full-band remains the default;
+ * a clearer mid-band rhythm may refine it only in the same tempo neighbourhood.
+ * BPM alone says nothing about bars or vocal phrases.
  */
 export function estimateBPMFromSamples(
   samples: Float32Array,
   sampleRate: number
 ): { bpm: number; confidence: number } {
+  const fallback = { bpm: 120, confidence: 0.1 };
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0) return fallback;
   const hop = Math.max(1, Math.floor(sampleRate * BPM_HOP_SEC));
-  const env: number[] = [];
+  const hopSec = hop / sampleRate;
+  const full: number[] = [];
+  const mid: number[] = [];
+  // Difference of one-pole low passes reduces irregular bass and bright highs.
+  const lowAlpha = 1 - Math.exp((-2 * Math.PI * 150) / sampleRate);
+  const highAlpha = 1 - Math.exp((-2 * Math.PI * 1200) / sampleRate);
+  let low = 0;
+  let high = 0;
   for (let i = 0; i + hop <= samples.length; i += hop) {
-    let sum = 0;
+    let fullSum = 0;
+    let midSum = 0;
     for (let j = 0; j < hop; j++) {
       const v = samples[i + j]!;
-      sum += v * v;
+      if (!Number.isFinite(v)) return fallback;
+      low += lowAlpha * (v - low);
+      high += highAlpha * (v - high);
+      const band = high - low;
+      fullSum += v * v;
+      midSum += band * band;
     }
-    env.push(Math.sqrt(sum / hop));
+    full.push(Math.sqrt(fullSum / hop));
+    mid.push(Math.sqrt(midSum / hop));
   }
-  const onset = onsetEnvelope(env);
-  // Use middle 60% of the track (skip intro silence / outro fade).
-  const i0 = Math.floor(onset.length * 0.15);
-  const i1 = Math.floor(onset.length * 0.85);
-  const region = onset.slice(i0, Math.max(i0 + 64, i1));
-  if (region.length < 64) return { bpm: 120, confidence: 0.1 };
+  const i0 = Math.floor(full.length * 0.15);
+  const i1 = Math.floor(full.length * 0.85);
+  const fullOnset = onsetEnvelope(full).slice(i0, Math.max(i0 + 64, i1));
+  const midOnset = onsetEnvelope(mid).slice(i0, Math.max(i0 + 64, i1));
+  if (fullOnset.length < 64) return fallback;
 
-  const minBpm = 70;
-  const maxBpm = 180;
-  const candidates: { bpm: number; score: number }[] = [];
-
-  for (let bpm = minBpm; bpm <= maxBpm; bpm++) {
-    const lag = Math.round(60 / bpm / BPM_HOP_SEC);
-    if (lag < 2 || lag >= region.length >> 1) continue;
-    let corr = 0;
-    let norm = 0;
-    for (let i = 0; i + lag < region.length; i++) {
-      corr += region[i]! * region[i + lag]!;
-      norm += region[i]! * region[i]!;
+  const evaluate = (region: number[]) => {
+    const minLag = Math.max(2, Math.floor(60 / 180 / hopSec) - 1);
+    const maxLag = Math.min((region.length >> 1) - 1, Math.ceil(60 / 70 / hopSec) + 1);
+    const correlations: number[] = [];
+    for (let lag = minLag; lag <= maxLag; lag++) {
+      let corr = 0;
+      let norm = 0;
+      for (let i = 0; i + lag < region.length; i++) {
+        corr += region[i]! * region[i + lag]!;
+        norm += region[i]! * region[i]!;
+      }
+      correlations[lag] = norm > 1e-9 ? corr / norm : 0;
     }
-    const score = norm > 1e-9 ? corr / norm : 0;
-    // Mild preference for club/pop pocket 95–135 without forcing 120.
-    const center = 115;
-    const bias = 1 - Math.min(1, Math.abs(bpm - center) / 90) * 0.12;
-    candidates.push({ bpm, score: score * bias });
-  }
-
-  candidates.sort((a, b) => b.score - a.score);
-  if (!candidates.length) return { bpm: 120, confidence: 0.1 };
-
-  // Pick best in 90–140 if close to global best; else global.
-  let best = candidates[0]!;
-  for (const c of candidates.slice(0, 12)) {
-    if (c.bpm >= 90 && c.bpm <= 140 && c.score >= best.score * 0.92) {
-      best = c;
-      break;
+    const candidates: { bpm: number; score: number }[] = [];
+    for (let bpm = 70; bpm <= 180; bpm++) {
+      const lag = Math.round(60 / bpm / hopSec);
+      if (lag < minLag || lag > maxLag) continue;
+      const bias = 1 - Math.min(1, Math.abs(bpm - 115) / 90) * 0.12;
+      candidates.push({ bpm, score: (correlations[lag] ?? 0) * bias });
     }
-  }
+    candidates.sort((a, b) => b.score - a.score);
+    if (!candidates.length || !(candidates[0]!.score > 1e-9)) return null;
+    let best = candidates[0]!;
+    for (const c of candidates.slice(0, 12)) {
+      if (c.bpm >= 90 && c.bpm <= 140 && c.score >= best.score * 0.92) {
+        best = c;
+        break;
+      }
+    }
+    let bpm = best.bpm;
+    const scoreAt = (b: number) => candidates.find((c) => c.bpm === b)?.score ?? 0;
+    if (bpm < 90 && scoreAt(bpm * 2) >= best.score * 0.85) bpm *= 2;
+    if (bpm > 150 && scoreAt(Math.round(bpm / 2)) >= best.score * 0.85) bpm = Math.round(bpm / 2);
 
-  // Resolve half/double vs neighbours (e.g. 62 vs 124).
-  let bpm = best.bpm;
-  const scoreAt = (b: number) =>
-    candidates.find((c) => c.bpm === b)?.score ?? 0;
-  if (bpm < 90 && scoreAt(bpm * 2) >= best.score * 0.85) bpm *= 2;
-  if (bpm > 150 && scoreAt(Math.round(bpm / 2)) >= best.score * 0.85) bpm = Math.round(bpm / 2);
+    // Fit a parabola inside the selected integer-lag bin.
+    const lag = Math.round(60 / bpm / hopSec);
+    const y0 = correlations[lag - 1];
+    const y1 = correlations[lag] ?? 0;
+    const y2 = correlations[lag + 1];
+    let delta = 0;
+    if (y0 !== undefined && y2 !== undefined && y1 > y0 && y1 > y2) {
+      const denom = y0 - 2 * y1 + y2;
+      if (denom < 0) delta = Math.max(-0.5, Math.min(0.5, 0.5 * (y0 - y2) / denom));
+    }
+    const mean = candidates.reduce((s, c) => s + c.score, 0) / candidates.length;
+    return {
+      bpm: 60 / ((lag + delta) * hopSec),
+      peak: y1,
+      contrast: best.score - mean,
+      confidence: Math.min(1, Math.max(0.2, (best.score - mean) * 5 + 0.25)),
+    };
+  };
 
-  const mean =
-    candidates.reduce((s, c) => s + c.score, 0) / Math.max(1, candidates.length);
-  const confidence = Math.min(1, Math.max(0.2, (best.score - mean) * 5 + 0.25));
-  return { bpm: Math.round(bpm * 10) / 10, confidence };
+  const primary = evaluate(fullOnset);
+  if (!primary) return fallback;
+  const band = evaluate(midOnset);
+  // The band must be substantially more periodic and agree within 8%; it
+  // cannot overturn the full-band octave or rescue a weak/noisy peak.
+  const useBand = band !== null && band.peak >= 0.3 && band.contrast >= 0.1 &&
+    band.peak >= primary.peak * 1.35 &&
+    Math.abs(band.bpm - primary.bpm) <= primary.bpm * 0.08;
+  const result = useBand ? band : primary;
+  return {
+    bpm: Math.round(result.bpm * 10) / 10,
+    // Disagreement between bands is not evidence for greater certainty.
+    confidence: useBand ? Math.min(primary.confidence, result.confidence) : result.confidence,
+  };
 }
 
 /** @deprecated coarse energy path — kept for callers; prefer estimateBPMFromSamples. */

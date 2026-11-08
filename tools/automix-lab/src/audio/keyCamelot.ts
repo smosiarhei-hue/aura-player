@@ -100,16 +100,11 @@ function parseCamelot(raw: string | null | undefined): Parsed | null {
 }
 
 function pitchClass(number: number, letter: "A" | "B"): number {
-  if (letter === "A") {
-    const minorMap: Record<number, number> = {
-      1: 8, 2: 3, 3: 10, 4: 5, 5: 0, 6: 7, 7: 2, 8: 9, 9: 4, 10: 11, 11: 6, 12: 1,
-    };
-    return minorMap[number] ?? 0;
-  }
-  const majorMap: Record<number, number> = {
-    1: 3, 2: 10, 3: 5, 4: 0, 5: 7, 6: 2, 7: 9, 8: 4, 9: 11, 10: 6, 11: 1, 12: 8,
-  };
-  return majorMap[number] ?? 0;
+  // Reverse the same tables used by estimateCamelotKey, so estimation and
+  // pitch compensation cannot silently disagree about a key's pitch class.
+  // parseCamelot has already validated the number and letter.
+  const keys = letter === "A" ? MINOR_CAMELOT : MAJOR_CAMELOT;
+  return keys.indexOf(`${number}${letter}`);
 }
 
 export function camelotCompatible(a: string | null, b: string | null): boolean {

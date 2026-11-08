@@ -1310,23 +1310,24 @@ final class PlayerCore {
         return outgoingVolume
     }
 
-    /// Automix LAND FX: ½-beat echo + light plate only in the final phrase.
+    /// Automix LAND FX: ½-beat echo + plate in the outgoing phrase before LAND.
     /// Mid-window stays dry so A vocal × B bed does not triple with wet.
     @discardableResult
     private func applyAutomixLandMixFX(progress: Double, outgoingVolume: Float) -> Float {
         let style = activeMashupStyle
         let land = style.automixLandProgress
         let p = min(1, max(0, progress))
-        // Open echo ~1 bar before LAND so the outgoing vocal/instrumental trails
-        // into B on the grid (Apple Automix "air"/echo release), then clear after.
+        // Shape the effect before LAND, while the outgoing deck is still audible.
+        // LAND completion clears the FX immediately, so peaking at LAND itself
+        // would leave little or no audible tail on a deck that is already silent.
         let bpm = style.targetBPM > 30
             ? style.targetBPM
             : (activeTransitionPlan?.tempoTargetBPM ?? 120)
         let safeBPM = bpm > 30 ? bpm : 120
         let barFrac = min(0.22, max(0.10, (4 * 60 / Double(safeBPM)) / max(4, transitionDuration)))
-        let echoStart = max(0.45, land - barFrac * 1.35)
-        let echoPeak = land
-        let echoEnd = min(1.0, land + barFrac * 0.55)
+        let echoStart = max(0.20, land - barFrac * 1.8)
+        let echoPeak = max(echoStart + 0.01, land - barFrac * 0.6)
+        let echoEnd = land
 
         var amount: Float = 0
         if p >= echoStart, p < echoPeak {
@@ -1342,9 +1343,9 @@ final class PlayerCore {
 
         // Half-beat delay — tempo-locked, low feedback so it trails instead of doubling.
         let delaySec = Float(min(0.75, max(0.12, 60 / Double(safeBPM) * 0.5)))
-        let echoWet = 0.26 * amount
+        let echoWet = 0.34 * amount
         let echoFb = 0.22 * amount
-        let plate = 0.16 * amount
+        let plate = 0.22 * amount
         publishLiveMixFX(
             echoWet: echoWet,
             echoFeedback: echoFb,

@@ -870,10 +870,11 @@ export class WaveRadio {
     const need = Math.max(4, plan.params.blendDurationSec);
     const a = this.coveringJob("outro", this.current.id, plan.params.cueASec, need);
     const b = this.coveringJob("intro", this.next.id, plan.params.cueBSec, need);
+    if (!a || !b) return false;
     const duet = this.transitionMode === "duet" || plan.params.dsp.mashupMode === "oneBarDuet";
     const bedUrl = duet ? a.vocalsUrl : a.instrumentalUrl || a.beatUrl;
     const leadUrl = b.vocalsUrl;
-    if (!a || !b || !bedUrl || !leadUrl) return false;
+    if (!bedUrl || !leadUrl) return false;
     try {
       const bedRes = await fetch(bedUrl);
       const leadRes = await fetch(leadUrl);
