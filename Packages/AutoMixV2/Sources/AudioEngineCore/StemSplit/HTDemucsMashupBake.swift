@@ -5,7 +5,6 @@ import Foundation
 /// decks a vocal CAF and an instrumental CAF. Without the model on disk this
 /// returns nil and the caller keeps the mid/side bake.
 public enum HTDemucsMashupBake {
-    public nonisolated(unsafe) static var lastBackend = "hybrid"
     public static let prewarmSeconds: Double = 36
 
     public static func prewarm(
@@ -73,7 +72,6 @@ public enum HTDemucsMashupBake {
             loopSec: loopSec,
             echoDelaySec: echoDelaySec
         )
-        if pair != nil { lastBackend = "htdemucs" }
         return pair
     }
 }

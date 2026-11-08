@@ -513,7 +513,9 @@ class AutoMixMashupTests(unittest.TestCase):
         )[0]
         self.assertIn("nativeEQRamp?.cancel()", mashup_eq)
         # Hybrid mid/side bake must keep full Automix EQ (not light stem dissolve).
-        self.assertIn('HTDemucsMashupBake.lastBackend == "htdemucs"', mashup_eq)
+        self.assertIn("let neuralStems = mashupBakeUsesNeuralStems", mashup_eq)
+        self.assertNotIn("HTDemucsMashupBake.lastBackend", player)
+        self.assertGreaterEqual(player.count("mashupBakeUsesNeuralStems = stemPair.neural"), 2)
         self.assertIn("MashupLiveEQEnvelope.offsets(progress: progress, style: style)", mashup_eq)
         apply_eq = player.split("private func applyEQ()", 1)[1].split(
             "private func writeBands", 1

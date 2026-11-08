@@ -67,31 +67,33 @@ public enum StemMashupGlue {
         until: Int
     ) {
         let n = left.count
+        guard right.count == n, rate.isFinite, rate > 0,
+              loopSec.isFinite, loopSec > 0, loopSec * rate < Double(n) else { return }
         let limit = min(max(0, until), n)
         let loopFrames = max(64, Int(loopSec * rate))
         guard loopFrames > 64, loopFrames < limit / 2 else { return }
-        let xfade = max(32, min(loopFrames / 8, Int(0.04 * rate)))
+        let xfade = max(32, Int(min(Double(loopFrames / 8), 0.04 * rate)))
+        // Preserve the real continuation of the first phrase for each seam.
+        // Advancing by loopFrames-xfade shortened every bar and drifted off beat.
+        let continuationL = Array(left[loopFrames..<(loopFrames + xfade)])
+        let continuationR = Array(right[loopFrames..<(loopFrames + xfade)])
         var write = loopFrames
         while write < limit {
-            let remain = limit - write
-            let copyCount = min(loopFrames, remain)
+            let copyCount = min(loopFrames, limit - write)
             for k in 0..<copyCount {
-                let src = k
                 let dst = write + k
-                if k < xfade, write > 0 {
-                    let t = Float(k) / Float(xfade)
+                if k < xfade {
+                    let t = Float(k) / Float(max(1, xfade - 1))
                     let ease = t * t * (3 - 2 * t)
-                    let wa = cos(ease * Float.pi * 0.5)
-                    let wb = sin(ease * Float.pi * 0.5)
-                    left[dst] = left[dst] * wa + left[src] * wb
-                    right[dst] = right[dst] * wa + right[src] * wb
+                    // Correlated material: unity-sum weights avoid +3 dB peaks.
+                    left[dst] = continuationL[k] * (1 - ease) + left[k] * ease
+                    right[dst] = continuationR[k] * (1 - ease) + right[k] * ease
                 } else {
-                    left[dst] = left[src]
-                    right[dst] = right[src]
+                    left[dst] = left[k]
+                    right[dst] = right[k]
                 }
             }
-            // Advance by almost one phrase; overlap provides the crossfade.
-            write += max(1, loopFrames - xfade)
+            write += loopFrames
         }
     }
 

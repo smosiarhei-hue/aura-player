@@ -5,6 +5,21 @@ import Testing
 
 @Suite("Mashup Live Style")
 struct MashupLiveStyleTests {
+    @Test("Planner crossfade does not get promoted to beatmatch")
+    func crossfadeStaysUnmatched() {
+        let plan = TransitionPlan(
+            type: .crossfade, archetype: .energyWash,
+            aOutStartSec: 180, bInStartSec: 0, bars: 4,
+            tempoTargetBPM: 120, rateA: 1, rateB: 1,
+            pitchShiftCentsB: 0, gainOffsetBdB: 0, loopBarsA: 0,
+            fx: [], reason: "fallback"
+        )
+        let style = MashupLiveStyle.resolve(plan: plan, outgoing: nil, incoming: nil,
+                                            outgoingDuration: 200, incomingDuration: 200)
+        #expect(!style.isBeatmatched)
+        #expect(style.rateA == 1 && style.rateB == 1)
+    }
+
     @Test("Beatmatched Automix snaps to rateB, holds, then settles")
     func beatmatchRatesAccelHoldSettle() {
         let plan = TransitionPlan(

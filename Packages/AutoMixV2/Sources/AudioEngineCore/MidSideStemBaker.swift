@@ -557,8 +557,8 @@ public enum MidSideStemBaker {
                     let t = Float(frame - fadeStart) / Float(max(1, fadeFrames))
                     let ease = min(1, max(0, t))
                     let s = ease * ease * (3 - 2 * ease)
-                    let wa = cos(s * Float.pi * 0.5)
-                    let wb = sin(s * Float.pi * 0.5)
+                    let wa = 1 - s
+                    let wb = s
                     left[i] = left[i] * wa + dryL[i] * wb
                     right[i] = right[i] * wa + dryR[i] * wb
                 }

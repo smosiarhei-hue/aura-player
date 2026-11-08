@@ -46,8 +46,14 @@ public enum MixPlanner {
         let testDuration = BeatGridSynchronization.duration(bars: ladderBars, bpm: tempo.targetBPM)
         let testOut = BeatGridSynchronization.outgoingCue(profile: a, duration: testDuration)
         let testIn = BeatGridSynchronization.incomingCue(profile: b)
-        let phaseA = a.downbeatsSec.min(by: { abs($0 - testOut) < abs($1 - testOut) }).map { abs(testOut - $0) } ?? 0
-        let phaseB = b.downbeatsSec.min(by: { abs($0 - testIn) < abs($1 - testIn) }).map { abs(testIn - $0) } ?? 0
+        // Preserve phase sign: equally distant cues on opposite sides of a beat
+        // are not in sync. Missing grids are unknown, not a zero-error match.
+        guard let beatA = a.downbeatsSec.filter({ $0.isFinite }).min(by: { abs($0 - testOut) < abs($1 - testOut) }),
+              let beatB = b.downbeatsSec.filter({ $0.isFinite }).min(by: { abs($0 - testIn) < abs($1 - testIn) }) else {
+            return crossfade(a, b, settings, "Fallback: нет надёжной сетки долей")
+        }
+        let phaseA = testOut - beatA
+        let phaseB = testIn - beatB
         let phaseError = BeatGridSynchronization.phaseErrorMilliseconds(outgoingBeat: phaseA, incomingBeat: phaseB, rateA: tempo.rateA, rateB: tempo.rateB)
         if phaseError > 120 {
             return crossfade(a, b, settings, "Fallback: фазовое расхождение > 120ms")

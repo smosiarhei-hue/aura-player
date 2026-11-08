@@ -32,8 +32,8 @@ public enum HTDemucsWindowMixer {
             } else if i >= fadeStart {
                 let t = Float(i - fadeStart) / Float(fade)
                 let s = t * t * (3 - 2 * t)
-                let wa = cos(s * Float.pi * 0.5)
-                let wb = sin(s * Float.pi * 0.5)
+                let wa = 1 - s
+                let wb = s
                 left[i] = left[i] * wa + dryL[i] * wb
                 right[i] = right[i] * wa + dryR[i] * wb
             }

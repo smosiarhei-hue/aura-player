@@ -54,11 +54,19 @@ struct NeuralAutomixCueTests {
                 || next.mixOutSec >= 165)
     }
 
+    @Test("Cue uses measured downbeat offset")
+    func measuredDownbeat() {
+        let p = profile(duration: 200, mixOut: 151.2, bpm: 120, downbeatOffset: 1)
+        let cue = NeuralAutomixCue.pick(profile: p, transcript: nil)
+        #expect(abs(cue.mixOutSec - 151.0) < 0.001)
+    }
+
     private func profile(
         duration: Double,
         mixOut: Double,
         bpm: Float,
-        mixIn: Double = 8
+        mixIn: Double = 8,
+        downbeatOffset: Double = 0
     ) -> TrackProfile {
         TrackProfile(
             trackID: TrackID(raw: "neural-test"),
@@ -67,7 +75,7 @@ struct NeuralAutomixCueTests {
             sourceBitrateKbps: 320,
             bpm: bpm,
             beatsSec: Array(stride(from: 0.0, to: duration, by: 0.5)),
-            downbeatsSec: Array(stride(from: 0.0, to: duration, by: 2.0)),
+            downbeatsSec: Array(stride(from: downbeatOffset, to: duration, by: 2.0)),
             phraseStartsSec: Array(stride(from: 0.0, to: duration, by: 16)),
             tempoStability: 0.9,
             camelotKey: "8A",

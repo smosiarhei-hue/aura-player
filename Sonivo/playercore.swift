@@ -103,7 +103,7 @@ fileprivate final class PendingMashupLiveArm: @unchecked Sendable {
     let currentTrackID: UUID
     let outURL: URL
     let inURL: URL
-    let bakeTask: Task<(outgoing: URL, incoming: URL), Error>
+    let bakeTask: Task<(outgoing: URL, incoming: URL, neural: Bool), Error>
     var prearmed: Bool
     var fired = false
     /// Field 1148: one-shot log while we hold past the cue for stem bake.
@@ -119,7 +119,7 @@ fileprivate final class PendingMashupLiveArm: @unchecked Sendable {
         currentTrackID: UUID,
         outURL: URL,
         inURL: URL,
-        bakeTask: Task<(outgoing: URL, incoming: URL), Error>,
+        bakeTask: Task<(outgoing: URL, incoming: URL, neural: Bool), Error>,
         prearmed: Bool
     ) {
         self.cueA = cueA
@@ -668,6 +668,8 @@ final class PlayerCore {
     private var mashupBakeTempURLs: [URL] = []
     /// Real incoming file + cue when mashup plays a baked master from t=0.
     private var mashupBakeRealIncomingURL: URL?
+    /// Backend belongs to this specific completed pair, not a global last result.
+    private var mashupBakeUsesNeuralStems = false
     private var mashupBakeIncomingBaseCue: Double = 0
     /// Musical position on outgoing track A when the bake window starts playing
     /// (`cueA + bakeLag`). Stem CAF files begin at 0 — without this the chrome
@@ -1293,16 +1295,16 @@ final class PlayerCore {
             amount = 1 - MashupLiveStyle.smoothstep((p - echoPeak) / max(0.04, echoEnd - echoPeak))
         }
 
-        if amount < 0.02 {
+        if amount < 0.001 {
             clearLiveMixFX()
             return outgoingVolume
         }
 
         // Half-beat delay — tempo-locked, low feedback so it trails instead of doubling.
         let delaySec = Float(min(0.75, max(0.12, 60 / Double(safeBPM) * 0.5)))
-        let echoWet = 0.10 + 0.16 * amount
-        let echoFb = 0.12 + 0.10 * amount
-        let plate = 0.06 + 0.10 * amount
+        let echoWet = 0.26 * amount
+        let echoFb = 0.22 * amount
+        let plate = 0.16 * amount
         publishLiveMixFX(
             echoWet: echoWet,
             echoFeedback: echoFb,
@@ -1441,7 +1443,7 @@ final class PlayerCore {
             // HTDemucs already carved instr/vocal — light dissolve only.
             // Hybrid mid/side karaoke is soft: keep full Automix EQ or the mix
             // collapses to a volume crossfade (field 1130).
-            let neuralStems = HTDemucsMashupBake.lastBackend == "htdemucs"
+            let neuralStems = mashupBakeUsesNeuralStems
             shaped = neuralStems
                 ? MashupLiveEQEnvelope.stemBakeOffsets(progress: progress, style: style)
                 : MashupLiveEQEnvelope.offsets(progress: progress, style: style)
@@ -2754,29 +2756,14 @@ final class PlayerCore {
         try? FileManager.default.removeItem(at: url)
     }
 
-    /// Keep enough runway after LAND so B cannot instantly finish and freeze.
-    /// Snap onto B's downbeat grid when a profile exists (DJ LAND, not wall-clock).
+    /// Continue at the position already heard. Snapping the playback clock to
+    /// another downbeat here repeats or skips audio; grid placement belongs in planning.
     private func safeAutomixHandoffPosition(for track: Track, proposed: Double) -> Double {
         let dur = track.duration
         let cue = mashupIncomingCueSec > 0 ? mashupIncomingCueSec : incomingStartPosition
-        var raw = proposed.isFinite ? max(0, proposed) : max(0, cue)
-        if let profile = AutoMixV2AnalysisRuntime.shared.nextProfile,
-           mashupProfileMatches(profile, track: track),
-           profile.bpm > 30,
-           !profile.downbeatsSec.isEmpty {
-            let halfBar = 120.0 / Double(profile.bpm) // 2 beats ≈ ½ bar in 4/4
-            if let snapped = profile.downbeatsSec.min(by: { abs($0 - raw) < abs($1 - raw) }),
-               abs(snapped - raw) <= halfBar {
-                raw = snapped
-            }
-        }
-        guard dur.isFinite, dur > 2 else { return raw }
-        let runway = min(12, max(6, dur * 0.08))
-        let maxPos = max(0, dur - runway)
-        if raw <= maxPos { return raw }
-        // Proposed overshoots (short track / late bake lag) — fall back to musical cue, then head.
-        let cueClamped = min(max(0, cue), maxPos)
-        return cueClamped
+        let raw = proposed.isFinite ? max(0, proposed) : max(0, cue)
+        guard dur.isFinite, dur > 0 else { return raw }
+        return min(raw, max(0, dur - 0.05))
     }
 
     /// If LAND left a silent/frozen deck, restart B once after a short settle.
@@ -3247,6 +3234,7 @@ final class PlayerCore {
                 self.mashupBakeFailedUseCrossfade = false
                 self.clearMashupBakeTemps()
                 self.mashupBakeTempURLs = [stemPair.outgoing, stemPair.incoming]
+                self.mashupBakeUsesNeuralStems = stemPair.neural
                 self.mashupBakeRealIncomingURL = inURL
                 self.mashupBakeIncomingBaseCue = cueB
                 self.mashupBakeOutgoingBaseCue = cueA
@@ -3373,6 +3361,14 @@ final class PlayerCore {
 
         if isMashupTransitionMode {
             if mashupGiveUpTrackID == current.id { return }
+            // A matched plan can explicitly decline a transition. Let normal playback
+            // reach the next track rather than overriding it with a mashup.
+            if transitionMode == .automix {
+                let analysis = AutoMixV2AnalysisRuntime.shared
+                if let a = analysis.currentProfile, let b = analysis.nextProfile,
+                   mashupProfileMatches(a, track: current), mashupProfileMatches(b, track: nextTrack),
+                   let plan = analysis.transitionPlan, plan.type == .none { return }
+            }
             let blend = resolveMashupBlend(outgoing: current, incoming: nextTrack, duration: totalDur)
             let leadIn = max(0, blend.outgoingCueSec - Self.automixBakeLeadSec)
             guard currentPos >= leadIn else { return }
@@ -3476,11 +3472,11 @@ final class PlayerCore {
            let outP = analysis.currentProfile, mashupProfileMatches(outP, track: outgoing),
            let inP = analysis.nextProfile, mashupProfileMatches(inP, track: incoming) {
             activeTransitionPlan = plan
-            if plan.loopBarsA > 0, style.targetBPM > 30, liveLoopNextBar.isInfinite {
+            if plan.type != .crossfade, plan.loopBarsA > 0, style.isBeatmatched,
+               outP.confidence.bpm >= 0.80, outP.confidence.downbeats >= 0.70,
+               style.targetBPM > 30, liveLoopNextBar.isInfinite {
                 liveLoopNextBar = Double(plan.loopBarsA)
             }
-        } else if style.archetypeName == "seamlessLoop", style.targetBPM > 30, liveLoopNextBar.isInfinite {
-            liveLoopNextBar = 2
         }
         AutoMixSessionLog.shared.event(
             String(
@@ -3840,15 +3836,19 @@ final class PlayerCore {
         incomingStartPosition = max(0, incomingStart)
         mashupIncomingCueSec = max(0, incomingStart)
         activeMashupStyle = mashupStyle ?? .fallback
-        let analysisPlan = AutoMixV2AnalysisRuntime.shared.transitionPlan
-        activeTransitionPlan = (mashupStyle != nil) ? analysisPlan : nil
+        let analysis = AutoMixV2AnalysisRuntime.shared
+        let pairMatches = analysis.currentProfile.map { mashupProfileMatches($0, track: current) } == true
+            && analysis.nextProfile.map { mashupProfileMatches($0, track: nextTrack) } == true
+        activeTransitionPlan = (mashupStyle != nil && pairMatches) ? analysis.transitionPlan : nil
         // Phrase-loop cue: musical outgoing start (stem mounts remapped to 0).
         mashupPhraseLoopCueSec = outgoingCue
             ?? (isUsingStreamPlayer ? progress : liveProgress())
-        if let plan = activeTransitionPlan, plan.loopBarsA > 0, activeMashupStyle.targetBPM > 30 {
+        if let plan = activeTransitionPlan, plan.type != .crossfade, plan.type != .none,
+           plan.loopBarsA > 0, activeMashupStyle.isBeatmatched, activeMashupStyle.targetBPM > 30,
+           let profile = AutoMixV2AnalysisRuntime.shared.currentProfile,
+           mashupProfileMatches(profile, track: current), profile.mixable,
+           profile.confidence.bpm >= 0.80, profile.confidence.downbeats >= 0.70 {
             liveLoopNextBar = Double(plan.loopBarsA)
-        } else if activeMashupStyle.archetypeName == "seamlessLoop", activeMashupStyle.targetBPM > 30 {
-            liveLoopNextBar = 2
         } else {
             liveLoopNextBar = .infinity
         }
@@ -3865,15 +3865,8 @@ final class PlayerCore {
         // Mixing badge only when the blend is actually audible (lane ready) — not while baking.
         AutoMixDJEngine.shared.statusBadge = nil
         AutoMixDJEngine.shared.currentBPM = mashup ? Double(activeMashupStyle.targetBPM) : 0
-        // Lock outgoing tempo immediately so B can meet A on the grid.
-        if mashup {
-            let rates = activeMashupStyle.playbackRates(progress: 0)
-            if isUsingStreamPlayer {
-                activeStreamingPlayer.rate = rates.outgoing
-            } else {
-                applyMashupTimePitch(progress: 0, outgoing: true, rate: rates.outgoing)
-            }
-        }
+        // Preparation may start 34 seconds before the cue. Leave the solo
+        // track untouched; the audible transition applies its rate at the cue.
         if mashup, let mashupBadge, !mashupBadge.isEmpty {
             SonivoDiagnostics.log("[Mashup] \(activeMashupStyle.reason) · \(mashupBadge)", tag: "AUDIO")
         }
@@ -3931,13 +3924,11 @@ final class PlayerCore {
                     )
                     // Local A/B are ready — pick up BPM/plan if analysis finished during lead-in
                     // so stem bake and live rates are not stuck at provisional rate=1.
-                    if self.refreshMashupStyleFromAnalysis(
+                    _ = self.refreshMashupStyleFromAnalysis(
                         outgoing: current,
                         incoming: nextTrack,
                         reason: ingested ? "bake-start+bpm" : "bake-start"
-                    ) {
-                        self.snapMashupRatesToActiveStyle(progress: 0)
-                    }
+                    )
                     var blend = self.transitionDuration
                     var style = self.activeMashupStyle
                     let duetBake = self.transitionMode == .duet || style.isDuet
@@ -3962,7 +3953,6 @@ final class PlayerCore {
                             reason: "mood-retarget"
                         ) {
                             style = self.activeMashupStyle
-                            self.snapMashupRatesToActiveStyle(progress: 0)
                         }
                         // Final grid guard: never stem-bake B from a cold open (field 1151 cueB=0.1).
                         if cueB < MashupBlendScheduler.minimumIncomingCueSec,
@@ -4002,9 +3992,13 @@ final class PlayerCore {
                     // Seamless-loop / plan loopBarsA → tile that many bars into the
                     // instrumental bed so vocals sit on a repeating groove (not a one-shot outro).
                     let planLoopBars = self.activeTransitionPlan.map { max(0, $0.loopBarsA) } ?? 0
-                    let loopBars = (!duetBake && bpmForGrid > 30)
-                        ? max(2, planLoopBars > 0 ? planLoopBars : 2)
-                        : 0
+                    let analysis = AutoMixV2AnalysisRuntime.shared
+                    let reliableGrid = analysis.currentProfile.map {
+                        self.mashupProfileMatches($0, track: current)
+                            && $0.mixable && $0.confidence.bpm >= 0.80 && $0.confidence.downbeats >= 0.70
+                    } ?? false
+                    let loopBars = (!duetBake && style.isBeatmatched && bpmForGrid > 30 && reliableGrid)
+                        ? planLoopBars : 0
                     let loopSec = Double(loopBars) * barSec
                     if loopSec > 0.25 {
                         self.liveLoopNextBar = Double(loopBars)
@@ -4036,7 +4030,7 @@ final class PlayerCore {
                     let bakeDuet = duetBake
                     // Bake in parallel with the cue wait. Waiting for HTDemucs first left
                     // 20s of silence after schedule, then a late abrupt land.
-                    let bakeTask = Task.detached(priority: .userInitiated) { () -> (outgoing: URL, incoming: URL) in
+                    let bakeTask = Task.detached(priority: .userInitiated) { () -> (outgoing: URL, incoming: URL, neural: Bool) in
                         do {
                             if let neural = try await HTDemucsMashupBake.stemPair(
                                 duet: bakeDuet,
@@ -4052,7 +4046,7 @@ final class PlayerCore {
                                 loopSec: bakeLoopSec,
                                 echoDelaySec: bakeEcho
                             ) {
-                                return neural
+                                return (neural.outgoing, neural.incoming, true)
                             }
                         } catch is CancellationError {
                             throw CancellationError()
@@ -4060,7 +4054,7 @@ final class PlayerCore {
                             // Fall through to mid/side.
                         }
                         if bakeDuet {
-                            return try MidSideStemBaker.bakeDuetStemPair(
+                            let hybrid = try MidSideStemBaker.bakeDuetStemPair(
                                 outgoingURL: bakeOutURL,
                                 incomingURL: bakeInURL,
                                 cueA: bakeCueA,
@@ -4068,8 +4062,9 @@ final class PlayerCore {
                                 blendSec: bakeBlend,
                                 padSec: bakePad
                             )
+                            return (hybrid.outgoing, hybrid.incoming, false)
                         }
-                        return try MidSideStemBaker.bakeAutomixStemPair(
+                        let hybrid = try MidSideStemBaker.bakeAutomixStemPair(
                             outgoingURL: bakeOutURL,
                             incomingURL: bakeInURL,
                             cueA: bakeCueA,
@@ -4082,6 +4077,7 @@ final class PlayerCore {
                             loopSec: bakeLoopSec,
                             echoDelaySec: bakeEcho
                         )
+                        return (hybrid.outgoing, hybrid.incoming, false)
                     }
                     // Decode + silent-arm B during lead-in so cue-time live Automix
                     // is instant and starve can hard-complete an already-playing B.
@@ -4146,7 +4142,7 @@ final class PlayerCore {
                     // Probe MUST NOT use a MainActor-isolated TaskGroup — both children
                     // serialized on MainActor and the 80ms timeout never won (field 1077).
                     enum BakeProbe {
-                        case ready(Result<(outgoing: URL, incoming: URL), Error>)
+                        case ready(Result<(outgoing: URL, incoming: URL, neural: Bool), Error>)
                         case pending
                     }
                     let bakeProbe: BakeProbe = await withCheckedContinuation { cont in
@@ -4189,7 +4185,7 @@ final class PlayerCore {
                         }
                         return
                     }
-                    let bakeResult: Result<(outgoing: URL, incoming: URL), Error>
+                    let bakeResult: Result<(outgoing: URL, incoming: URL, neural: Bool), Error>
                     var bakePendingAtCue = false
                     switch bakeProbe {
                     case .ready(let result):
@@ -4254,6 +4250,7 @@ final class PlayerCore {
                         } else {
                         self.clearMashupBakeTemps()
                         self.mashupBakeTempURLs = [stemPair.outgoing, stemPair.incoming]
+                        self.mashupBakeUsesNeuralStems = stemPair.neural
                         self.mashupBakeRealIncomingURL = inURL
                         // Elapsed is measured from before the bake, so the cues stay
                         // the musical ones. Adding bakeLag here would skip ahead.
@@ -4294,7 +4291,7 @@ final class PlayerCore {
                         self.snapMashupRatesToActiveStyle(progress: enterP)
                         AutoMixDJEngine.shared.markMashupProgress(enterP)
                         AutoMixDJEngine.shared.currentBPM = Double(self.activeMashupStyle.targetBPM)
-                        let sepLabel = HTDemucsMashupBake.lastBackend == "htdemucs"
+                        let sepLabel = stemPair.neural
                             ? "htdemucs"
                             : MidSideStemBaker.lastSeparationBackend.rawValue
                         AutoMixDJEngine.shared.statusBadge = sepLabel == "htdemucs"
@@ -4649,9 +4646,10 @@ final class PlayerCore {
             applyMashupTransitionEQ(progress: p)
         }
 
-        // Live phrase loop on outgoing A (seek) when stems are NOT already tiled.
-        // Baked loopSec beds already repeat the groove — seeking those stutters.
-        if mashup,
+        // The Automix seek loop cuts the waveform abruptly and can click; use
+        // only the crossfaded baked loop for Automix until live looping is seamless.
+        // Preserve the existing non-Automix path.
+        if mashup, transitionMode != .automix,
            mashupBakeRealIncomingURL == nil,
            !mashupPlayingMasterBake,
            activeMashupStyle.targetBPM > 30,
@@ -4714,6 +4712,7 @@ final class PlayerCore {
     private func clearMashupBakeTemps() {
         MidSideStemBaker.removeTempFiles(mashupBakeTempURLs)
         mashupBakeTempURLs = []
+        mashupBakeUsesNeuralStems = false
         mashupBakeRealIncomingURL = nil
         mashupBakeIncomingBaseCue = 0
         mashupBakeOutgoingBaseCue = 0

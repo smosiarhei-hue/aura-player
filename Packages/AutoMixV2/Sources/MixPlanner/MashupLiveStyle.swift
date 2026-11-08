@@ -452,7 +452,8 @@ public struct MashupLiveStyle: Sendable, Equatable {
         style.targetBPM = plan.tempoTargetBPM > 30 ? plan.tempoTargetBPM : 0
         // Field 1047/1145: energyWash/tapeStop and stale plans can ship rateA=rateB=1
         // while both profiles have BPM — always rebuild the mutual grid when possible.
-        if abs(style.rateA - 1) < 0.002, abs(style.rateB - 1) < 0.002,
+        if plan.type != .crossfade, plan.type != .none,
+           abs(style.rateA - 1) < 0.002, abs(style.rateB - 1) < 0.002,
            let a = outgoing, let b = incoming,
            a.bpm > 30, b.bpm > 30,
            let tempo = BeatGridSynchronization.tempoMatch(aBPM: a.bpm, bBPM: b.bpm) {
@@ -460,7 +461,7 @@ public struct MashupLiveStyle: Sendable, Equatable {
             style.rateB = clampRate(tempo.rateB)
             style.targetBPM = tempo.targetBPM
             style.isBeatmatched = true
-        } else if style.targetBPM < 30,
+        } else if plan.type != .crossfade, plan.type != .none, style.targetBPM < 30,
                   let a = outgoing, let b = incoming,
                   a.bpm > 30, b.bpm > 30,
                   let tempo = BeatGridSynchronization.tempoMatch(aBPM: a.bpm, bBPM: b.bpm) {

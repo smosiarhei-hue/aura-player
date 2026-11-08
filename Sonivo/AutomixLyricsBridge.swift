@@ -23,8 +23,11 @@ enum AutomixLyricsBridge {
         let offset = lyrics.offset
         let segments: [AutomixTranscriptSegment] = lyrics.lines.compactMap { line in
             let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { return nil }
+            guard !text.isEmpty, line.startTime.isFinite, offset.isFinite else { return nil }
             let end = line.endTime ?? (line.startTime + 4)
+            guard end.isFinite else { return nil }
+            let start = max(0, line.startTime + offset)
+            let shiftedEnd = max(start, end + offset)
             let words = line.effectiveWords().map {
                 AutomixTranscriptWord(
                     text: $0.text,
@@ -34,8 +37,8 @@ enum AutomixLyricsBridge {
             }
             return AutomixTranscriptSegment(
                 text: text,
-                start: max(0, line.startTime + offset),
-                end: max(line.startTime, end) + offset,
+                start: start,
+                end: shiftedEnd,
                 words: words
             )
         }

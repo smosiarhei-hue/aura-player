@@ -50,31 +50,43 @@ public enum NeuralAutomixCue {
             ? max(0.72, tx?.confidence ?? 0.78)
             : 0.55
 
-        let hop = 0.25
         let energy = profile.energyCurve
         let vocal = profile.vocalPresence
+        // TrackAnalyzer currently stores one energy sample per second. Derive
+        // the spacing from the profile instead of assuming 250 ms bins.
+        let hop = duration.isFinite && duration > 0 && !energy.isEmpty
+            ? duration / Double(energy.count) : 1.0
         let lyricsLock = blended.usedTranscript && (tx?.confidence ?? 0) >= 0.75
 
-        if energy.count > 16, vocal.count == energy.count {
+        if energy.count > 16, vocal.count == energy.count,
+           mixOut.isFinite, hop.isFinite, hop > 0,
+           mixOut >= 0, mixOut / hop < Double(energy.count) {
             let center = Int(floor(mixOut / hop))
-            let radius = lyricsLock ? 16 : 32
-            let lo = max(0, center - radius)
-            let hi = min(energy.count - 2, center + (lyricsLock ? 24 : 48))
+            func bins(_ seconds: Double) -> Int {
+                Int(min(Double(energy.count), max(1, (seconds / hop).rounded(.up))))
+            }
+            let radius = bins(lyricsLock ? 4.0 : 8.0)
+            let forward = bins(lyricsLock ? 6.0 : 12.0)
+            let vocalLookAhead = bins(1.0)
+            let energyLookAhead = bins(6.0)
+            let localLookBehind = bins(3.0)
+            let lo = min(energy.count - 2, max(0, center - radius))
+            let hi = min(energy.count - 1, max(lo, center + forward))
             var best = center
             var bestScore = -1.0
             for i in lo..<hi {
                 let v0 = Double(vocal[i])
-                let v1 = Double(vocal[min(vocal.count - 1, i + 4)])
+                let v1 = Double(vocal[min(vocal.count - 1, i + vocalLookAhead)])
                 let e0 = Double(energy[i])
                 let drop = max(0, v0 - v1)
                 let bed = e0 * (1 - v1)
                 var ahead = 0.0
-                for k in 0..<24 {
+                for k in 0..<energyLookAhead {
                     ahead += Double(energy[min(energy.count - 1, i + k)])
                 }
-                ahead /= 24
+                ahead /= Double(energyLookAhead)
                 var localMax = e0
-                for k in -12...24 {
+                for k in -localLookBehind...energyLookAhead {
                     let idx = max(0, min(energy.count - 1, i + k))
                     localMax = max(localMax, Double(energy[idx]))
                 }
@@ -102,9 +114,15 @@ public enum NeuralAutomixCue {
             confidence = max(confidence, 0.82)
         }
 
-        let bpm = Double(profile.bpm > 30 ? profile.bpm : 120)
-        mixOut = snapToBar(clampOut(mixOut, duration: duration), bpm: bpm)
         mixOut = clampOut(mixOut, duration: duration)
+        // Snap only to a measured, sufficiently trusted downbeat, never to a
+        // grid invented from time zero or a made-up 120 BPM.
+        if profile.confidence.downbeats >= 0.70,
+           let beat = profile.downbeatsSec.filter({ $0.isFinite }).min(by: { abs($0 - mixOut) < abs($1 - mixOut) }),
+           profile.bpm > 30,
+           abs(beat - mixOut) <= 120.0 / Double(profile.bpm) {
+            mixOut = clampOut(beat, duration: duration)
+        }
 
         let mixIn: Double
         if let txIn = tx?.mixInSec, txIn.isFinite {
@@ -153,12 +171,6 @@ public enum NeuralAutomixCue {
         case .both:
             return profile.replacingCues(mixInSec: cue.mixInSec, mixOutSec: cue.mixOutSec)
         }
-    }
-
-    private static func snapToBar(_ sec: Double, bpm: Double) -> Double {
-        let bar = (60 / max(60, min(200, bpm))) * 4
-        guard bar > 0.4 else { return sec }
-        return max(0, (sec / bar).rounded() * bar)
     }
 
     private static func clampOut(_ sec: Double, duration: Double, minTail: Double = 24) -> Double {

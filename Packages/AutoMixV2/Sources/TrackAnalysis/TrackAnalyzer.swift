@@ -257,6 +257,8 @@ private enum TempoDetector {
         let onsetRate = sampleRate / Double(hop)
         let minLag = max(1, Int(onsetRate * 60 / 200))
         let maxLag = min(onset.count / 2, Int(onsetRate * 60 / 60))
+        // Very short clips can have onsets but not enough data for one valid lag.
+        guard maxLag >= minLag else { return (0, 0) }
         var candidates: [(lag: Int, score: Double)] = []
         for lag in minLag...maxLag {
             var sum = 0.0

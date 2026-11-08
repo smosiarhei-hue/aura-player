@@ -35,4 +35,13 @@ struct TrackAnalyzerStage2Tests {
         #expect(precise.confidence >= 0.7)
         #expect(broad.confidence >= 0.65)
     }
+    @Test("Very short audio has no reliable tempo", arguments: [2300, 4096, 8000, 14000])
+    func shortAudioDoesNotCrash(sampleCount: Int) {
+        let result = TrackAnalysisAlgorithms.estimateTempo(
+            samples: Array(repeating: 0, count: sampleCount), sampleRate: 22_050
+        )
+        #expect(result.bpm == 0)
+        #expect(result.confidence == 0)
+    }
+
 }
