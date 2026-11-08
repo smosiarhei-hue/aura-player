@@ -107,6 +107,15 @@ struct MashupBlendSchedulerTests {
         #expect(snap(outgoing: [190.3], notBefore: 190.4) == nil)
         #expect(snap(outgoing: [190.3], incoming: [9.0]) == nil)
         #expect(snap(outgoing: [190.3], cue: 189.3) == nil)
+        let accelerated = MashupBlendScheduler.retargetToDownbeats(
+            outgoingCue: 191.9, incomingCue: 8.8,
+            outgoingDuration: 198.3, incomingDuration: 125.3,
+            blend: 6.4, outgoingRate: 1.08, notBefore: 147.45,
+            outgoingBPM: 117.45, incomingBPM: 109.96,
+            outgoingDownbeats: [190.3, 191.5], incomingDownbeats: [8.8]
+        )
+        #expect(accelerated?.outgoing == 190.3)
+        #expect((accelerated?.outgoing ?? 198.3) + 6.4 * 1.08 <= 198.3)
     }
 
     @Test("Automix incoming cue stays in the intro")

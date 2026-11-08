@@ -25,11 +25,16 @@ final class AutoMixV2AnalysisRuntime {
     private var analysisTask: Task<Void, Never>?
     private var stemPrepTask: Task<Void, Never>?
     private var observedPair = ""
+    private var observedSelectionRevision: UUID?
     private var plannedPair = ""
     private var analysisGeneration = UUID()
     private(set) var currentProfile: TrackProfile?
     private(set) var nextProfile: TrackProfile?
-    private(set) var transitionPlan: MixModels.TransitionPlan?
+    private var storedTransitionPlan: MixModels.TransitionPlan?
+    private(set) var transitionPlan: MixModels.TransitionPlan? {
+        get { selectionIsCurrent(observedSelectionRevision) ? storedTransitionPlan : nil }
+        set { storedTransitionPlan = newValue }
+    }
     private(set) var pipelineStatus = "Ожидание воспроизведения"
     /// Shown on the player while HTDemucs downloads or separates the next window.
     private(set) var stemStatus: String?
@@ -93,6 +98,13 @@ final class AutoMixV2AnalysisRuntime {
             AutoMixSessionLog.shared.event("analysis.bake-local skip=noTrackID")
             return false
         }
+        let selectionRevision = observedSelectionRevision
+        if let selectionRevision {
+            let selected = PlayerCore.shared.automaticNextSelection()
+            guard PlayerCore.shared.currentTrack?.id == outgoing.id,
+                  selected.track?.id == incoming.id,
+                  selected.revision == selectionRevision else { return false }
+        }
         let planMode = mixSettingsMode
         let key = currentID.raw + "|" + nextID.raw + "|" + planMode.rawValue
         if observedPair == key, plannedPair == pairKey(currentID, nextID),
@@ -124,7 +136,8 @@ final class AutoMixV2AnalysisRuntime {
         // Awaiting the old task yields the main actor: a new pair may have
         // arrived (including A→B→A). Do not overwrite its state.
         guard !Task.isCancelled, analysisGeneration == request,
-              observedPair == key, mixSettingsMode == planMode, shouldAnalyse else { return false }
+              observedPair == key, mixSettingsMode == planMode, shouldAnalyse,
+              selectionIsCurrent(selectionRevision) else { return false }
         let bakeToken = key
         observedPair = key
         plannedPair = ""
@@ -152,7 +165,8 @@ final class AutoMixV2AnalysisRuntime {
             // A track/queue/mode change can happen while decode and enrichment await.
             // Never publish a stale pair into the current player's plan.
             guard !Task.isCancelled, analysisGeneration == request,
-                  observedPair == bakeToken, mixSettingsMode == planMode, shouldAnalyse else { return false }
+                  observedPair == bakeToken, mixSettingsMode == planMode, shouldAnalyse,
+                  selectionIsCurrent(selectionRevision) else { return false }
             currentProfile = a
             nextProfile = b
             observedPair = bakeToken
@@ -190,7 +204,8 @@ final class AutoMixV2AnalysisRuntime {
             return ok
         } catch {
             guard analysisGeneration == request, observedPair == bakeToken,
-                  mixSettingsMode == planMode, shouldAnalyse else { return false }
+                  mixSettingsMode == planMode, shouldAnalyse,
+                  selectionIsCurrent(selectionRevision) else { return false }
             if Self.isCancellation(error) || Task.isCancelled {
                 AutoMixSessionLog.shared.event("analysis.bake-local cancel")
                 return false
@@ -255,8 +270,14 @@ final class AutoMixV2AnalysisRuntime {
     func plan(for currentID: TrackID, nextID: TrackID) -> MixModels.TransitionPlan? {
         let key = pairKey(currentID, nextID)
         guard plannedPair == key,
-              observedPair == key + "|" + mixSettingsMode.rawValue else { return nil }
+              observedPair == key + "|" + mixSettingsMode.rawValue,
+              selectionIsCurrent(observedSelectionRevision) else { return nil }
         return transitionPlan
+    }
+
+    private func selectionIsCurrent(_ revision: UUID?) -> Bool {
+        guard let revision else { return true } // V2 owns its separate queue.
+        return PlayerCore.shared.automaticNextSelectionIsCurrent(revision)
     }
 
     func status(for currentID: TrackID, nextID: TrackID) -> String {
@@ -287,6 +308,7 @@ final class AutoMixV2AnalysisRuntime {
                 analysisTask?.cancel()
                 stemPrepTask?.cancel()
                 observedPair = ""
+                observedSelectionRevision = nil
                 plannedPair = ""
                 transitionPlan = nil
                 currentProfile = nil
@@ -299,13 +321,19 @@ final class AutoMixV2AnalysisRuntime {
         let useV2Queue = AutoMixEngineSelectionStore.shared.isV2Enabled
             && AutoMixV2Runtime.shared.currentTrack != nil
         let current: Track
-        let queue: [Track]
+        let next: Track?
+        let selectionRevision: UUID?
         if useV2Queue, let v2 = AutoMixV2Runtime.shared.currentTrack {
             current = v2
-            queue = AutoMixV2Runtime.shared.playbackQueue
+            let queue = AutoMixV2Runtime.shared.playbackQueue
+            let index = queue.firstIndex(where: { $0.id == current.id })
+            next = index.flatMap { $0 + 1 < queue.count ? queue[$0 + 1] : nil }
+            selectionRevision = nil
         } else if let legacy = PlayerCore.shared.currentTrack {
             current = legacy
-            queue = PlayerCore.shared.queue
+            let selection = PlayerCore.shared.automaticNextSelection()
+            next = selection.track
+            selectionRevision = selection.revision
         } else {
             transitionPlan = nil; plannedPair = ""; pipelineStatus = "Ожидание воспроизведения"
             return
@@ -316,17 +344,16 @@ final class AutoMixV2AnalysisRuntime {
             return
         }
 
-        let index = queue.firstIndex(where: { $0.id == current.id })
-        let next = index.flatMap { $0 + 1 < queue.count ? queue[$0 + 1] : nil }
         let nextID = next.flatMap(trackID)
         // Include mode so Automix ↔ Duet switches re-plan the same pair.
         let key = currentID.raw + "|" + (nextID?.raw ?? "") + "|" + mixSettingsMode.rawValue
-        guard key != observedPair else { return }
+        guard key != observedPair || selectionRevision != observedSelectionRevision else { return }
 
         let request = UUID()
         let diagnosticID = String(request.uuidString.prefix(8))
         analysisGeneration = request
         observedPair = key
+        observedSelectionRevision = selectionRevision
         plannedPair = ""
         transitionPlan = nil
         currentProfile = nil
@@ -385,7 +412,8 @@ final class AutoMixV2AnalysisRuntime {
                 // LRC / synced lyrics refine mixOut while the song plays (lab neuralAutomix).
                 pipelineStatus = planMode == .duet ? "Duet · текст / neural cue…" : "Automix · текст / neural cue…"
                 a = await self.applyNeuralCue(to: a, track: current, role: .outgoing)
-                guard !Task.isCancelled, analysisGeneration == request, observedPair == key else { return }
+                guard !Task.isCancelled, analysisGeneration == request, observedPair == key,
+                      selectionIsCurrent(selectionRevision) else { return }
                 currentProfile = a
                 guard let next, let nextID else {
                     pipelineStatus = "Следующего трека нет"
@@ -399,7 +427,8 @@ final class AutoMixV2AnalysisRuntime {
                 let rawB = try await analyzer.profile(for: nextID, fileURL: safeIn.url)
                 var b = await TrackProfileEnricher.enrich(rawB, fileURL: safeIn.url)
                 b = await self.applyNeuralCue(to: b, track: next, role: .incoming)
-                guard !Task.isCancelled, analysisGeneration == request, observedPair == key else { return }
+                guard !Task.isCancelled, analysisGeneration == request, observedPair == key,
+                      selectionIsCurrent(selectionRevision) else { return }
                 nextProfile = b
                 let settings = MixSettings(
                     mode: planMode == .duet ? .duet : .automix,
@@ -415,7 +444,8 @@ final class AutoMixV2AnalysisRuntime {
                     bMeta: metadata(for: next, id: nextID),
                     settings: settings
                 )
-                guard !Task.isCancelled, analysisGeneration == request, observedPair == key else { return }
+                guard !Task.isCancelled, analysisGeneration == request, observedPair == key,
+                      selectionIsCurrent(selectionRevision) else { return }
                 transitionPlan = plan
                 plannedPair = pairKey(currentID, nextID)
                 pipelineStatus = plan.type == .none
@@ -462,7 +492,8 @@ final class AutoMixV2AnalysisRuntime {
                             }
                         ) { message in
                             Task { @MainActor in
-                                guard self?.analysisGeneration == request, self?.observedPair == pairToken else { return }
+                                guard self?.analysisGeneration == request, self?.observedPair == pairToken,
+                                      self?.selectionIsCurrent(selectionRevision) == true else { return }
                                 if message.hasPrefix("HTDemucs · скрыть") {
                                     SonivoDiagnostics.log("[HTDemucs] \(message)", tag: "AUDIO")
                                     self?.stemStatus = nil
@@ -483,6 +514,7 @@ final class AutoMixV2AnalysisRuntime {
                 }
             } catch {
                 guard analysisGeneration == request, observedPair == key, !Task.isCancelled,
+                      selectionIsCurrent(selectionRevision),
                       !Self.isCancellation(error) else { return }
                 transitionPlan = nil
                 plannedPair = ""

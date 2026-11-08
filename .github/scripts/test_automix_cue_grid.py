@@ -25,7 +25,8 @@ let result = cues()
 precondition(result?.outgoing == 180 && result?.incoming == 10, "failed to recover measured beats")
 precondition(cues(a: 179.0) == nil, "must not force distant cues")
 precondition(cues(notBefore: 180.1) == nil, "must not move behind playhead")
-precondition(cues(rate: 1.05) == nil, "must reserve source audio at shifted speed")
+precondition(cues(rate: 1.05)?.outgoing == 178, "tail snap must reserve source audio at shifted speed")
+precondition(cues(rate: 1.05, beatsA: [180]) == nil, "must reject downbeat beyond accelerated tail")
 precondition(cues(b: 3.9, beatsB: [3.9]) == nil, "must not bypass intro floor")
 precondition(cues(b: 9.8, beatsB: [10]) == nil, "must not snap forward into incoming vocal")
 precondition(cues(a: .nan) == nil, "nonfinite cue accepted")
@@ -46,6 +47,12 @@ precondition(tail(outgoing: [190.3], notBefore: 190.4) == nil, "must not move be
 precondition(tail(outgoing: [190.3], incoming: [9.0]) == nil, "must not move B into a later vocal")
 precondition(tail(outgoing: [190.3], cue: 190.0) != nil, "normal nearby snap should still work")
 precondition(tail(outgoing: [190.3], cue: 189.3) == nil, "non-tail cue must retain strict radius")
+let accelerated = MashupBlendScheduler.retargetToDownbeats(
+    outgoingCue: 191.9, incomingCue: 8.8, outgoingDuration: 198.3, incomingDuration: 125.3,
+    blend: 6.4, outgoingRate: 1.08, notBefore: 147.45, outgoingBPM: 117.45, incomingBPM: 109.96,
+    outgoingDownbeats: [190.3, 191.5], incomingDownbeats: [8.8])
+precondition(accelerated?.outgoing == 190.3, "recover tail while reserving accelerated source")
+precondition(accelerated!.outgoing + 6.4 * 1.08 <= 198.3, "accelerated A runs past EOF")
 '''
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp)

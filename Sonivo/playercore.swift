@@ -11,6 +11,65 @@ import AudioEngineCore
 import MixModels
 import MixPlanner
 
+// BEGIN AutomaticNextChoice
+/// A transport-owned automatic choice. Queue changes preserve a still-eligible
+/// shuffle pick; deterministic choices are recalculated from the current queue.
+nonisolated struct AutomaticNextChoice {
+    struct Context: Equatable {
+        let current: UUID
+        let shuffle: Bool
+        let repeatOne: Bool
+        let repeatAll: Bool
+        let waveContext: String?
+    }
+    struct Result {
+        let track: UUID?
+        let revision: UUID
+    }
+    private var context: Context?
+    private var result: Result?
+
+    mutating func reset() {
+        context = nil
+        result = nil
+    }
+
+    mutating func resolve(
+        context newContext: Context, queue: [UUID], excluded: Set<UUID>,
+        choose: ([UUID]) -> UUID? = { $0.randomElement() }
+    ) -> Result {
+        let sameContext = context == newContext
+        let candidate: UUID?
+        if newContext.repeatOne && newContext.waveContext == nil {
+            candidate = nil
+        } else if newContext.shuffle && newContext.waveContext == nil {
+            let choices = queue.count == 1
+                ? (newContext.repeatAll ? queue : [])
+                : queue.filter { $0 != newContext.current }
+            if sameContext, let old = result?.track, choices.contains(old) {
+                candidate = old
+            } else {
+                candidate = choose(choices)
+            }
+        } else if let index = queue.firstIndex(of: newContext.current) {
+            let rest = queue.dropFirst(index + 1)
+            if newContext.waveContext != nil {
+                candidate = rest.first { !excluded.contains($0) }
+            } else {
+                candidate = rest.first ?? (newContext.repeatAll ? queue.first : nil)
+            }
+        } else {
+            candidate = queue.first { newContext.waveContext == nil || !excluded.contains($0) }
+        }
+        if sameContext, let old = result, old.track == candidate { return old }
+        let next = Result(track: candidate, revision: UUID())
+        context = newContext
+        result = next
+        return next
+    }
+}
+// END AutomaticNextChoice
+
 enum AudioQuality: Int, CaseIterable, Identifiable, Sendable {
     case hiResLossless = 0
     case lossless = 1
@@ -308,6 +367,7 @@ final class PlayerCore {
     var queue: [Track] = [] {
         didSet {
             if Array(queue.prefix(oldValue.count).map(\.id)) != oldValue.map(\.id) { invalidateQueueContinuation() }
+            if queue.map(\.id) != oldValue.map(\.id) { reconcileAutomaticNextChoice() }
         }
     }
     @ObservationIgnored private var queueContinuationID = UUID()
@@ -315,8 +375,14 @@ final class PlayerCore {
     private func invalidateQueueContinuation() {
         queueContinuationID = UUID(); continuationLoader.invalidate()
     }
-    var shuffle: Bool = false { didSet { defaults.set(shuffle, forKey: "player.shuffle") } }
-    var repeatMode: RepeatMode = .off { didSet { defaults.set(repeatMode.rawValue, forKey: "player.repeat") } }
+    var shuffle: Bool = false { didSet {
+        defaults.set(shuffle, forKey: "player.shuffle")
+        if shuffle != oldValue { reconcileAutomaticNextChoice() }
+    } }
+    var repeatMode: RepeatMode = .off { didSet {
+        defaults.set(repeatMode.rawValue, forKey: "player.repeat")
+        if repeatMode != oldValue { reconcileAutomaticNextChoice() }
+    } }
     var eqEnabled: Bool = true {
         didSet {
             guard eqEnabled != oldValue else { return }
@@ -603,6 +669,9 @@ final class PlayerCore {
     private var isPrebufferingNextStream = false
     private var prebufferedTrackId: UUID? = nil
     private var plannedNextTrack: Track? = nil
+    @ObservationIgnored private var automaticNextChoice = AutomaticNextChoice()
+    @ObservationIgnored private var hasAutomaticNextChoice = false
+    @ObservationIgnored private var automaticTransitionRevision: UUID?
     private var incomingIsStream: Bool = false
     private var incomingLaneReady: Bool = false
     private var transitionScheduledAt: Date? = nil
@@ -2075,6 +2144,8 @@ final class PlayerCore {
             )
             return
         }
+        automaticNextChoice.reset()
+        hasAutomaticNextChoice = false
         AutoMixSessionLog.shared.action(
             "next",
             details: "from=\(currentTrack?.title ?? "-") to=\(peekNext(auto: false)?.title ?? "-")"
@@ -2252,6 +2323,8 @@ final class PlayerCore {
     private func start(at seconds: Double) {
         resetPlaybackFade(.wave)
         cancelTransition()
+        automaticNextChoice.reset()
+        hasAutomaticNextChoice = false
         metadataTrack = nil
         incomingTrack = nil
         guard let track = currentTrack else { return }
@@ -2651,7 +2724,9 @@ final class PlayerCore {
         let id = Self.yandexTrackID(from: track)
         let station = service.activeStationId ?? restoredWaveStation ?? ""
         waveRecovery.prepare(context: service.accountGeneration.uuidString + station)
-        guard waveRecovery.fail(id) else { return false }
+        let canSkip = waveRecovery.fail(id)
+        reconcileAutomaticNextChoice()
+        guard canSkip else { return false }
         activeStreamingPlayer.pause(); playerA.stop(); playerB.stop()
         stopTimer(); anchorDate = nil; activeAudioFile = nil
         isStreamBuffering = false
@@ -3066,13 +3141,15 @@ final class PlayerCore {
     /// `firePendingMashupLiveArmIfNeeded`. This wait is only a backup and must
     /// stay fully on MainActor (default-isolation module rejects nonisolated
     /// wait boxes — Build IPA 1127/1128).
-    private func waitUntilMashupCue(_ cue: Double) async -> Bool {
+    private func waitUntilMashupCue(_ cue: Double, transitionID: UUID, generation expectedGeneration: Int) async -> Bool {
         let safeCue = cue.isFinite ? max(0, cue) : 0
         let waitStarted = Date()
         let posAtStart = playbackProgress
         let deadline = waitStarted.addingTimeInterval(max(0.05, safeCue - posAtStart - 0.2))
         while !Task.isCancelled {
-            if !isTransitioning { return false }
+            guard isTransitioning, transitionRequestID == transitionID,
+                  generation == expectedGeneration else { return false }
+            guard validatePendingAutomaticTransition() else { return false }
             // Primary path may already have started the mix.
             firePendingMashupLiveArmIfNeeded()
             if incomingLaneReady { return true }
@@ -3109,6 +3186,7 @@ final class PlayerCore {
     private func firePendingMashupLiveArmIfNeeded() {
         guard let arm = pendingMashupLiveArm, !arm.fired else { return }
         guard isTransitioning, !incomingLaneReady else { return }
+        guard validatePendingAutomaticTransition() else { return }
         guard transitionRequestID == arm.transitionID, generation == arm.generation else {
             pendingMashupLiveArm = nil
             return
@@ -3416,7 +3494,7 @@ final class PlayerCore {
                 || activeStreamingPlayer.timeControlStatus == .paused
         )
         let nearEnd = duration <= 1 || pos >= duration - 1.2 || nativeSilent || streamSilent
-        let next = nearEnd ? (incomingTrack ?? peekNext(auto: true)) : nil
+        let next = nearEnd ? (incomingTrack ?? automaticNextSelection().track) : nil
         cancelTransition()
         if let next {
             currentTrack = next
@@ -3436,6 +3514,7 @@ final class PlayerCore {
     }
 
     private func scheduleTransitionIfNeeded() {
+        guard validatePendingAutomaticTransition() else { return }
         guard transitionMode == .crossfade || isMashupTransitionMode,
               !isTransitioning, !transitionScheduled, isPlaying, let current = currentTrack else { return }
 
@@ -3454,7 +3533,8 @@ final class PlayerCore {
             automixFallbackTarget = nil
             retainedTarget = nil
         }
-        guard let nextTrack = retainedTarget ?? peekNext(auto: true) else { return }
+        let selectedNext = isMashupTransitionMode ? automaticNextSelection().track : peekNext(auto: true)
+        guard let nextTrack = retainedTarget ?? selectedNext else { return }
 
         if isMashupTransitionMode {
             if mashupGiveUpTrackID == current.id { return }
@@ -3788,11 +3868,21 @@ final class PlayerCore {
     private func retargetAutomixFromEnergy(
         outgoingURL: URL,
         incomingURL: URL,
-        playerDuration: Double
+        playerDuration: Double,
+        transitionID: UUID,
+        generation expectedGeneration: Int,
+        outgoingID: UUID,
+        incomingID: UUID
     ) async -> (cueA: Double, cueB: Double, blend: Double)? {
         let bins = await Task.detached(priority: .userInitiated) {
             MoodEnergyProbe.bins(outgoingURL: outgoingURL, incomingURL: incomingURL)
         }.value
+        // The probe can outlive cancellation and a new transition. Never let its
+        // result rewrite the new transition's cue, duration, or style.
+        guard !Task.isCancelled, generation == expectedGeneration,
+              transitionRequestID == transitionID, isTransitioning,
+              currentTrack?.id == outgoingID, incomingTrack?.id == incomingID,
+              validatePendingAutomaticTransition() else { return nil }
         guard let bins else {
             AutoMixSessionLog.shared.event("mood.scan miss")
             return nil
@@ -3917,11 +4007,7 @@ final class PlayerCore {
 
     /// Check the selected fallback target without re-randomising a shuffle pick.
     private func safeFallbackTargetStillValid(_ track: Track) -> Bool {
-        guard !queue.isEmpty else { return true }
-        if shuffle && !isYandexWavePlayback {
-            return queue.contains { $0.id == track.id }
-        }
-        return peekNext(auto: true)?.id == track.id
+        automaticNextSelection().track?.id == track.id
     }
 
     private func scheduleSimpleTransition(
@@ -3946,6 +4032,8 @@ final class PlayerCore {
         automixSafeCrossfade = safeAutomixFallback
         safeCrossfadeStalledAt = nil
         activeTransitionMode = transitionMode
+        automaticTransitionRevision = (mashupStyle != nil || safeAutomixFallback)
+            ? automaticNextSelection().revision : nil
         transitionScheduled = true
         isTransitioning = true
         mashupBakeFailedUseCrossfade = false
@@ -4060,7 +4148,7 @@ final class PlayerCore {
                         inURLForBake = try? await self.materializeLocalAudio(for: nextTrack)
                     }
                     guard !Task.isCancelled, self.generation == token,
-                          self.transitionRequestID == transitionID,
+                          self.transitionRequestID == transitionID, self.validatePendingAutomaticTransition(),
                           self.currentTrack?.id == current.id,
                           self.incomingTrack?.id == nextTrack.id, self.isTransitioning else { return }
                     if outURLForBake == nil || inURLForBake == nil {
@@ -4098,7 +4186,7 @@ final class PlayerCore {
                         incomingFile: inURL
                     )
                     guard !Task.isCancelled, self.generation == token,
-                          self.transitionRequestID == transitionID,
+                          self.transitionRequestID == transitionID, self.validatePendingAutomaticTransition(),
                           self.currentTrack?.id == current.id,
                           self.incomingTrack?.id == nextTrack.id, self.isTransitioning else { return }
                     if self.executionTransitionMode == .automix,
@@ -4130,8 +4218,12 @@ final class PlayerCore {
                         let heard = await self.retargetAutomixFromEnergy(
                             outgoingURL: outURL,
                             incomingURL: inURL,
-                            playerDuration: self.duration > 1 ? self.duration : cueA + blend
+                            playerDuration: self.duration > 1 ? self.duration : cueA + blend,
+                            transitionID: transitionID, generation: token,
+                            outgoingID: current.id, incomingID: nextTrack.id
                         )
+                        guard !Task.isCancelled, self.transitionRequestID == transitionID,
+                              self.validatePendingAutomaticTransition() else { return }
                         if let heard {
                             cueA = heard.cueA
                             cueB = heard.cueB
@@ -4301,7 +4393,12 @@ final class PlayerCore {
                                 landFadeSec: bakeLandFade,
                                 playbackRate: bakeRateB,
                                 loopSec: bakeLoopSec,
-                                echoDelaySec: bakeEcho
+                                echoDelaySec: bakeEcho,
+                                onDiagnostic: { message in
+                                    Task { @MainActor in
+                                        AutoMixSessionLog.shared.event("demucs.bake.\(message)")
+                                    }
+                                }
                             ) {
                                 return (neural.outgoing, neural.incoming, true)
                             }
@@ -4313,8 +4410,9 @@ final class PlayerCore {
                             throw CancellationError()
                         } catch {
                             // Do not put file paths or model data in the field log.
+                            let reason = HTDemucsMashupBake.diagnosticError(error)
                             await MainActor.run {
-                                AutoMixSessionLog.shared.event("bake.demucs fallback=inference-or-model-error")
+                                AutoMixSessionLog.shared.event("bake.demucs fallback=\(reason)")
                             }
                         }
                         try Task.checkCancellation()
@@ -4385,18 +4483,34 @@ final class PlayerCore {
                         self.transitionPreparationTask = nil
                         return
                     }
-                    let reachedCue = await self.waitUntilMashupCue(cueA)
+                    let reachedCue = await self.waitUntilMashupCue(cueA, transitionID: transitionID, generation: token)
+                    // A cancelled wait may resume after a newer transition has
+                    // already armed B; never clear or adopt that newer arm.
+                    guard !Task.isCancelled, self.generation == token,
+                          self.transitionRequestID == transitionID,
+                          self.currentTrack?.id == current.id, self.isTransitioning else {
+                        if self.pendingMashupLiveArm?.transitionID == transitionID {
+                            self.pendingMashupLiveArm = nil
+                        }
+                        bakeTask.cancel()
+                        if let stemPair = try? await bakeTask.value {
+                            MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
+                        }
+                        return
+                    }
                     // Playhead tick may have started the mix while we waited.
                     if self.incomingLaneReady {
                         self.transitionPreparationTask = nil
                         return
                     }
-                    guard reachedCue, !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
+                    guard reachedCue, !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID, self.validatePendingAutomaticTransition(),
                           self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else {
                         AutoMixSessionLog.shared.event(
                             "cue.wait abort reached=\(reachedCue) cancel=\(Task.isCancelled)"
                         )
-                        self.pendingMashupLiveArm = nil
+                        if self.pendingMashupLiveArm?.transitionID == transitionID {
+                            self.pendingMashupLiveArm = nil
+                        }
                         bakeTask.cancel()
                         if let stemPair = try? await bakeTask.value {
                             MidSideStemBaker.removeTempFiles([stemPair.outgoing, stemPair.incoming])
@@ -4440,7 +4554,7 @@ final class PlayerCore {
                     }
                     // Land / cancel may have finished while we raced bake — never
                     // resurrect MIXING on a completed transition (field zombie badge).
-                    guard !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
+                    guard !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID, self.validatePendingAutomaticTransition(),
                           self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else {
                         bakeTask.cancel()
                         if case .ready(.success(let pair)) = bakeProbe {
@@ -4601,8 +4715,8 @@ final class PlayerCore {
                 // start the next song while the current one is still in the verse.
                 if mashup {
                     let cue = max(0, musicalOutgoingCue ?? cueAForBake)
-                    let reached = await self.waitUntilMashupCue(cue)
-                    guard reached, !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID,
+                    let reached = await self.waitUntilMashupCue(cue, transitionID: transitionID, generation: token)
+                    guard reached, !Task.isCancelled, self.generation == token, self.transitionRequestID == transitionID, self.validatePendingAutomaticTransition(),
                           self.isPlaying, self.currentTrack?.id == current.id, self.isTransitioning else { return }
                 }
 
@@ -4753,6 +4867,9 @@ final class PlayerCore {
                     if !self.engine.isRunning { try self.engine.start() }
                     targetNode.play()
                 }
+                guard !Task.isCancelled, self.generation == token,
+                      self.transitionRequestID == transitionID,
+                      self.validatePendingAutomaticTransition() else { return }
                 if safeAutomixFallback {
                     guard self.safeFallbackTargetStillValid(nextTrack) else { throw URLError(.cancelled) }
                     let now = self.isUsingStreamPlayer ? self.progress : self.liveProgress()
@@ -5669,6 +5786,7 @@ final class PlayerCore {
         transitionPreparationTask?.cancel()
         transitionPreparationTask = nil
         pendingMashupLiveArm = nil
+        automaticTransitionRevision = nil
         localSegmentTokens.removeValue(forKey: ObjectIdentifier(idlePlayer))
         transitionScheduled = false
         isTransitioning = false
@@ -5787,6 +5905,7 @@ final class PlayerCore {
             }
             suppressTrackFinishUntil = nil
         }
+        _ = validatePendingAutomaticTransition()
         if (isTransitioning || transitionScheduled), automixSafeCrossfade,
            let target = incomingTrack, !safeFallbackTargetStillValid(target) {
             // Queue can change between the last fader tick and EOF.
@@ -5798,7 +5917,7 @@ final class PlayerCore {
                 // An AVPlayerItem is not proof that B is ready or audible.
                 // If A ends while preparing, advance once using the normal start path.
                 let forced = incomingTrack.flatMap { safeFallbackTargetStillValid($0) ? $0 : nil }
-                    ?? peekNext(auto: true)
+                    ?? automaticNextSelection().track
                 cancelTransition()
                 if let forced {
                     flushListeningStats()
@@ -5868,7 +5987,7 @@ final class PlayerCore {
             } else {
                 SonivoDiagnostics.log("[AutoMix] Track finished but incoming lane was not ready. Forcing advance to next track.", tag: "AUTOMIX")
                 AutoMixSessionLog.shared.fault("transition.lane-missing → next")
-                let forced = incomingTrack ?? peekNext(auto: true)
+                let forced = incomingTrack ?? automaticNextSelection().track
                 cancelTransition()
                 if let forced {
                     currentTrack = forced
@@ -5905,7 +6024,9 @@ final class PlayerCore {
             finishBgTask()
             return
         }
-        if let nextTrack = peekNext(auto: true) {
+        let automaticNext = (transitionMode == .automix || transitionMode == .duet)
+            ? automaticNextSelection().track : peekNext(auto: true)
+        if let nextTrack = automaticNext {
             currentTrack = nextTrack
             start(at: 0)
             refillQueueIfNeeded()
@@ -5916,7 +6037,9 @@ final class PlayerCore {
                 defer { finishBgTask() }
                 let wave = await self.loadQueueContinuation(seed:current)
                 guard self.generation == requestToken, self.queueContinuationID == requestQueue, self.currentTrack?.id == current.id, self.isPlaying else { return }
-                if let ready = self.peekNext(auto:true) {
+                let selected = (self.transitionMode == .automix || self.transitionMode == .duet)
+                    ? self.automaticNextSelection().track : self.peekNext(auto: true)
+                if let ready = selected {
                     self.currentTrack = ready; self.streamDuration = ready.duration
                     self.start(at:0); self.refillQueueIfNeeded(); return
                 }
@@ -6103,6 +6226,66 @@ final class PlayerCore {
             next = nil // The transport may asynchronously load a continuation.
         }
         return (prev, next)
+    }
+
+    /// Shared by pair analysis and automatic transport. Manual Next deliberately
+    /// continues to use peekNext(auto: false), including its own shuffle policy.
+    func automaticNextSelection() -> (track: Track?, revision: UUID) {
+        guard let current = currentTrack else {
+            automaticNextChoice.reset()
+            hasAutomaticNextChoice = false
+            return (nil, UUID())
+        }
+        // Once a mashup is audible, finish its already-mounted target. Safe fades
+        // retain their existing queue-validity checks and are not frozen here.
+        if isTransitioning, !automixSafeCrossfade, transitionStartTime != nil,
+           (executionTransitionMode == .automix || executionTransitionMode == .duet),
+           let incoming = incomingTrack, let revision = automaticTransitionRevision {
+            return (incoming, revision)
+        }
+        // Match effectiveQueue without mutating it just to run analysis.
+        let tracks = queue.isEmpty ? LibraryStore.shared.tracks : queue
+        let station = YandexMusicService.shared.activeStationId ?? restoredWaveStation
+        if let station {
+            waveRecovery.prepare(context: YandexMusicService.shared.accountGeneration.uuidString + station)
+        }
+        let waveContext = station.map { YandexMusicService.shared.accountGeneration.uuidString + "|" + $0 }
+        let excluded = waveContext == nil ? Set<UUID>() : Set(tracks.compactMap {
+            waveRecovery.excludes(Self.yandexTrackID(from: $0)) ? $0.id : nil
+        })
+        let context = AutomaticNextChoice.Context(
+            current: current.id, shuffle: shuffle, repeatOne: repeatMode == .one,
+            repeatAll: repeatMode == .all, waveContext: waveContext
+        )
+        let selection = automaticNextChoice.resolve(
+            context: context, queue: tracks.map(\.id), excluded: excluded
+        )
+        hasAutomaticNextChoice = true
+        return (selection.track.flatMap { id in tracks.first { $0.id == id } }, selection.revision)
+    }
+
+    func automaticNextSelectionIsCurrent(_ revision: UUID) -> Bool {
+        automaticNextSelection().revision == revision
+    }
+
+    private func reconcileAutomaticNextChoice() {
+        guard hasAutomaticNextChoice else { return }
+        _ = automaticNextSelection()
+    }
+
+    /// Invalidate only a still-silent preparation. An audible mashup must not
+    /// be torn down just because the user edited the upcoming queue.
+    @discardableResult
+    private func validatePendingAutomaticTransition() -> Bool {
+        guard isTransitioning, transitionStartTime == nil,
+              let revision = automaticTransitionRevision else { return true }
+        let selected = automaticNextSelection()
+        guard selected.revision == revision, selected.track?.id == incomingTrack?.id else {
+            AutoMixSessionLog.shared.event("transition.cancel reason=automatic-next-changed")
+            cancelTransition()
+            return false
+        }
+        return true
     }
 
     private func peekNext(auto: Bool) -> Track? {

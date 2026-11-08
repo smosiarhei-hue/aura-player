@@ -154,7 +154,7 @@ precondition(HTDemucsTensorLayout.checked(shape: [1, 8, 4], strides: [40, 5, 1],
         analyzer = (ROOT / "Packages/AutoMixV2/Sources/TrackAnalysis/TrackAnalyzer.swift").read_text()
         self.assertIn("guard maxLag >= minLag else { return (0, 0) }", analyzer)
         neural_bake = (CORE / "StemSplit/HTDemucsMashupBake.swift").read_text()
-        self.assertIn("window(url: incomingFile, startSec: start, seconds: length)", neural_bake)
+        self.assertIn("window(url: incomingFile, startSec: start, seconds: length,", neural_bake)
         hybrid_bake = (CORE / "MidSideStemBaker.swift").read_text()
         self.assertIn("HTDemucsWindowMixer.automixBakeRate(playbackRate)", neural_bake)
         materialize = neural_bake.split("func materialize(", 1)[1].split("func prewarm(", 1)[0]
@@ -162,7 +162,8 @@ precondition(HTDemucsTensorLayout.checked(shape: [1, 8, 4], strides: [40, 5, 1],
         self.assertIn("try Task.checkCancellation()", materialize)
         self.assertIn("try await Task.sleep(nanoseconds: 200_000_000)", materialize)
         self.assertIn("if jobs > 0", materialize)
-        self.assertIn("return try cachedPair(", materialize)
+        self.assertIn("let pair = try cachedPair(", materialize)
+        self.assertIn("return pair", materialize)
         self.assertIn("defer { jobs -= 1 }", materialize)
         self.assertIn("HTDemucsWindowMixer.automixBakeRate(playbackRate)", hybrid_bake)
         self.assertIn("HTDemucsWindowMixer.alignedIncomingOffset(", player)

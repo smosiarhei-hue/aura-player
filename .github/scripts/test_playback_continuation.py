@@ -5,7 +5,13 @@ class PlaybackContinuationTests(unittest.TestCase):
     def test_queue_lifetime_and_end_recheck(self):
         s=(ROOT/'Sonivo/playercore.swift').read_text()
         self.assertEqual(s.count('let wave = await self.loadQueueContinuation(seed:'),2)
-        self.assertEqual(s.count('if let ready = self.peekNext(auto:true)'),2)
+        manual=s.split('func next() {',1)[1].split('func previous()',1)[0]
+        self.assertIn('if let ready = self.peekNext(auto:true)',manual)
+        automatic=s.split('private func handleTrackFinish()',1)[1].split('private var lastRefillCheck',1)[0]
+        after_load=automatic.split('let wave = await self.loadQueueContinuation(seed:',1)[1]
+        self.assertIn('self.automaticNextSelection().track',after_load)
+        self.assertIn('self.peekNext(auto: true)',after_load)
+        self.assertIn('if let ready = selected',after_load)
         self.assertIn('private var queueContinuationID = UUID()',s)
         refill=s.split('func refillQueueIfNeeded()',1)[1].split('private func flushListeningStats',1)[0]
         self.assertNotIn('playbackRequestID',refill)

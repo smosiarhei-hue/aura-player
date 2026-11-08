@@ -157,10 +157,16 @@ public enum MashupBlendScheduler {
             return beats.filter { $0.isFinite && $0 >= lower && $0 <= upper && abs($0 - cue) <= maxShift }
                 .min { abs($0 - cue) < abs($1 - cue) }
         }
-        let isTailAligned = abs(outgoingCue - outMax) <= 0.02
+        // Mood's natural tail cue is duration - blend, but outMax also
+        // reserves source samples consumed by an accelerated A deck. Anchor
+        // the search at that earlier limit instead of treating a valid tail
+        // cue as a non-tail cue solely because the rate is above 1.
+        let naturalTail = outgoingDuration - blend
+        let isTailAligned = outgoingCue >= outMax - 0.02 && outgoingCue <= naturalTail + 0.02
+        let outgoingReference = isTailAligned ? min(outgoingCue, outMax) : outgoingCue
         let outgoingShift = isTailAligned ? min(8, 240 / outgoingBPM) : min(0.75, 60 / outgoingBPM)
-        let outgoingUpper = isTailAligned ? min(outMax, outgoingCue) : outMax
-        guard let a = nearby(outgoingDownbeats, cue: outgoingCue, lower: outMin, upper: outgoingUpper, maxShift: outgoingShift),
+        let outgoingUpper = isTailAligned ? outgoingReference : outMax
+        guard let a = nearby(outgoingDownbeats, cue: outgoingReference, lower: outMin, upper: outgoingUpper, maxShift: outgoingShift),
               let b = nearby(incomingDownbeats, cue: incomingCue, lower: inMin, upper: inMax, maxShift: min(0.75, 60 / incomingBPM)) else { return nil }
         return (a, b)
     }

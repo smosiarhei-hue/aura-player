@@ -1,4 +1,5 @@
 import AVFAudio
+import CryptoKit
 import Foundation
 
 /// Separates the outro and intro while the song plays, then hands the mashup
@@ -17,6 +18,7 @@ public enum HTDemucsMashupBake {
             case "модель скачалась не целиком": return "incomplete-download"
             case "модель не открылась": return "model-load-refused"
             case "окно перехода вне кэша": return "window-outside-cache"
+            case "аудиофайл изменился": return "source-file-changed"
             default:
                 return model.description.hasPrefix("файл модели ") ? "model-file-size-mismatch" : "model-error"
             }
@@ -67,6 +69,7 @@ public enum HTDemucsMashupBake {
                 seconds: prewarmSeconds,
                 incomingStart: incomingWindowStart,
                 incomingSeconds: incomingWindowSeconds,
+                onDiagnostic: onDiagnostic,
                 onStatus: { status in
                     switch status {
                     case "HTDemucs · аутро": onDiagnostic("prewarm.outgoing-window")
@@ -104,7 +107,8 @@ public enum HTDemucsMashupBake {
         landFadeSec: Double = 0,
         playbackRate: Double = 1,
         loopSec: Double = 0,
-        echoDelaySec: Double = 0
+        echoDelaySec: Double = 0,
+        onDiagnostic: @escaping @Sendable (String) -> Void = { _ in }
     ) async throws -> (outgoing: URL, incoming: URL)? {
         guard HTDemucsModelStore.shared.installedPackageURL() != nil else { return nil }
         let musical = min(MidSideStemBaker.maximumDurationSec, max(4, blendSec))
@@ -127,7 +131,8 @@ public enum HTDemucsMashupBake {
             landAt: landAt,
             fadeSec: fadeWall * rate,
             loopSec: loopSec,
-            echoDelaySec: echoDelaySec
+            echoDelaySec: echoDelaySec,
+            onDiagnostic: onDiagnostic
         )
         return pair
     }
@@ -137,12 +142,13 @@ public actor HTDemucsRuntime {
     public static let shared = HTDemucsRuntime()
 
     private var separator: CoreMLStemSeparator?
+    private var modelLoad: (id: UUID, task: Task<CoreMLStemSeparator, Error>)?
     private var windows: [CachedWindow] = []
     private var jobs = 0
-    /// Core ML refused this package. Further songs stay on the mid/side bake.
-    private var refusedLoad = false
+    /// Avoid repeated expensive failures, but retry later after transient errors.
+    private var retryModelLoadAfter: Date?
 
-    func loadWasRefused() -> Bool { refusedLoad }
+    func loadWasRefused() -> Bool { retryModelLoadAfter.map { Date() < $0 } ?? false }
 
     /// Uses a finished window if prewarm is still separating. Otherwise separates the cue itself.
     func materialize(
@@ -155,7 +161,8 @@ public actor HTDemucsRuntime {
         landAt: Double,
         fadeSec: Double,
         loopSec: Double,
-        echoDelaySec: Double
+        echoDelaySec: Double,
+        onDiagnostic: @escaping @Sendable (String) -> Void
     ) async throws -> (outgoing: URL, incoming: URL)? {
         // Prewarm and materialization share the actor, but window() suspends
         // during inference. A busy prewarm is not a failure: allow it a bounded,
@@ -168,7 +175,7 @@ public actor HTDemucsRuntime {
         }
         try Task.checkCancellation()
         if jobs > 0 {
-            return try cachedPair(
+            let pair = try cachedPair(
                 duet: duet,
                 outgoingURL: outgoingURL,
                 incomingURL: incomingURL,
@@ -180,6 +187,11 @@ public actor HTDemucsRuntime {
                 loopSec: loopSec,
                 echoDelaySec: echoDelaySec
             )
+            switch pair {
+            case .some: onDiagnostic("cache.busy-hit")
+            case .none: onDiagnostic("cache.busy-miss")
+            }
+            return pair
         }
         jobs += 1
         defer { jobs -= 1 }
@@ -193,7 +205,8 @@ public actor HTDemucsRuntime {
             landAt: landAt,
             fadeSec: fadeSec,
             loopSec: loopSec,
-            echoDelaySec: echoDelaySec
+            echoDelaySec: echoDelaySec,
+            onDiagnostic: onDiagnostic
         )
     }
 
@@ -203,18 +216,28 @@ public actor HTDemucsRuntime {
         seconds: Double,
         incomingStart: Double,
         incomingSeconds: Double,
+        onDiagnostic: @escaping @Sendable (String) -> Void,
         onStatus: @escaping @Sendable (String) -> Void
     ) async throws {
+        // Actors are reentrant across await: without an explicit lease, rapid
+        // skips can run several costly Core ML prewarms at the same time.
+        while jobs > 0 {
+            try Task.checkCancellation()
+            try await Task.sleep(nanoseconds: 200_000_000)
+        }
+        try Task.checkCancellation()
         jobs += 1
         defer { jobs -= 1 }
         _ = try await model()
         onStatus("HTDemucs · аутро")
-        _ = try await window(url: outgoingFile, startSec: outroStart(outgoingFile, seconds: seconds), seconds: seconds)
+        _ = try await window(url: outgoingFile, startSec: outroStart(outgoingFile, seconds: seconds),
+                             seconds: seconds, role: "outgoing", onDiagnostic: onDiagnostic)
         try Task.checkCancellation()
         onStatus("HTDemucs · интро")
         let start = incomingStart.isFinite ? max(0, incomingStart) : 0
         let length = incomingSeconds.isFinite ? min(44, max(4, incomingSeconds)) : seconds
-        _ = try await window(url: incomingFile, startSec: start, seconds: length)
+        _ = try await window(url: incomingFile, startSec: start, seconds: length,
+                             role: "incoming", onDiagnostic: onDiagnostic)
     }
 
     private func cachedPair(
@@ -266,7 +289,8 @@ public actor HTDemucsRuntime {
         landAt: Double,
         fadeSec: Double,
         loopSec: Double,
-        echoDelaySec: Double
+        echoDelaySec: Double,
+        onDiagnostic: @escaping @Sendable (String) -> Void
     ) async throws -> (outgoing: URL, incoming: URL)? {
         // A supplies instrumental; B supplies vocal plus some of its backing,
         // then opens into the dry file at LAND. Duet keeps both vocal isolates.
@@ -281,7 +305,8 @@ public actor HTDemucsRuntime {
             landAt: 0,
             fadeSec: fadeSec,
             loopSec: bedLoop,
-            echoDelaySec: wash
+            echoDelaySec: wash,
+            role: "outgoing", onDiagnostic: onDiagnostic
         )
         do {
             let incoming = try await renderCAF(
@@ -292,7 +317,8 @@ public actor HTDemucsRuntime {
                 landAt: landAt,
                 fadeSec: fadeSec,
                 loopSec: 0,
-                echoDelaySec: wash
+                echoDelaySec: wash,
+                role: "incoming", onDiagnostic: onDiagnostic
             )
             return (outgoing, incoming)
         } catch {
@@ -309,9 +335,12 @@ public actor HTDemucsRuntime {
         landAt: Double,
         fadeSec: Double,
         loopSec: Double,
-        echoDelaySec: Double
+        echoDelaySec: Double,
+        role: String,
+        onDiagnostic: @escaping @Sendable (String) -> Void
     ) async throws -> URL {
-        let cached = try await window(url: url, startSec: max(0, cue), seconds: duration)
+        let cached = try await window(url: url, startSec: max(0, cue), seconds: duration,
+                                      role: role, onDiagnostic: onDiagnostic)
         return try mixSlice(
             cached, cue: cue, duration: duration, stem: stem, landAt: landAt, fadeSec: fadeSec,
             loopSec: loopSec, echoDelaySec: echoDelaySec
@@ -328,8 +357,9 @@ public actor HTDemucsRuntime {
         loopSec: Double,
         echoDelaySec: Double
     ) throws -> URL? {
+        guard let revision = CachedWindow.revision(of: url) else { return nil }
         guard let cached = windows.last(where: {
-            $0.filePath == url.path && $0.covers(startSec: max(0, cue), durationSec: duration)
+            $0.fileRevision == revision && $0.covers(startSec: max(0, cue), durationSec: duration)
         }) else { return nil }
         return try mixSlice(
             cached, cue: cue, duration: duration, stem: stem, landAt: landAt, fadeSec: fadeSec,
@@ -397,14 +427,25 @@ public actor HTDemucsRuntime {
         return try Self.writeCAF(left: left, right: right, rate: cached.rate)
     }
 
-    private func window(url: URL, startSec: Double, seconds: Double) async throws -> CachedWindow {
-        if let hit = windows.last(where: { $0.filePath == url.path && $0.covers(startSec: startSec, durationSec: seconds) }) {
+    private func window(url: URL, startSec: Double, seconds: Double, role: String,
+                        onDiagnostic: @escaping @Sendable (String) -> Void) async throws -> CachedWindow {
+        let revision = CachedWindow.revision(of: url)
+        if let revision, let hit = windows.last(where: { $0.fileRevision == revision && $0.covers(startSec: startSec, durationSec: seconds) }) {
+            onDiagnostic("cache.hit role=\(role)")
             return hit
         }
+        onDiagnostic("cache.miss role=\(role) identity=\(revision == nil ? "unavailable" : "available")")
         let read = try HTDemucsPCM.readWindow(url: url, startSec: startSec, seconds: seconds)
+        let started = Date()
         let separated = try await separate(left: read.left, right: read.right)
+        onDiagnostic(String(format: "separate.ready role=%@ elapsed=%.1fs", role, Date().timeIntervalSince(started)))
+        try Task.checkCancellation()
+        if let revision, revision != CachedWindow.revision(of: url) {
+            throw HTDemucsModelError("аудиофайл изменился")
+        }
         let cached = CachedWindow(
             filePath: url.path,
+            fileRevision: revision,
             startSec: read.startSec,
             rate: 44_100,
             reachesFileEnd: read.reachesFileEnd,
@@ -415,8 +456,10 @@ public actor HTDemucsRuntime {
             instL: separated.instL,
             instR: separated.instR
         )
-        windows.append(cached)
-        if windows.count > 4 { windows.removeFirst(windows.count - 4) }
+        if revision != nil {
+            windows.append(cached)
+            if windows.count > 4 { windows.removeFirst(windows.count - 4) }
+        }
         return cached
     }
 
@@ -455,19 +498,32 @@ public actor HTDemucsRuntime {
 
     private func model() async throws -> CoreMLStemSeparator {
         if let separator { return separator }
-        if refusedLoad { throw HTDemucsModelError("модель не открылась") }
+        if loadWasRefused() { throw HTDemucsModelError("модель не открылась") }
         guard let url = HTDemucsModelStore.shared.installedPackageURL() else {
             throw PipelineError.modelNotFound
         }
-        do {
-            let loaded = try await Task.detached(priority: .userInitiated) {
+        let pending: (id: UUID, task: Task<CoreMLStemSeparator, Error>)
+        if let modelLoad {
+            pending = modelLoad
+        } else {
+            pending = (UUID(), Task.detached(priority: .userInitiated) {
                 try CoreMLStemSeparator(modelURL: url)
-            }.value
+            })
+            modelLoad = pending
+        }
+        do {
+            let loaded = try await pending.task.value
+            if modelLoad?.id == pending.id { modelLoad = nil }
             separator = loaded
+            retryModelLoadAfter = nil
             return loaded
         } catch {
-            let text = (error as? HTDemucsModelError)?.description ?? ""
-            if !text.contains("мало места") { refusedLoad = true }
+            if modelLoad?.id == pending.id {
+                modelLoad = nil
+                if !(error is CancellationError) {
+                    retryModelLoadAfter = Date().addingTimeInterval(30)
+                }
+            }
             throw error
         }
     }
@@ -535,6 +591,7 @@ private enum StemTake {
 
 private struct CachedWindow: Sendable {
     var filePath: String
+    var fileRevision: String?
     var startSec: Double
     var rate: Double
     var reachesFileEnd: Bool
@@ -547,10 +604,48 @@ private struct CachedWindow: Sendable {
 
     var endSec: Double { startSec + Double(dryL.count) / rate }
 
+    /// Identify audio by its bytes, not by cache path or mutable access time.
+    /// Separate playback and analysis caches may contain the identical file,
+    /// and both update modification dates when accessed. Reject a file that
+    /// changed during hashing; neither paths nor hashes enter session logs.
+    static func revision(of url: URL) -> String? {
+        let path = url.standardizedFileURL.resolvingSymlinksInPath().path
+        let manager = FileManager.default
+        guard let before = try? manager.attributesOfItem(atPath: path),
+              let size = (before[.size] as? NSNumber)?.int64Value,
+              size > 0, size <= 128 * 1_024 * 1_024,
+              let changed = before[.modificationDate] as? Date,
+              let inode = before[.systemFileNumber] as? NSNumber,
+              let device = before[.systemNumber] as? NSNumber,
+              let file = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return nil }
+        defer { try? file.close() }
+        var digest = SHA256()
+        do {
+            while let chunk = try file.read(upToCount: 1_048_576), !chunk.isEmpty {
+                digest.update(data: chunk)
+            }
+        } catch { return nil }
+        guard let after = try? manager.attributesOfItem(atPath: path),
+              (after[.size] as? NSNumber)?.int64Value == size,
+              (after[.modificationDate] as? Date) == changed,
+              (after[.systemFileNumber] as? NSNumber) == inode,
+              (after[.systemNumber] as? NSNumber) == device else { return nil }
+        return digest.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
     func covers(startSec: Double, durationSec: Double) -> Bool {
-        guard startSec >= self.startSec - 0.05 else { return false }
-        if startSec + durationSec <= endSec + 0.2 { return true }
-        return reachesFileEnd && startSec <= endSec
+        // A cache hit must use the same start boundary as slice(). Otherwise a
+        // request up to 50 ms before the window appears covered but fails to
+        // slice, forcing the caller onto a non-neural fallback.
+        guard startSec.isFinite, durationSec.isFinite, rate.isFinite, rate > 0,
+              durationSec > 1 else { return false }
+        let offset = ((startSec - self.startSec) * rate).rounded()
+        guard offset >= -2, offset < Double(dryL.count) else { return false }
+        let from = max(0, Int(offset))
+        let available = min(dryL.count, dryR.count, vocalsL.count, vocalsR.count, instL.count, instR.count) - from
+        guard available > Int(rate) else { return false }
+        let requested = (durationSec * rate).rounded()
+        return requested <= Double(available + 2) || reachesFileEnd
     }
 
     func slice(startSec: Double, durationSec: Double) -> CachedWindow? {
@@ -571,6 +666,7 @@ private struct CachedWindow: Sendable {
         guard count > Int(rate) else { return nil }
         return CachedWindow(
             filePath: filePath,
+            fileRevision: fileRevision,
             startSec: self.startSec + Double(from) / rate,
             rate: rate,
             reachesFileEnd: reachesFileEnd && from + count >= dryL.count - 8,
