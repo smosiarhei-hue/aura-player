@@ -4109,6 +4109,38 @@ final class PlayerCore {
                             )
                         }
                     }
+                    // Mood and intro clamping can move previously analysed cues
+                    // off-grid. Recover only nearby detected downbeats with enough
+                    // runway; this is not a substitute for audio-clock scheduling.
+                    let cueAnalysis = AutoMixV2AnalysisRuntime.shared
+                    if !duetBake, style.isBeatmatched,
+                       let plan = cueAnalysis.transitionPlan,
+                       plan.type != .none, plan.type != .crossfade,
+                       let outP = cueAnalysis.currentProfile, self.mashupProfileMatches(outP, track: current),
+                       let inP = cueAnalysis.nextProfile, self.mashupProfileMatches(inP, track: nextTrack),
+                       outP.confidence.bpm >= 0.70, inP.confidence.bpm >= 0.70,
+                       outP.confidence.downbeats >= 0.65, inP.confidence.downbeats >= 0.65 {
+                        let total = self.duration > 1 ? self.duration : current.duration
+                        let incomingDuration = nextTrack.duration > 1 ? nextTrack.duration : inP.durationSec
+                        if let snapped = MashupBlendScheduler.retargetToDownbeats(
+                            outgoingCue: cueA, incomingCue: cueB,
+                            outgoingDuration: total, incomingDuration: incomingDuration,
+                            blend: blend, outgoingRate: Double(style.rateA),
+                            notBefore: max(self.playbackProgress + 0.25, outP.mixOutSec),
+                            outgoingBPM: Double(outP.bpm), incomingBPM: Double(inP.bpm),
+                            outgoingDownbeats: outP.downbeatsSec, incomingDownbeats: inP.downbeatsSec
+                        ) {
+                            cueA = snapped.outgoing
+                            cueB = snapped.incoming
+                            self.incomingStartPosition = cueB
+                            self.mashupIncomingCueSec = cueB
+                            AutoMixSessionLog.shared.event(
+                                String(format: "cue.downbeats A=%.2f B=%.2f", cueA, cueB)
+                            )
+                        } else {
+                            AutoMixSessionLog.shared.event("cue.downbeats unavailable")
+                        }
+                    }
                     // Snap LAND onto a whole bar so B's vocal hits the kick grid.
                     if !duetBake, style.targetBPM > 30 {
                         style.snapLandToBarGrid(blendSec: blend)
