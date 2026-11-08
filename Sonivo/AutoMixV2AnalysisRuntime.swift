@@ -424,8 +424,26 @@ final class AutoMixV2AnalysisRuntime {
                     let inFile = nextFile
                     stemPrepTask?.cancel()
                     let pairToken = key
+                    // Most AutoMix plans enter B after the cold intro. Prewarm
+                    // that actual window instead of always separating 0...36s,
+                    // which misses a late cue plus its blend and bake pad.
+                    let incomingWindow: (start: Double, duration: Double)
+                    if planMode == .automix {
+                        let cue = MashupBlendScheduler.clampAutomixIncomingCue(
+                            preferred: plan.bInStartSec, incomingDur: b.durationSec
+                        )
+                        incomingWindow = HTDemucsWindowMixer.incomingPrewarmWindow(
+                            cue: cue, blend: MashupTransitionExecutor.durationSeconds(for: plan)
+                        )
+                    } else {
+                        incomingWindow = (0, HTDemucsMashupBake.prewarmSeconds)
+                    }
                     stemPrepTask = Task { @MainActor [weak self] in
-                        await HTDemucsMashupBake.prewarm(outgoingFile: outFile, incomingFile: inFile) { message in
+                        await HTDemucsMashupBake.prewarm(
+                            outgoingFile: outFile, incomingFile: inFile,
+                            incomingWindowStart: incomingWindow.start,
+                            incomingWindowSeconds: incomingWindow.duration
+                        ) { message in
                             Task { @MainActor in
                                 guard self?.analysisGeneration == request, self?.observedPair == pairToken else { return }
                                 if message.hasPrefix("HTDemucs · скрыть") {

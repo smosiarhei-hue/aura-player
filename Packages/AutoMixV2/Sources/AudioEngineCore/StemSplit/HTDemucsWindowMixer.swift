@@ -35,6 +35,15 @@ public enum HTDemucsWindowMixer {
         return result.isFinite ? result : outgoingOffset
     }
 
+    /// Window near B's planned entry, with two seconds of retarget margin on
+    /// each side. Returned duration includes the eight-second live bake pad.
+    public static func incomingPrewarmWindow(cue: Double, blend: Double) -> (start: Double, duration: Double) {
+        guard cue.isFinite, blend.isFinite, cue >= 0, blend >= 0 else { return (0, 36) }
+        let start = max(0, cue - 2)
+        let needed = min(40, max(4, blend) + 8)
+        return (start, min(44, needed + 4))
+    }
+
     public static func render(
         dryL: [Float],
         dryR: [Float],

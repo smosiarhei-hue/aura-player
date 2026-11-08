@@ -22,6 +22,8 @@ public enum HTDemucsMashupBake {
     public static func prewarm(
         outgoingFile: URL,
         incomingFile: URL,
+        incomingWindowStart: Double = 0,
+        incomingWindowSeconds: Double = prewarmSeconds,
         onStatus: @escaping @Sendable (String) -> Void
     ) async {
         if await HTDemucsRuntime.shared.loadWasRefused() { return }
@@ -35,6 +37,8 @@ public enum HTDemucsMashupBake {
                 outgoingFile: outgoingFile,
                 incomingFile: incomingFile,
                 seconds: prewarmSeconds,
+                incomingStart: incomingWindowStart,
+                incomingSeconds: incomingWindowSeconds,
                 onStatus: onStatus
             )
             onStatus("HTDemucs · готово")
@@ -157,6 +161,8 @@ public actor HTDemucsRuntime {
         outgoingFile: URL,
         incomingFile: URL,
         seconds: Double,
+        incomingStart: Double,
+        incomingSeconds: Double,
         onStatus: @escaping @Sendable (String) -> Void
     ) async throws {
         jobs += 1
@@ -166,7 +172,9 @@ public actor HTDemucsRuntime {
         _ = try await window(url: outgoingFile, startSec: outroStart(outgoingFile, seconds: seconds), seconds: seconds)
         try Task.checkCancellation()
         onStatus("HTDemucs · интро")
-        _ = try await window(url: incomingFile, startSec: 0, seconds: seconds)
+        let start = incomingStart.isFinite ? max(0, incomingStart) : 0
+        let length = incomingSeconds.isFinite ? min(44, max(4, incomingSeconds)) : seconds
+        _ = try await window(url: incomingFile, startSec: start, seconds: length)
     }
 
     private func cachedPair(
