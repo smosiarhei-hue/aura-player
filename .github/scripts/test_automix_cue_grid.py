@@ -12,6 +12,25 @@ class AutoMixCueGridTests(unittest.TestCase):
     def test_bounded_measured_downbeats(self):
         main = r'''
 import Foundation
+// Build 1199: the real eight-bar plan was moved from 150s to 170.5s.
+let eightBars = 8 * 240.0 / 129.2
+let planned = MashupBlendScheduler.plannedCueIfUsable(
+    cue: 150, duration: 182.5, blend: eightBars, outgoingRate: 1)
+precondition(planned == 150, "valid planned cue must not be tail aligned")
+precondition(abs(MashupBlendScheduler.plannedLandProgress(bars: 8) - 0.875) < 0.000001)
+precondition(MashupBlendScheduler.plannedCueIfUsable(
+    cue: 170, duration: 182.5, blend: eightBars, outgoingRate: 1) == nil, "reject insufficient tail")
+precondition(MashupBlendScheduler.plannedCueIfUsable(
+    cue: 130, duration: 182.5, blend: eightBars, outgoingRate: 1) == nil, "respect song body")
+precondition(MashupBlendScheduler.plannedCueIfUsable(
+    cue: .nan, duration: 182.5, blend: eightBars, outgoingRate: 1) == nil)
+let earlyGrid = MashupBlendScheduler.retargetToDownbeats(
+    outgoingCue: 150, incomingCue: 5.1, outgoingDuration: 182.5, incomingDuration: 133.9,
+    blend: eightBars, outgoingRate: 1, notBefore: 138.5,
+    outgoingBPM: 129.2, incomingBPM: 126.05,
+    outgoingDownbeats: [149.9, 151.8], incomingDownbeats: [5.09])
+precondition(earlyGrid?.outgoing == 149.9 && earlyGrid?.incoming == 5.09,
+             "earlier plan must still use measured downbeats")
 func cues(a: Double = 179.8, b: Double = 10.2, rate: Double = 1,
           notBefore: Double = 160, beatsA: [Double] = [178, 180],
           beatsB: [Double] = [8, 10]) -> (outgoing: Double, incoming: Double)? {
@@ -73,8 +92,14 @@ precondition(accelerated!.outgoing + 6.4 * 1.08 <= 198.3, "accelerated A runs pa
         self.assertLess(segment.index('MashupBlendScheduler.retargetToDownbeats('),
                         segment.index('let bakeCueA = cueA'))
         self.assertIn('outP.confidence.downbeats >= 0.65', segment)
-        self.assertIn('notBefore: max(self.playbackProgress + 0.25, outP.mixOutSec)', segment)
+        self.assertIn('notBefore: self.playbackProgress + 0.25', segment)
         self.assertIn('cue.downbeats unavailable', segment)
+        self.assertIn('MashupBlendScheduler.plannedCueIfUsable(', player)
+        self.assertIn('source = "planned"', player)
+        wait = player.split('private func waitUntilMashupCue(', 1)[1].split('private func firePendingMashupLiveArmIfNeeded()', 1)[0]
+        self.assertIn('if pos >= safeCue { return true }', wait)
+        self.assertNotIn('pos + 0.25 >= safeCue', wait)
+        self.assertNotIn('estimated + 0.25 >= safeCue', wait)
 
 if __name__ == '__main__':
     unittest.main()

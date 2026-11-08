@@ -90,6 +90,21 @@ struct MashupBlendSchedulerTests {
         #expect(abs(total - (cue + blend)) < 0.05)
     }
 
+    @Test("Valid eight-bar plan keeps its earlier cue")
+    func keepsPlannedMusicalWindow() {
+        let blend = 8 * 240.0 / 129.2
+        #expect(MashupBlendScheduler.plannedCueIfUsable(
+            cue: 150, duration: 182.5, blend: blend, outgoingRate: 1
+        ) == 150)
+        #expect(MashupBlendScheduler.plannedLandProgress(bars: 8) == 0.875)
+        #expect(MashupBlendScheduler.plannedCueIfUsable(
+            cue: 170, duration: 182.5, blend: blend, outgoingRate: 1
+        ) == nil)
+        #expect(MashupBlendScheduler.plannedCueIfUsable(
+            cue: 130, duration: 182.5, blend: blend, outgoingRate: 1
+        ) == nil)
+    }
+
     @Test("Tail-aligned blend can recover an earlier detected downbeat")
     func tailAlignedGridRecovery() {
         func snap(outgoing: [Double], incoming: [Double] = [8.8],

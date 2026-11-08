@@ -3139,9 +3139,6 @@ final class PlayerCore {
     /// wait boxes — Build IPA 1127/1128).
     private func waitUntilMashupCue(_ cue: Double, transitionID: UUID, generation expectedGeneration: Int) async -> Bool {
         let safeCue = cue.isFinite ? max(0, cue) : 0
-        let waitStarted = Date()
-        let posAtStart = playbackProgress
-        let deadline = waitStarted.addingTimeInterval(max(0.05, safeCue - posAtStart - 0.2))
         while !Task.isCancelled {
             guard isTransitioning, transitionRequestID == transitionID,
                   generation == expectedGeneration else { return false }
@@ -3149,25 +3146,18 @@ final class PlayerCore {
             // Primary path may already have started the mix.
             firePendingMashupLiveArmIfNeeded()
             if incomingLaneReady { return true }
-            let now = Date()
             let pos = playbackProgress
             let dur = max(playbackDuration, duration)
-            if isPlaying || pos + 0.05 >= posAtStart {
-                if pos + 0.25 >= safeCue { return true }
-                if dur > 1, pos >= dur - 0.35 { return true }
-                // Cue past the tail — start the mix now rather than wait for EOF.
-                if dur > 1, safeCue >= dur - 0.75 { return true }
-            }
             if isPlaying {
-                let estimated = posAtStart + now.timeIntervalSince(waitStarted)
-                if estimated + 0.25 >= safeCue { return true }
-                if dur > 1, estimated >= dur - 0.35 { return true }
-                if now >= deadline { return true }
+                // Do not treat a cue up to 250 ms in the future as reached.
+                // Wall-clock estimates also advance during pause or buffering.
+                if pos >= safeCue { return true }
+                if dur > 1, pos >= dur - 0.35 { return true }
             }
             // Yield to the main run loop so stream observers / session TICK can
             // advance progress and fire the pending live arm.
             await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
                     cont.resume()
                 }
             }
@@ -3730,6 +3720,23 @@ final class PlayerCore {
            let plan = analysis.transitionPlan,
            plan.type != .none,
            MashupTransitionExecutor.durationSeconds(for: plan) >= MashupBlendScheduler.minimumBlendSec {
+            let plannedDuration = MashupTransitionExecutor.durationSeconds(for: plan)
+            if executionTransitionMode == .automix,
+               plan.type == .beatmatchedShort || plan.type == .beatmatchedLong,
+               let cue = MashupBlendScheduler.plannedCueIfUsable(
+                   cue: plan.aOutStartSec, duration: totalDur, blend: plannedDuration,
+                   outgoingRate: Double(plan.rateA)
+               ) {
+                return LiveMashupBlend(
+                    outgoingCueSec: cue,
+                    blendDurationSec: plannedDuration,
+                    incomingStartSec: MashupBlendScheduler.clampAutomixIncomingCue(
+                        preferred: max(0, plan.bInStartSec), incomingDur: incomingDur
+                    ),
+                    reason: "\(plan.reason) · planned",
+                    landProgress: MashupBlendScheduler.plannedLandProgress(bars: plan.bars)
+                )
+            }
             var blend = clampMashupBlendDuration(MashupTransitionExecutor.durationSeconds(for: plan))
             var cue = MashupBlendScheduler.reanchorOutgoingCue(
                 preferredCue: plan.aOutStartSec,
@@ -3907,21 +3914,36 @@ final class PlayerCore {
            let inTrack = incomingTrack,
            let outP = analysis.currentProfile, mashupProfileMatches(outP, track: outTrack),
            let inP = analysis.nextProfile, mashupProfileMatches(inP, track: inTrack) {
-            if placed.mood == "tight" {
-                blend = clampMashupBlendDuration(min(blend, placed.blendSec))
-            } else if placed.mood == "wash" {
-                blend = clampMashupBlendDuration(max(blend, placed.blendSec))
+            let planBlend = MashupTransitionExecutor.durationSeconds(for: plan)
+            if executionTransitionMode == .automix,
+               plan.type == .beatmatchedShort || plan.type == .beatmatchedLong,
+               let plannedCue = MashupBlendScheduler.plannedCueIfUsable(
+                   cue: plan.aOutStartSec, duration: totalDur, blend: planBlend,
+                   outgoingRate: Double(plan.rateA)
+               ) {
+                cueA = plannedCue
+                cueB = MashupBlendScheduler.clampAutomixIncomingCue(
+                    preferred: max(0, plan.bInStartSec), incomingDur: incomingDur
+                )
+                blend = planBlend
+                source = "planned"
+            } else {
+                if placed.mood == "tight" {
+                    blend = clampMashupBlendDuration(min(blend, placed.blendSec))
+                } else if placed.mood == "wash" {
+                    blend = clampMashupBlendDuration(max(blend, placed.blendSec))
+                }
+                cueA = MashupBlendScheduler.reanchorOutgoingCue(
+                    preferredCue: plan.aOutStartSec,
+                    totalDur: totalDur,
+                    blend: blend
+                )
+                cueB = MashupBlendScheduler.clampAutomixIncomingCue(
+                    preferred: max(0, plan.bInStartSec),
+                    incomingDur: incomingDur
+                )
+                source = "\(placed.mood)+plan"
             }
-            cueA = MashupBlendScheduler.reanchorOutgoingCue(
-                preferredCue: plan.aOutStartSec,
-                totalDur: totalDur,
-                blend: blend
-            )
-            cueB = MashupBlendScheduler.clampAutomixIncomingCue(
-                preferred: max(0, plan.bInStartSec),
-                incomingDur: incomingDur
-            )
-            source = "\(placed.mood)+plan"
         } else if let outTrack = currentTrack,
                   let outP = analysis.currentProfile,
                   mashupProfileMatches(outP, track: outTrack),
@@ -3973,15 +3995,18 @@ final class PlayerCore {
         transitionDuration = blend
         incomingStartPosition = cueB
         mashupIncomingCueSec = cueB
-        activeMashupStyle.moodLand = placed.landProgress
-        activeMashupStyle.handoffAt = placed.landProgress
+        let land = source == "planned"
+            ? MashupBlendScheduler.plannedLandProgress(bars: analysis.transitionPlan?.bars ?? 0)
+            : placed.landProgress
+        activeMashupStyle.moodLand = land
+        activeMashupStyle.handoffAt = land
         AutoMixSessionLog.shared.event(
             String(
                 format: "mood.pick %@ blend=%.1f inCue=%.1f land=%.2f cueA=%.1f",
                 source,
                 blend,
                 cueB,
-                placed.landProgress,
+                land,
                 cueA
             )
         )
@@ -4268,7 +4293,7 @@ final class PlayerCore {
                             outgoingCue: cueA, incomingCue: cueB,
                             outgoingDuration: total, incomingDuration: incomingDuration,
                             blend: blend, outgoingRate: Double(style.rateA),
-                            notBefore: max(self.playbackProgress + 0.25, outP.mixOutSec),
+                            notBefore: self.playbackProgress + 0.25,
                             outgoingBPM: Double(outP.bpm), incomingBPM: Double(inP.bpm),
                             outgoingDownbeats: outP.downbeatsSec, incomingDownbeats: inP.downbeatsSec
                         ) {

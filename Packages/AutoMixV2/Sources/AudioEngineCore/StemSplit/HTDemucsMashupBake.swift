@@ -44,6 +44,8 @@ public enum HTDemucsMashupBake {
     public static func prewarm(
         outgoingFile: URL,
         incomingFile: URL,
+        outgoingWindowStart: Double? = nil,
+        outgoingWindowSeconds: Double = prewarmSeconds,
         incomingWindowStart: Double = 0,
         incomingWindowSeconds: Double = prewarmSeconds,
         onDiagnostic: @escaping @Sendable (String) -> Void = { _ in },
@@ -67,6 +69,8 @@ public enum HTDemucsMashupBake {
                 outgoingFile: outgoingFile,
                 incomingFile: incomingFile,
                 seconds: prewarmSeconds,
+                outgoingStart: outgoingWindowStart,
+                outgoingSeconds: outgoingWindowSeconds,
                 incomingStart: incomingWindowStart,
                 incomingSeconds: incomingWindowSeconds,
                 onDiagnostic: onDiagnostic,
@@ -214,6 +218,8 @@ public actor HTDemucsRuntime {
         outgoingFile: URL,
         incomingFile: URL,
         seconds: Double,
+        outgoingStart: Double?,
+        outgoingSeconds: Double,
         incomingStart: Double,
         incomingSeconds: Double,
         onDiagnostic: @escaping @Sendable (String) -> Void,
@@ -230,8 +236,11 @@ public actor HTDemucsRuntime {
         defer { jobs -= 1 }
         _ = try await model()
         onStatus("HTDemucs · аутро")
-        _ = try await window(url: outgoingFile, startSec: outroStart(outgoingFile, seconds: seconds),
-                             seconds: seconds, role: "outgoing", onDiagnostic: onDiagnostic)
+        let outLength = outgoingSeconds.isFinite ? min(44, max(4, outgoingSeconds)) : seconds
+        let outStart = outgoingStart.flatMap { $0.isFinite ? max(0, $0) : nil }
+            ?? outroStart(outgoingFile, seconds: outLength)
+        _ = try await window(url: outgoingFile, startSec: outStart,
+                             seconds: outLength, role: "outgoing", onDiagnostic: onDiagnostic)
         try Task.checkCancellation()
         onStatus("HTDemucs · интро")
         let start = incomingStart.isFinite ? max(0, incomingStart) : 0

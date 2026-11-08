@@ -470,6 +470,7 @@ final class AutoMixV2AnalysisRuntime {
                     // that actual window instead of always separating 0...36s,
                     // which misses a late cue plus its blend and bake pad.
                     let incomingWindow: (start: Double, duration: Double)
+                    var outgoingWindow: (start: Double, duration: Double)?
                     if planMode == .automix {
                         let cue = MashupBlendScheduler.clampAutomixIncomingCue(
                             preferred: plan.bInStartSec, incomingDur: b.durationSec
@@ -477,12 +478,25 @@ final class AutoMixV2AnalysisRuntime {
                         incomingWindow = HTDemucsWindowMixer.incomingPrewarmWindow(
                             cue: cue, blend: MashupTransitionExecutor.durationSeconds(for: plan)
                         )
+                        let plannedDuration = MashupTransitionExecutor.durationSeconds(for: plan)
+                        if (plan.type == .beatmatchedShort || plan.type == .beatmatchedLong),
+                           let plannedCue = MashupBlendScheduler.plannedCueIfUsable(
+                               cue: plan.aOutStartSec, duration: a.durationSec, blend: plannedDuration,
+                               outgoingRate: Double(plan.rateA)
+                           ) {
+                            outgoingWindow = HTDemucsWindowMixer.incomingPrewarmWindow(
+                                cue: plannedCue, blend: plannedDuration
+                            )
+                        }
                     } else {
                         incomingWindow = (0, HTDemucsMashupBake.prewarmSeconds)
                     }
+                    let selectedOutgoingWindow = outgoingWindow
                     stemPrepTask = Task { @MainActor [weak self] in
                         await HTDemucsMashupBake.prewarm(
                             outgoingFile: outFile, incomingFile: inFile,
+                            outgoingWindowStart: selectedOutgoingWindow?.start,
+                            outgoingWindowSeconds: selectedOutgoingWindow?.duration ?? HTDemucsMashupBake.prewarmSeconds,
                             incomingWindowStart: incomingWindow.start,
                             incomingWindowSeconds: incomingWindow.duration,
                             onDiagnostic: { message in

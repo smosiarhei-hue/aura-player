@@ -68,6 +68,10 @@ let longWindow = HTDemucsWindowMixer.incomingPrewarmWindow(cue: 18, blend: 32)
 precondition(longWindow.start == 16 && longWindow.duration == 44)
 let invalidWindow = HTDemucsWindowMixer.incomingPrewarmWindow(cue: .nan, blend: 20)
 precondition(invalidWindow.start == 0 && invalidWindow.duration == 36)
+let plannedOutgoing = HTDemucsWindowMixer.incomingPrewarmWindow(cue: 150, blend: 8 * 240.0 / 129.2)
+precondition(plannedOutgoing.start == 148, "prepare the planned earlier outgoing window")
+precondition(plannedOutgoing.start + plannedOutgoing.duration >= 150 + 8 * 240.0 / 129.2 + 8,
+             "planned outgoing cache must cover the bake")
 let signal = [Float](repeating: 0.9, count: 1000)
 let mixed = HTDemucsWindowMixer.render(dryL: signal, dryR: signal, stemL: signal, stemR: signal,
                                         amount: 1, untilFrame: 900, fadeFrames: 200)

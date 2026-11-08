@@ -485,10 +485,14 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("let heardPastCue = max(0, liveAfter - cueA)", player)
         self.assertIn("let bakeLag = min(heardPastCue, max(0, blend - 1.5))", player)
         self.assertIn("waitUntilMashupCue", player)
-        # Wall-clock + cue-past-tail so live Automix arms before A EOF (field starve).
-        self.assertIn("posAtStart + now.timeIntervalSince(waitStarted)", player)
-        self.assertIn("safeCue >= dur - 0.75", player)
-        self.assertIn("now >= deadline", player)
+        # A wall clock and early tolerance could start a mix before its cue,
+        # including after pause/buffering. Use actual playback progress.
+        cue_wait = player.split("private func waitUntilMashupCue", 1)[1].split(
+            "private func firePendingMashupLiveArmIfNeeded", 1
+        )[0]
+        self.assertIn("if pos >= safeCue { return true }", cue_wait)
+        self.assertIn("pos >= dur - 0.35", cue_wait)
+        self.assertNotIn("now >= deadline", cue_wait)
         # Field 1077: playhead ticks fire live Automix at the musical cue even if
         # the prep Task's wait never resumed; bake probe is unstructured (not a
         # MainActor-isolated TaskGroup that serialized the 80ms timeout).

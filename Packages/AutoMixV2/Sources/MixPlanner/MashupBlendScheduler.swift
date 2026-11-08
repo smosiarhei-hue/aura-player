@@ -114,6 +114,26 @@ public enum MashupBlendScheduler {
         return min(max(cue, floor), ceiling)
     }
 
+    /// Preserve a beatmatched plan only if its complete source window fits.
+    /// Do not silently move a musical cue to the end of the file.
+    public static func plannedCueIfUsable(
+        cue: Double, duration: Double, blend: Double, outgoingRate: Double
+    ) -> Double? {
+        guard cue.isFinite, duration.isFinite, blend.isFinite, outgoingRate.isFinite,
+              duration > 45, blend >= minimumBlendSec, blend <= maximumBlendSec,
+              outgoingRate >= 0.9199, outgoingRate <= 1.0801,
+              cue >= duration * minimumPlayedFraction,
+              cue + blend * max(1, outgoingRate) <= duration else { return nil }
+        return cue
+    }
+
+    /// Leave the final bar for the handoff while retaining a substantial
+    /// musical overlap. Final grid verification remains mandatory.
+    public static func plannedLandProgress(bars: Double) -> Double {
+        guard bars.isFinite, bars >= 2 else { return 0.86 }
+        return min(0.93, max(0.58, (floor(bars) - 1) / bars))
+    }
+
     /// Cap B entry to the intro so LAND does not jump mid-body.
     /// Floor keeps Automix off cold opens (field 1151 mood.pick inCue=0.1).
     public static let minimumIncomingCueSec: Double = 4.0
