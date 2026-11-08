@@ -1,0 +1,446 @@
+diff --git a/Sonivo/playercore.swift b/Sonivo/playercore.swift
+index f97e0f6..fecf658 100644
+--- a/Sonivo/playercore.swift
++++ b/Sonivo/playercore.swift
+@@ -1310,23 +1310,24 @@ final class PlayerCore {
+         return outgoingVolume
+     }
+ 
+-    /// Automix LAND FX: ½-beat echo + light plate only in the final phrase.
++    /// Automix LAND FX: ½-beat echo + plate in the outgoing phrase before LAND.
+     /// Mid-window stays dry so A vocal × B bed does not triple with wet.
+     @discardableResult
+     private func applyAutomixLandMixFX(progress: Double, outgoingVolume: Float) -> Float {
+         let style = activeMashupStyle
+         let land = style.automixLandProgress
+         let p = min(1, max(0, progress))
+-        // Open echo ~1 bar before LAND so the outgoing vocal/instrumental trails
+-        // into B on the grid (Apple Automix "air"/echo release), then clear after.
++        // Shape the effect before LAND, while the outgoing deck is still audible.
++        // LAND completion clears the FX immediately, so peaking at LAND itself
++        // would leave little or no audible tail on a deck that is already silent.
+         let bpm = style.targetBPM > 30
+             ? style.targetBPM
+             : (activeTransitionPlan?.tempoTargetBPM ?? 120)
+         let safeBPM = bpm > 30 ? bpm : 120
+         let barFrac = min(0.22, max(0.10, (4 * 60 / Double(safeBPM)) / max(4, transitionDuration)))
+-        let echoStart = max(0.45, land - barFrac * 1.35)
+-        let echoPeak = land
+-        let echoEnd = min(1.0, land + barFrac * 0.55)
++        let echoStart = max(0.20, land - barFrac * 1.8)
++        let echoPeak = max(echoStart + 0.01, land - barFrac * 0.6)
++        let echoEnd = land
+ 
+         var amount: Float = 0
+         if p >= echoStart, p < echoPeak {
+@@ -1342,9 +1343,9 @@ final class PlayerCore {
+ 
+         // Half-beat delay — tempo-locked, low feedback so it trails instead of doubling.
+         let delaySec = Float(min(0.75, max(0.12, 60 / Double(safeBPM) * 0.5)))
+-        let echoWet = 0.26 * amount
++        let echoWet = 0.34 * amount
+         let echoFb = 0.22 * amount
+-        let plate = 0.16 * amount
++        let plate = 0.22 * amount
+         publishLiveMixFX(
+             echoWet: echoWet,
+             echoFeedback: echoFb,
+diff --git a/tools/automix-lab/package.json b/tools/automix-lab/package.json
+index b37ee24..c3278e6 100644
+--- a/tools/automix-lab/package.json
++++ b/tools/automix-lab/package.json
+@@ -9,6 +9,8 @@
+     "preview": "vite preview",
+     "smoke:tz": "node scripts/smoke-tz-planner.mjs",
+     "smoke:fx": "node scripts/smoke-fx-palette.mjs",
++    "smoke:camelot": "node scripts/smoke-camelot-roundtrip.mjs",
++    "smoke:tempo": "node scripts/test-tempo.mjs",
+     "smoke:mashup": "node scripts/smoke-modern-mashup.mjs",
+     "smoke:smooth": "node scripts/smoke-envelope-smoothness.mjs",
+     "smoke:critic": "node scripts/smoke-mix-critic.mjs",
+diff --git a/tools/automix-lab/src/audio/analyzeTrack.ts b/tools/automix-lab/src/audio/analyzeTrack.ts
+index b59601d..51105f9 100644
+--- a/tools/automix-lab/src/audio/analyzeTrack.ts
++++ b/tools/automix-lab/src/audio/analyzeTrack.ts
+@@ -108,73 +108,113 @@ function onsetEnvelope(energy: number[]): number[] {
+ const BPM_HOP_SEC = 0.01;
+ 
+ /**
+- * BPM via autocorrelation of a fine onset envelope (10 ms hops).
+- * Old 250 ms hops mapped ~110–130 BPM onto the same lag (= always “120”).
++ * Autocorrelation of 10 ms onset envelopes. Full-band remains the default;
++ * a clearer mid-band rhythm may refine it only in the same tempo neighbourhood.
++ * BPM alone says nothing about bars or vocal phrases.
+  */
+ export function estimateBPMFromSamples(
+   samples: Float32Array,
+   sampleRate: number
+ ): { bpm: number; confidence: number } {
++  const fallback = { bpm: 120, confidence: 0.1 };
++  if (!Number.isFinite(sampleRate) || sampleRate <= 0) return fallback;
+   const hop = Math.max(1, Math.floor(sampleRate * BPM_HOP_SEC));
+-  const env: number[] = [];
++  const hopSec = hop / sampleRate;
++  const full: number[] = [];
++  const mid: number[] = [];
++  // Difference of one-pole low passes reduces irregular bass and bright highs.
++  const lowAlpha = 1 - Math.exp((-2 * Math.PI * 150) / sampleRate);
++  const highAlpha = 1 - Math.exp((-2 * Math.PI * 1200) / sampleRate);
++  let low = 0;
++  let high = 0;
+   for (let i = 0; i + hop <= samples.length; i += hop) {
+-    let sum = 0;
++    let fullSum = 0;
++    let midSum = 0;
+     for (let j = 0; j < hop; j++) {
+       const v = samples[i + j]!;
+-      sum += v * v;
++      if (!Number.isFinite(v)) return fallback;
++      low += lowAlpha * (v - low);
++      high += highAlpha * (v - high);
++      const band = high - low;
++      fullSum += v * v;
++      midSum += band * band;
+     }
+-    env.push(Math.sqrt(sum / hop));
++    full.push(Math.sqrt(fullSum / hop));
++    mid.push(Math.sqrt(midSum / hop));
+   }
+-  const onset = onsetEnvelope(env);
+-  // Use middle 60% of the track (skip intro silence / outro fade).
+-  const i0 = Math.floor(onset.length * 0.15);
+-  const i1 = Math.floor(onset.length * 0.85);
+-  const region = onset.slice(i0, Math.max(i0 + 64, i1));
+-  if (region.length < 64) return { bpm: 120, confidence: 0.1 };
+-
+-  const minBpm = 70;
+-  const maxBpm = 180;
+-  const candidates: { bpm: number; score: number }[] = [];
+-
+-  for (let bpm = minBpm; bpm <= maxBpm; bpm++) {
+-    const lag = Math.round(60 / bpm / BPM_HOP_SEC);
+-    if (lag < 2 || lag >= region.length >> 1) continue;
+-    let corr = 0;
+-    let norm = 0;
+-    for (let i = 0; i + lag < region.length; i++) {
+-      corr += region[i]! * region[i + lag]!;
+-      norm += region[i]! * region[i]!;
++  const i0 = Math.floor(full.length * 0.15);
++  const i1 = Math.floor(full.length * 0.85);
++  const fullOnset = onsetEnvelope(full).slice(i0, Math.max(i0 + 64, i1));
++  const midOnset = onsetEnvelope(mid).slice(i0, Math.max(i0 + 64, i1));
++  if (fullOnset.length < 64) return fallback;
++
++  const evaluate = (region: number[]) => {
++    const minLag = Math.max(2, Math.floor(60 / 180 / hopSec) - 1);
++    const maxLag = Math.min((region.length >> 1) - 1, Math.ceil(60 / 70 / hopSec) + 1);
++    const correlations: number[] = [];
++    for (let lag = minLag; lag <= maxLag; lag++) {
++      let corr = 0;
++      let norm = 0;
++      for (let i = 0; i + lag < region.length; i++) {
++        corr += region[i]! * region[i + lag]!;
++        norm += region[i]! * region[i]!;
++      }
++      correlations[lag] = norm > 1e-9 ? corr / norm : 0;
+     }
+-    const score = norm > 1e-9 ? corr / norm : 0;
+-    // Mild preference for club/pop pocket 95–135 without forcing 120.
+-    const center = 115;
+-    const bias = 1 - Math.min(1, Math.abs(bpm - center) / 90) * 0.12;
+-    candidates.push({ bpm, score: score * bias });
+-  }
+-
+-  candidates.sort((a, b) => b.score - a.score);
+-  if (!candidates.length) return { bpm: 120, confidence: 0.1 };
+-
+-  // Pick best in 90–140 if close to global best; else global.
+-  let best = candidates[0]!;
+-  for (const c of candidates.slice(0, 12)) {
+-    if (c.bpm >= 90 && c.bpm <= 140 && c.score >= best.score * 0.92) {
+-      best = c;
+-      break;
++    const candidates: { bpm: number; score: number }[] = [];
++    for (let bpm = 70; bpm <= 180; bpm++) {
++      const lag = Math.round(60 / bpm / hopSec);
++      if (lag < minLag || lag > maxLag) continue;
++      const bias = 1 - Math.min(1, Math.abs(bpm - 115) / 90) * 0.12;
++      candidates.push({ bpm, score: (correlations[lag] ?? 0) * bias });
+     }
+-  }
++    candidates.sort((a, b) => b.score - a.score);
++    if (!candidates.length || !(candidates[0]!.score > 1e-9)) return null;
++    let best = candidates[0]!;
++    for (const c of candidates.slice(0, 12)) {
++      if (c.bpm >= 90 && c.bpm <= 140 && c.score >= best.score * 0.92) {
++        best = c;
++        break;
++      }
++    }
++    let bpm = best.bpm;
++    const scoreAt = (b: number) => candidates.find((c) => c.bpm === b)?.score ?? 0;
++    if (bpm < 90 && scoreAt(bpm * 2) >= best.score * 0.85) bpm *= 2;
++    if (bpm > 150 && scoreAt(Math.round(bpm / 2)) >= best.score * 0.85) bpm = Math.round(bpm / 2);
++
++    // Fit a parabola inside the selected integer-lag bin.
++    const lag = Math.round(60 / bpm / hopSec);
++    const y0 = correlations[lag - 1];
++    const y1 = correlations[lag] ?? 0;
++    const y2 = correlations[lag + 1];
++    let delta = 0;
++    if (y0 !== undefined && y2 !== undefined && y1 > y0 && y1 > y2) {
++      const denom = y0 - 2 * y1 + y2;
++      if (denom < 0) delta = Math.max(-0.5, Math.min(0.5, 0.5 * (y0 - y2) / denom));
++    }
++    const mean = candidates.reduce((s, c) => s + c.score, 0) / candidates.length;
++    return {
++      bpm: 60 / ((lag + delta) * hopSec),
++      peak: y1,
++      contrast: best.score - mean,
++      confidence: Math.min(1, Math.max(0.2, (best.score - mean) * 5 + 0.25)),
++    };
++  };
+ 
+-  // Resolve half/double vs neighbours (e.g. 62 vs 124).
+-  let bpm = best.bpm;
+-  const scoreAt = (b: number) =>
+-    candidates.find((c) => c.bpm === b)?.score ?? 0;
+-  if (bpm < 90 && scoreAt(bpm * 2) >= best.score * 0.85) bpm *= 2;
+-  if (bpm > 150 && scoreAt(Math.round(bpm / 2)) >= best.score * 0.85) bpm = Math.round(bpm / 2);
+-
+-  const mean =
+-    candidates.reduce((s, c) => s + c.score, 0) / Math.max(1, candidates.length);
+-  const confidence = Math.min(1, Math.max(0.2, (best.score - mean) * 5 + 0.25));
+-  return { bpm: Math.round(bpm * 10) / 10, confidence };
++  const primary = evaluate(fullOnset);
++  if (!primary) return fallback;
++  const band = evaluate(midOnset);
++  // The band must be substantially more periodic and agree within 8%; it
++  // cannot overturn the full-band octave or rescue a weak/noisy peak.
++  const useBand = band !== null && band.peak >= 0.3 && band.contrast >= 0.1 &&
++    band.peak >= primary.peak * 1.35 &&
++    Math.abs(band.bpm - primary.bpm) <= primary.bpm * 0.08;
++  const result = useBand ? band : primary;
++  return {
++    bpm: Math.round(result.bpm * 10) / 10,
++    // Disagreement between bands is not evidence for greater certainty.
++    confidence: useBand ? Math.min(primary.confidence, result.confidence) : result.confidence,
++  };
+ }
+ 
+ /** @deprecated coarse energy path — kept for callers; prefer estimateBPMFromSamples. */
+diff --git a/tools/automix-lab/src/audio/keyCamelot.ts b/tools/automix-lab/src/audio/keyCamelot.ts
+index f541478..de95123 100644
+--- a/tools/automix-lab/src/audio/keyCamelot.ts
++++ b/tools/automix-lab/src/audio/keyCamelot.ts
+@@ -100,16 +100,11 @@ function parseCamelot(raw: string | null | undefined): Parsed | null {
+ }
+ 
+ function pitchClass(number: number, letter: "A" | "B"): number {
+-  if (letter === "A") {
+-    const minorMap: Record<number, number> = {
+-      1: 8, 2: 3, 3: 10, 4: 5, 5: 0, 6: 7, 7: 2, 8: 9, 9: 4, 10: 11, 11: 6, 12: 1,
+-    };
+-    return minorMap[number] ?? 0;
+-  }
+-  const majorMap: Record<number, number> = {
+-    1: 3, 2: 10, 3: 5, 4: 0, 5: 7, 6: 2, 7: 9, 8: 4, 9: 11, 10: 6, 11: 1, 12: 8,
+-  };
+-  return majorMap[number] ?? 0;
++  // Reverse the same tables used by estimateCamelotKey, so estimation and
++  // pitch compensation cannot silently disagree about a key's pitch class.
++  // parseCamelot has already validated the number and letter.
++  const keys = letter === "A" ? MINOR_CAMELOT : MAJOR_CAMELOT;
++  return keys.indexOf(`${number}${letter}`);
+ }
+ 
+ export function camelotCompatible(a: string | null, b: string | null): boolean {
+diff --git a/tools/automix-lab/src/audio/waveRadio.ts b/tools/automix-lab/src/audio/waveRadio.ts
+index a5836bc..ed8c9fc 100644
+--- a/tools/automix-lab/src/audio/waveRadio.ts
++++ b/tools/automix-lab/src/audio/waveRadio.ts
+@@ -870,10 +870,11 @@ export class WaveRadio {
+     const need = Math.max(4, plan.params.blendDurationSec);
+     const a = this.coveringJob("outro", this.current.id, plan.params.cueASec, need);
+     const b = this.coveringJob("intro", this.next.id, plan.params.cueBSec, need);
++    if (!a || !b) return false;
+     const duet = this.transitionMode === "duet" || plan.params.dsp.mashupMode === "oneBarDuet";
+     const bedUrl = duet ? a.vocalsUrl : a.instrumentalUrl || a.beatUrl;
+     const leadUrl = b.vocalsUrl;
+-    if (!a || !b || !bedUrl || !leadUrl) return false;
++    if (!bedUrl || !leadUrl) return false;
+     try {
+       const bedRes = await fetch(bedUrl);
+       const leadRes = await fetch(leadUrl);
+diff --git a/tools/automix-lab/src/iphone-mock.ts b/tools/automix-lab/src/iphone-mock.ts
+index b4b2f94..748b33c 100644
+--- a/tools/automix-lab/src/iphone-mock.ts
++++ b/tools/automix-lab/src/iphone-mock.ts
+@@ -15,7 +15,6 @@ const FRAME_H = 2822;
+ const HOLE_X = 100;
+ const HOLE_Y = 100;
+ const HOLE_W = 1206;
+-const HOLE_H = 2622;
+ /** Logical CSS points for iPhone 17 Pro. */
+ const SCREEN_PT_W = 402;
+ const SCREEN_PT_H = 874;
+diff --git a/tools/automix-lab/scripts/smoke-camelot-roundtrip.mjs b/tools/automix-lab/scripts/smoke-camelot-roundtrip.mjs
+new file mode 100644
+index 0000000..9cbfb53
+--- /dev/null
++++ b/tools/automix-lab/scripts/smoke-camelot-roundtrip.mjs
+@@ -0,0 +1,32 @@
++/** Regression: estimation and compensation must use the same 24 pitch classes. */
++import assert from 'node:assert/strict';
++import { buildSync } from 'esbuild';
++import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join, resolve } from 'node:path';
++import { pathToFileURL } from 'node:url';
++
++const root = resolve(new URL('..', import.meta.url).pathname);
++const source = readFileSync(join(root, 'src/audio/keyCamelot.ts'), 'utf8');
++const dir = mkdtempSync(join(tmpdir(), 'camelot-smoke-'));
++try {
++  const outfile = join(dir, 'key.mjs');
++  buildSync({ stdin: { contents: source + '\nexport { pitchClass };\n', resolveDir: root, loader: 'ts' },
++    bundle: true, platform: 'node', format: 'esm', outfile });
++  const { pitchClass, camelotMatch } = await import(pathToFileURL(outfile).href);
++  // Reference pitch classes in number order (C = 0). Independent of implementation tables.
++  const expected = {
++    A: [8, 3, 10, 5, 0, 7, 2, 9, 4, 11, 6, 1],
++    B: [11, 6, 1, 8, 3, 10, 5, 0, 7, 2, 9, 4],
++  };
++  for (const mode of ['A', 'B']) {
++    for (let i = 1; i <= 12; i++) assert.equal(pitchClass(i, mode), expected[mode][i - 1], `${i}${mode}`);
++  }
++  assert.deepEqual([camelotMatch('4B','9A').isHarmonicallyViable, camelotMatch('4B','9A').pitchShiftCents], [true,100]);
++  assert.deepEqual([camelotMatch('9A','4B').isHarmonicallyViable, camelotMatch('9A','4B').pitchShiftCents], [true,-100]);
++  assert.deepEqual([camelotMatch('4B','8A').isHarmonicallyViable, camelotMatch('4B','8A').pitchShiftCents], [false,0]);
++  assert.equal(camelotMatch('4B','12A',2).isHarmonicallyViable, false);
++  assert.equal(camelotMatch('4B','12A',6).pitchShiftCents, 400);
++  assert.equal(camelotMatch('8B','8A').isNaturallyCompatible, true);
++  console.log('PASS: 24 Camelot pitch classes and bidirectional harmonic regressions');
++} finally { rmSync(dir, { recursive: true, force: true }); }
+diff --git a/tools/automix-lab/scripts/test-tempo.mjs b/tools/automix-lab/scripts/test-tempo.mjs
+new file mode 100644
+index 0000000..b7c82fd
+--- /dev/null
++++ b/tools/automix-lab/scripts/test-tempo.mjs
+@@ -0,0 +1,116 @@
++/** Offline BPM regression tests. No network or source audio is required.
++ * Run: node scripts/test-tempo.mjs
++ * Optional local reference pair (requires ffmpeg):
++ * node scripts/test-tempo.mjs --pair .ym-cache/wave-a-138790032.mp3 .ym-cache/wave-b-103251124.mp3
++ */
++import assert from "node:assert/strict";
++import { spawnSync } from "node:child_process";
++import { fileURLToPath } from "node:url";
++import { build } from "esbuild";
++
++const root = fileURLToPath(new URL("..", import.meta.url));
++const bundle = await build({
++  entryPoints: [fileURLToPath(new URL("../src/audio/analyzeTrack.ts", import.meta.url))],
++  bundle: true, platform: "node", format: "esm", write: false, logLevel: "silent",
++});
++const { estimateBPMFromSamples: estimate } = await import(
++  `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString("base64")}`
++);
++
++function generator(seed = 341) {
++  let state = seed;
++  return () => ((state = (Math.imul(state, 1664525) + 1013904223) >>> 0) / 2 ** 32);
++}
++
++function makeTrack(bpm, sampleRate, seconds, options = {}) {
++  const samples = new Float32Array(Math.floor(sampleRate * seconds));
++  const random = generator();
++  const pulse = (time, frequency, amplitude, duration) => {
++    const start = Math.round(time * sampleRate);
++    for (let j = 0; j < duration * sampleRate && start + j < samples.length; j++) {
++      if (start + j >= 0) samples[start + j] += amplitude * Math.exp(-j / (duration * sampleRate * 0.25)) * Math.sin(2 * Math.PI * frequency * j / sampleRate);
++    }
++  };
++  for (let t = options.phase ?? 0.173, beat = 0; t < seconds; t += 60 / bpm, beat++) {
++    if (options.silentEnds && (t < seconds * 0.17 || t > seconds * 0.83)) continue;
++    pulse(t, 600, 0.55, 0.045);
++    pulse(t, 70, 0.3, 0.11);
++    if (beat % 2) pulse(t, 1800, 0.18, 0.035);
++  }
++  if (options.irregularBass) {
++    for (let t = 0.07; t < seconds; t += 0.12 + random() * 0.24) pulse(t, 55, 0.4, 0.13);
++  }
++  if (options.noise) {
++    for (let i = 0; i < samples.length; i++) samples[i] += (random() - 0.5) * 0.04;
++  }
++  return samples;
++}
++
++function near(label, actual, target, tolerance) {
++  assert.ok(Number.isFinite(actual) && Math.abs(actual - target) <= tolerance,
++    `${label}: expected ${target} ± ${tolerance}, got ${actual}`);
++}
++function check(label, samples, sr, bpm, tolerance = 0.8) {
++  const result = estimate(samples, sr);
++  near(label, result.bpm, bpm, tolerance);
++  assert.ok(Number.isFinite(result.confidence) && result.confidence >= 0 && result.confidence <= 1);
++  return result;
++}
++
++// Includes fractional hop duration at 11025/22050 Hz and tempos that once
++// collapsed onto the same rounded 10 ms lag.
++for (const sr of [8000, 11025, 22050, 44100]) {
++  for (const bpm of [90, 100, 118.4, 121, 122, 124, 125, 127.3, 140, 155]) {
++    check(`${sr} Hz / ${bpm} BPM`, makeTrack(bpm, sr, 24, { noise: true }), sr, bpm);
++  }
++}
++// A competing bass pulse train plus irregular bass masks the 125.2 BPM
++// mid-band beat in the full-band envelope. Without the band path this
++// deterministic fixture selects approximately 130 BPM instead.
++function maskedMidBeat() {
++  const sr = 22050;
++  const samples = new Float32Array(sr * 32);
++  const random = generator(12345);
++  const pulse = (time, frequency, amplitude, duration) => {
++    const start = Math.round(time * sr);
++    for (let j = 0; j < duration * sr && start + j < samples.length; j++) {
++      samples[start + j] += amplitude * Math.exp(-j / (duration * sr * 0.25)) * Math.sin(2 * Math.PI * frequency * j / sr);
++    }
++  };
++  for (let t = 0.173; t < 32; t += 60 / 125.2) pulse(t, 600, 0.4, 0.04);
++  for (let t = 0.08; t < 32; t += 60 / 130) pulse(t, 35, 0.4, 0.12);
++  for (let t = 0.07; t < 32; t += 0.12 + random() * 0.24) pulse(t, 35, 0.4, 0.13);
++  return samples;
++}
++check("clear mid-band beat with masked full-band peak", maskedMidBeat(), 22050, 125.2, 0.8);
++check("silent intro/outro", makeTrack(124.3, 22050, 36, { silentEnds: true, phase: 0.31 }), 22050, 124.3);
++check("irregular bass under clear mid-band beat", makeTrack(125.2, 22050, 40, { irregularBass: true }), 22050, 125.2, 1);
++// Octave ambiguity is intentional: this alternating-accent example is heard
++// as half time by the existing heuristic; do not silently assert 170 BPM.
++check("half-time ambiguity", makeTrack(170, 22050, 24, { noise: true }), 22050, 85, 1);
++for (const [label, samples, sr] of [
++  ["empty", new Float32Array(), 22050],
++  ["short", new Float32Array(100), 22050],
++  ["silence", new Float32Array(22050 * 10), 22050],
++  ["invalid rate", new Float32Array(1000), 0],
++  ["non-finite samples", Float32Array.from([NaN, ...new Array(999).fill(0)]), 22050],
++]) assert.deepEqual(estimate(samples, sr), { bpm: 120, confidence: 0.1 }, label);
++const random = generator();
++const noise = Float32Array.from({ length: 22050 * 20 }, () => random() * 2 - 1);
++const noiseResult = estimate(noise, 22050);
++assert.ok(noiseResult.confidence < 0.5, `noise confidence: ${noiseResult.confidence}`);
++console.log("Synthetic BPM regressions: passed");
++
++if (process.argv.length > 2) {
++  assert.equal(process.argv[2], "--pair", "expected --pair <More> <RASA>");
++  assert.equal(process.argv.length, 5, "expected exactly two local file paths");
++  for (const [path, target] of [[process.argv[3], 122], [process.argv[4], 125]]) {
++    const decoded = spawnSync("ffmpeg", ["-v", "error", "-i", path, "-ac", "1", "-ar", "22050", "-f", "f32le", "pipe:1"], { maxBuffer: 80 * 1024 * 1024 });
++    assert.equal(decoded.status, 0, `local ffmpeg decode failed: ${decoded.stderr}`);
++    // Copy to ensure Float32Array alignment and avoid any file writes.
++    const samples = new Float32Array(decoded.stdout.byteLength / 4);
++    for (let i = 0; i < samples.length; i++) samples[i] = decoded.stdout.readFloatLE(i * 4);
++    const result = check(path, samples, 22050, target, 2);
++    console.log(`${path}: ${result.bpm} BPM, confidence ${result.confidence.toFixed(2)} (approximate reference ${target})`);
++  }
++}
