@@ -70,10 +70,11 @@ nonisolated struct Track: Codable, Equatable {
     var restoredWaveStation:String?; var waveRecovery=WavePlaybackRecovery()
     let activeStreamingPlayer=Node(), playerA=Node(), playerB=Node()
     var anchorDate:Date?; var activeAudioFile:Int?; var isStreamBuffering=true
-    var waveListening=WaveListeningState(); var advances=0
+    var waveListening=WaveListeningState(); var advances=0; var reconciles=0
     static func yandexTrackID(from track:Track)->String { YandexMusicService.ymId(fromFileName:track.fileName) ?? "" }
     func stopTimer() {}
     func next() { advances += 1 }
+    func reconcileAutomaticNextChoice() { reconciles += 1 }
     SKIP
 }
 @main struct Checks {
@@ -139,6 +140,7 @@ nonisolated struct Track: Codable, Equatable {
         recovery.isPlaying=true; recovery.isYandexWavePlayback=false
         precondition(!recovery.skipFailedWaveTrack()) // Ordinary playlist is not silently skipped.
         precondition(service.skips.count == 6)
+        precondition(recovery.reconciles == 7) // Failed IDs invalidate a reserved automatic choice.
         print("Checkpoint: paused restore, account isolation, fresh URLs, queue window, missing files, finite seek and throttled progress; Wave: bounded source skips OK")
     }
 }
