@@ -29,7 +29,7 @@ class CoverFoldSwipeTests(unittest.TestCase):
             self.assertIn(token, math)
         # Mild tilt only — heavy Y rotation reads as cubes; warp carries the fold.
         self.assertIn("static let maxFoldDegrees: Double = 12", math)
-        self.assertIn("static let clusterFactor: CGFloat = 0.62", math)
+        self.assertIn("static let clusterFactor: CGFloat = 0.92", math)
         self.assertIn("CoverSwipeProMotionGate", gate)
         self.assertIn("preferredFrameRateRange", gate)
         self.assertIn("maximum: Float(desired)", gate)
@@ -111,7 +111,7 @@ import Foundation
         checks = r'''
 func progress(dragX: Double, width: Double) -> Double {
   guard width > 0 else { return 0 }
-  return max(-1.18, min(1.18, dragX / (width * 0.62)))
+  return max(-1.18, min(1.18, dragX / (width * 0.92)))
 }
 func foldDegrees(slot: Int, progress: Double) -> Double { -(Double(slot) + progress) * 12 }
 func scale(slot: Int, progress: Double) -> Double {
@@ -120,7 +120,7 @@ func scale(slot: Int, progress: Double) -> Double {
   return 1 - eased * (1 - 0.74)
 }
 precondition(abs(progress(dragX: 0, width: 390)) < 0.0001)
-precondition(abs(progress(dragX: 120.9, width: 390) - 0.5) < 0.0001)
+precondition(abs(progress(dragX: 179.4, width: 390) - 0.5) < 0.0001)
 precondition(abs(foldDegrees(slot: 0, progress: 0)) < 0.0001)
 precondition(abs(foldDegrees(slot: 1, progress: 0) + 12) < 0.0001)
 precondition(abs(foldDegrees(slot: -1, progress: 0) - 12) < 0.0001)
@@ -162,7 +162,7 @@ class CoverSwipeSafetyRegressionTests(unittest.TestCase):
         self.assertIn('.simultaneousGesture(', stage)
         self.assertIn('animateTrackSwipe(direction: direction, width: width)', stage)
         self.assertNotIn('0.12 : CoverFoldSwipeMath.progressLimit', stage)
-        self.assertIn('slot == 0 || slotTrack != nil || slot == coverVisualSide', stage)
+        self.assertIn('slot == 0 || slot == coverVisualSide', stage)
         self.assertIn('settleCoverDrag()', stage)
         self.assertIn('default: return coverTransitionOutgoing ?? track', stage)
         commit = player.split('private func animateTrackSwipe', 1)[1].split('private func releaseCoverSwitchLock', 1)[0]
@@ -189,6 +189,8 @@ class CoverSwipeSafetyRegressionTests(unittest.TestCase):
         player = (ROOT / 'Sonivo/PlayerScreenV2.swift').read_text()
         plate = player.split('private func foldedCoverPlate', 1)[1].split('private var coverDissolveMask', 1)[0]
         self.assertIn('.mask(feather)', plate)
+        self.assertIn('.mask(sideFeather)', plate)
+        self.assertIn('ink(0.42)', plate)
         self.assertIn('.padding(.vertical, padY)', plate)
         self.assertIn('.padding(.horizontal, padX)', plate)
         self.assertIn('.mask(edgeGlow)', plate)

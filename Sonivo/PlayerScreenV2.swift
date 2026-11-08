@@ -130,7 +130,7 @@ struct PlayerScreenV2: View {
                 // Cover clears the Island with room — soft alpha dissolve meets the atmosphere.
                 let coverTopClearance: CGFloat = max(28, topInset + 12)
                 // Apple Music: edge-to-edge square. Height == width — never taller.
-                // A taller stage made scaledToFill upscale the art and soften it.
+                // A taller stage would enlarge the layout without adding image detail.
                 // Wave banner + secondary glass row left the player; keep room for
                 // lyrics · AirPlay · queue · sleep · EQ and a slight downward nudge.
                 let reservedFirstScreenControls: CGFloat = 248 + max(safeBottom, 8)
@@ -586,9 +586,9 @@ struct PlayerScreenV2: View {
         let progress = CoverFoldSwipeMath.progress(dragX: coverDragX, width: width)
         let playScale = player.isPlaying ? 1.0 : 0.97
         let folding = !reduceMotion && coverMixAmount == 0 && !isFullScreenVideoShot
-        // A centered card leaves room for the bending neighbors. Keep identical
-        // geometry in mixed, reduced-motion and video modes to avoid a layout jump.
-        let coverSide = min(width, height) * 0.68
+        // Keep artwork nearly edge-to-edge in every mode; the padded shader
+        // canvas overflows the stage without shrinking the underlying cover.
+        let coverSide = min(width, height)
         let neighbors = coverSwipeNeighbors
 
         return ZStack {
@@ -606,9 +606,9 @@ struct PlayerScreenV2: View {
                             default: return coverTransitionOutgoing ?? track
                             }
                         }()
-                        // Show real neighbors as folded peeks. An unknown shuffle
-                        // destination is neutral only while that side is dragged.
-                        if slot == 0 || slotTrack != nil || slot == coverVisualSide {
+                        // Only reveal the active neighbor during a swipe. At rest the
+                        // full-width cover has no stray side plates.
+                        if slot == 0 || slot == coverVisualSide {
                             foldedCoverPlate(
                                 for: slotTrack,
                                 side: coverSide,
@@ -626,6 +626,7 @@ struct PlayerScreenV2: View {
                     .frame(width: coverSide, height: coverSide)
                     .clipped()
                     .mask(coverDissolveMask)
+                    .mask(coverSideDissolveMask)
                     .matchedGeometryEffect(
                         id: LyricsPresentationMotion.coverMorphID,
                         in: nowPlayingCoverSpace,
@@ -637,7 +638,7 @@ struct PlayerScreenV2: View {
                     .offset(x: coverDragX)
             }
         }
-        .frame(width: width, height: height, alignment: .top)
+        .frame(width: width, height: height, alignment: .center)
         .scaleEffect(playScale)
         .contentShape(Rectangle())
         .simultaneousGesture(
@@ -692,11 +693,8 @@ struct PlayerScreenV2: View {
     ) -> some View {
         let preferred = slotTrack.flatMap { artworkImage(for: $0) }
             ?? (slot == 0 && artworkTrackId == slotTrack?.id ? currentArtworkImage : nil)
-        let corner = side * CoverFoldSwipeMath.cornerRadiusFactor
-
         coverLayer(for: slotTrack, preferredImage: preferred)
             .frame(width: side, height: side)
-            .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
             .matchedGeometryEffect(
                 id: LyricsPresentationMotion.coverMorphID,
                 in: nowPlayingCoverSpace,
@@ -766,6 +764,12 @@ struct PlayerScreenV2: View {
                 .init(color: ink(0.28), location: 0.88),
                 .init(color: ink(0), location: 1)
             ], startPoint: .top, endPoint: .bottom)
+            let sideFeather = LinearGradient(stops: [
+                .init(color: ink(0.42), location: 0),
+                .init(color: ink(1), location: 0.045),
+                .init(color: ink(1), location: 0.955),
+                .init(color: ink(0.42), location: 1)
+            ], startPoint: .leading, endPoint: .trailing)
             return content
                 .overlay {
                     if magnitude > 0.001 {
@@ -778,6 +782,7 @@ struct PlayerScreenV2: View {
                     }
                 }
                 .mask(feather)
+                .mask(sideFeather)
                 .padding(.horizontal, padX)
                 .padding(.vertical, padY)
                 .compositingGroup()
@@ -816,6 +821,16 @@ struct PlayerScreenV2: View {
             startPoint: .top,
             endPoint: .bottom
         )
+    }
+
+    /// A narrow side fade avoids hard edges without obscuring the artwork.
+    private var coverSideDissolveMask: some View {
+        LinearGradient(stops: [
+            .init(color: .black.opacity(0.42), location: 0),
+            .init(color: .black, location: 0.045),
+            .init(color: .black, location: 0.955),
+            .init(color: .black.opacity(0.42), location: 1)
+        ], startPoint: .leading, endPoint: .trailing)
     }
 
     @ViewBuilder
@@ -1042,17 +1057,18 @@ struct PlayerScreenV2: View {
 
     @ViewBuilder
     private func coverLayer(for track: Track?, preferredImage: UIImage?) -> some View {
-        // Fill the standard square. High interpolation — no soft upscale from forced full-bleed.
+        // Preserve the entire image, including non-square artwork; the native
+        // blurred atmosphere fills any space around it.
         Group {
             if let preferredImage {
                 Image(uiImage: preferredImage)
                     .resizable()
                     .interpolation(.high)
-                    .scaledToFill()
+                    .scaledToFit()
             } else if let raw = track?.coverURL, let url = URL(string: raw) {
                 AsyncImage(url: url) { phase in
                     if let image = phase.image {
-                        image.resizable().interpolation(.high).scaledToFill()
+                        image.resizable().interpolation(.high).scaledToFit()
                     } else {
                         fallbackArtwork
                     }

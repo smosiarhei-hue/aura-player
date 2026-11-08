@@ -15,7 +15,7 @@ nonisolated enum CoverFoldSwipeMath {
     /// Soft rubber past one full slot so a throw still feels physical.
     static let progressLimit: CGFloat = 1.18
     /// Keep a clear gap between plates (reference never hinges them together).
-    static let clusterFactor: CGFloat = 0.62
+    static let clusterFactor: CGFloat = 0.92
     /// Corner radius relative to cover side (continuous cards, not hard cubes).
     static let cornerRadiusFactor: CGFloat = 0.045
 

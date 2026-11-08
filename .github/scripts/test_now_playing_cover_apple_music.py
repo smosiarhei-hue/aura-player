@@ -46,7 +46,10 @@ class NowPlayingCoverAppleMusicTests(unittest.TestCase):
             "private func inlineLyricsStage", 1
         )[0]
         self.assertIn(".mask(coverDissolveMask)", stage)
-        self.assertIn("let coverSide = min(width, height) * 0.68", stage)
+        self.assertIn(".mask(coverSideDissolveMask)", stage)
+        self.assertIn("alignment: .center", stage)
+        self.assertNotIn("slotTrack != nil || slot == coverVisualSide", stage)
+        self.assertIn("let coverSide = min(width, height)", stage)
         self.assertIn(".frame(width: coverSide, height: coverSide)", stage)
         self.assertNotIn("RoundedRectangle(cornerRadius: 18", stage)
         self.assertNotIn(".shadow(", stage)
@@ -72,13 +75,30 @@ class NowPlayingCoverAppleMusicTests(unittest.TestCase):
             PLAYER.split("NowPlayingAtmosphere(", 1)[1].split("coverAccentWash", 1)[0],
         )
 
-    def test_cover_fills_square_not_letterboxed(self):
+    def test_cover_preserves_entire_non_square_artwork(self):
         layer = PLAYER.split("private func coverLayer(", 1)[1].split(
             "private var fallbackArtwork", 1
         )[0]
-        self.assertIn(".scaledToFill()", layer)
+        self.assertEqual(layer.count(".scaledToFit()"), 2)
         self.assertIn(".interpolation(.high)", layer)
-        self.assertNotIn(".scaledToFit()", layer)
+        self.assertNotIn(".scaledToFill()", layer)
+
+    def test_full_width_plate_padding_is_centered_and_side_edges_fade(self):
+        # The padded shader canvas must not move the actual cover down or
+        # reduce its side length when centered in the square artwork stage.
+        for side in (320.0, 390.0, 430.0):
+            padded_height = side * 1.48
+            image_top = (side - padded_height) / 2 + side * 0.24
+            self.assertAlmostEqual(image_top, 0)
+        plate = PLAYER.split("private func foldedCoverPlate(", 1)[1].split(
+            "private struct CoverFoldAnimatedEffect", 1
+        )[0]
+        self.assertNotIn(".clipShape(", plate)
+        mask = PLAYER.split("private var coverSideDissolveMask:", 1)[1].split(
+            "private func inlineLyricsStage", 1
+        )[0]
+        for token in [".black.opacity(0.42)", "location: 0.045", "location: 0.955"]:
+            self.assertIn(token, mask)
 
     def test_seek_and_volume_match_apple_music_bars(self):
         timeline = PLAYER.split("struct PlayerTimelineSection", 1)[1].split(
