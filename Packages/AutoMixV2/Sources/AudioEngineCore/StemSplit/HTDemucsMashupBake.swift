@@ -7,6 +7,18 @@ import Foundation
 public enum HTDemucsMashupBake {
     public static let prewarmSeconds: Double = 36
 
+    /// Classify a nil result without exposing paths or model data in field logs.
+    /// This is a snapshot: preparation can change between the attempt and logging.
+    public static func unavailableReason() async -> String {
+        guard HTDemucsModelStore.shared.installedPackageURL() != nil else {
+            return "model-not-installed"
+        }
+        if await HTDemucsRuntime.shared.loadWasRefused() {
+            return "model-load-refused"
+        }
+        return "window-not-ready"
+    }
+
     public static func prewarm(
         outgoingFile: URL,
         incomingFile: URL,
@@ -170,7 +182,7 @@ public actor HTDemucsRuntime {
                 url: incomingURL,
                 cue: cueB,
                 duration: duration,
-                stem: .vocal,
+                stem: duet ? .vocal : .vocalWithBacking,
                 landAt: landAt,
                 fadeSec: fadeSec,
                 loopSec: 0,
@@ -198,8 +210,8 @@ public actor HTDemucsRuntime {
         loopSec: Double,
         echoDelaySec: Double
     ) async throws -> (outgoing: URL, incoming: URL)? {
-        // Ending song is the instrumental bed. The next song enters as vocal,
-        // then opens into the dry file at LAND. Duet is both vocals.
+        // A supplies instrumental; B supplies vocal plus some of its backing,
+        // then opens into the dry file at LAND. Duet keeps both vocal isolates.
         let outgoingStem: StemTake = duet ? .vocal : .instrumental
         let bedLoop = duet ? 0 : loopSec
         let wash = duet ? 0 : echoDelaySec
@@ -218,7 +230,7 @@ public actor HTDemucsRuntime {
                 url: incomingURL,
                 cue: cueB,
                 duration: duration,
-                stem: .vocal,
+                stem: duet ? .vocal : .vocalWithBacking,
                 landAt: landAt,
                 fadeSec: fadeSec,
                 loopSec: 0,
@@ -283,7 +295,7 @@ public actor HTDemucsRuntime {
         let stemL: [Float]
         let stemR: [Float]
         switch stem {
-        case .vocal:
+        case .vocal, .vocalWithBacking:
             stemL = slice.vocalsL
             stemR = slice.vocalsR
         case .instrumental:
@@ -293,15 +305,17 @@ public actor HTDemucsRuntime {
             stemL = slice.dryL
             stemR = slice.dryR
         }
-        // Bloom only the incoming vocal. The outgoing bed stays instrumental
-        // until the live fader lets it go; blooming it would bring its vocal back.
+        // Only incoming stems bloom. Outgoing stays instrumental until its fader
+        // lets it go, keeping the previous vocal out of the transition.
         let until: Int? = stem == .dry || landAt <= 0.05 ? nil : Int(landAt * cached.rate)
+        let amount: Float = stem == .dry ? 0
+            : (stem == .vocalWithBacking ? HTDemucsWindowMixer.automixIncomingVocalAmount : 1)
         let mixed = HTDemucsWindowMixer.render(
             dryL: slice.dryL,
             dryR: slice.dryR,
             stemL: stemL,
             stemR: stemR,
-            amount: stem == .dry ? 0 : 1,
+            amount: amount,
             untilFrame: until,
             fadeFrames: max(1, Int(max(0.4, fadeSec) * cached.rate))
         )
@@ -317,7 +331,7 @@ public actor HTDemucsRuntime {
                 delaySec: echoDelaySec,
                 untilFrame: until
             )
-        } else if stem == .vocal, echoDelaySec > 0.05, let until {
+        } else if (stem == .vocal || stem == .vocalWithBacking), echoDelaySec > 0.05, let until {
             StemMashupGlue.shapeIncomingVocal(
                 left: &left, right: &right, rate: cached.rate, delaySec: echoDelaySec, untilFrame: until
             )
@@ -456,6 +470,7 @@ public actor HTDemucsRuntime {
 
 private enum StemTake {
     case vocal
+    case vocalWithBacking
     case instrumental
     case dry
 }

@@ -2,6 +2,10 @@ import Foundation
 
 /// Mix a neural stem back toward the dry signal, then bloom to dry at LAND.
 public enum HTDemucsWindowMixer {
+    /// Keep B's vocal prominent while allowing some of its original backing
+    /// through. A convex dry/stem blend avoids summing two correlated versions.
+    public static let automixIncomingVocalAmount: Float = 0.5
+
     /// Match the AutoMix deck's supported locked-rate range when positioning
     /// the stem-to-dry bloom. This is not an audio-clock synchronisation.
     public static func automixBakeRate(_ plannedRate: Double) -> Double {

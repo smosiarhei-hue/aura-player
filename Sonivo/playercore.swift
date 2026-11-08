@@ -4145,7 +4145,11 @@ final class PlayerCore {
                             String(format: "loop.bake bars=%d sec=%.2f bpm=%.0f", loopBars, loopSec, bpmForGrid)
                         )
                     } else if !duetBake {
-                        AutoMixSessionLog.shared.event("loop.bake skip=noBPM")
+                        AutoMixSessionLog.shared.event(
+                            String(format: "loop.bake skip bpm=%.1f beatmatch=%d grid=%d bars=%d",
+                                   bpmForGrid, style.isBeatmatched ? 1 : 0,
+                                   reliableGrid ? 1 : 0, planLoopBars)
+                        )
                     }
                     // Baked stems stay dry — live applyAutomixLandMixFX opens the
                     // tempo echo into LAND. Baking wet under live A+B sounds like "troits".
@@ -4186,8 +4190,9 @@ final class PlayerCore {
                             ) {
                                 return (neural.outgoing, neural.incoming, true)
                             }
+                            let reason = await HTDemucsMashupBake.unavailableReason()
                             await MainActor.run {
-                                AutoMixSessionLog.shared.event("bake.demucs fallback=unavailable-or-window-not-ready")
+                                AutoMixSessionLog.shared.event("bake.demucs fallback=\(reason)")
                             }
                         } catch is CancellationError {
                             throw CancellationError()

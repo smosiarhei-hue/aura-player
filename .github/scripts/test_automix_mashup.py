@@ -580,7 +580,7 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("let glideSec = 0.14", player)
         # Field 1145+: phrase loops only on a real BPM grid (fake 120 tiles off-kick).
         self.assertIn("loop.bake bars=", player)
-        self.assertIn("loop.bake skip=noBPM", player)
+        self.assertIn("loop.bake skip bpm=", player)
         self.assertIn("cueB.grid snap=", player)
         self.assertIn("source)+grid", player)
         style_src = (

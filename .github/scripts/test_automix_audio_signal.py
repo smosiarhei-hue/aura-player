@@ -47,6 +47,26 @@ let mixed = HTDemucsWindowMixer.render(dryL: signal, dryR: signal, stemL: signal
                                         amount: 1, untilFrame: 900, fadeFrames: 200)
 precondition(mixed.left.allSatisfy { close($0, 0.9) }, "correlated fade gain bump")
 precondition(mixed.right.allSatisfy { close($0, 0.9) }, "stereo fade gain bump")
+// Synthetic B: vocal 0.2 plus backing 0.4, dry = 0.6. AutoMix must
+// retain the vocal and introduce half the backing before the LAND bloom.
+let dryB = [Float](repeating: 0.6, count: 1000)
+let voiceB = [Float](repeating: 0.2, count: 1000)
+let incoming = HTDemucsWindowMixer.render(
+    dryL: dryB, dryR: dryB, stemL: voiceB, stemR: voiceB,
+    amount: HTDemucsWindowMixer.automixIncomingVocalAmount,
+    untilFrame: 900, fadeFrames: 200)
+precondition(close(incoming.left[0], 0.4), "B backing must be audible before LAND")
+precondition(close(incoming.right[0], 0.4), "B backing must be stereo")
+precondition(close(incoming.left[900], 0.6), "LAND must reach dry B")
+for i in 701...900 {
+    precondition(incoming.left[i] >= incoming.left[i-1], "non-monotonic B bloom")
+    precondition(incoming.left[i] <= 0.6001, "correlated dry/voice boost")
+}
+let identical = HTDemucsWindowMixer.render(
+    dryL: signal, dryR: signal, stemL: signal, stemR: signal,
+    amount: HTDemucsWindowMixer.automixIncomingVocalAmount,
+    untilFrame: 900, fadeFrames: 200)
+precondition(identical.left.allSatisfy { close($0, 0.9) }, "B mix doubles correlated audio")
 var previous: Float = -1
 for i in 0...1000 {
     let gains = AutoMixSafeCrossfade.gains(progress: Double(i) / 1000)
@@ -108,6 +128,11 @@ precondition(HTDemucsTensorLayout.checked(shape: [1, 8, 4], strides: [40, 5, 1],
         hybrid_bake = (CORE / "MidSideStemBaker.swift").read_text()
         self.assertIn("HTDemucsWindowMixer.automixBakeRate(playbackRate)", neural_bake)
         self.assertIn("HTDemucsWindowMixer.automixBakeRate(playbackRate)", hybrid_bake)
+        self.assertEqual(neural_bake.count("stem: duet ? .vocal : .vocalWithBacking"), 2)
+        self.assertIn("HTDemucsWindowMixer.automixIncomingVocalAmount", neural_bake)
+        self.assertIn('return "model-not-installed"', neural_bake)
+        self.assertIn('return "window-not-ready"', neural_bake)
+        self.assertIn('bake.demucs fallback=\\(reason)', player)
         separator = (CORE / "StemSplit/CoreMLStemSeparator.swift").read_text()
         self.assertIn("HTDemucsTensorLayout.checked(", separator)
         self.assertIn("input.right.count == n", separator)
