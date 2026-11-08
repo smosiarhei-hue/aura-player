@@ -1,0 +1,15 @@
+name: Start requested feature iOS build
+on:
+  push:
+    branches: [agent/automix-ios-check-20261108]
+permissions:
+  actions: write
+  contents: read
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch normal Build IPA for feature branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run build-ipa.yml --repo smosiarhei-hue/aura-player --ref feature/modern-my-wave-home
