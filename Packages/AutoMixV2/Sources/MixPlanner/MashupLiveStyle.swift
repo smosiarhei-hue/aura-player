@@ -141,10 +141,9 @@ public struct MashupLiveStyle: Sendable, Equatable {
         return Float(x * x * (3 - 2 * x))
     }
 
-    /// Accel from natural tempo into `rateA`/`rateB`, hold the grid, then
-    /// decelerate back to 1.0 after the musical handoff (MixPlanner `rateRamp`).
-    /// Apple Automix (non-duet) snaps to the locked grid immediately — a slow
-    /// accel left early MIXING / `bake.ready` at 1.000 even when the plan ≠ 1.
+    /// Non-duet beatmatched decks hold their rate ratio while B moves toward
+    /// natural tempo before LAND. Duet retains its independent rate envelope.
+    /// The player still needs accurate cue and audio-clock scheduling.
     public func playbackRates(progress: Double) -> (outgoing: Float, incoming: Float) {
         let p = min(1, max(0, progress))
         let settleAt = settleStart
@@ -152,21 +151,21 @@ public struct MashupLiveStyle: Sendable, Equatable {
         let out: Float
         let inn: Float
         if !isDuet, isBeatmatched {
-            // Snap lock → optional tape/echo brake → settle to natural.
-            if p < settleAt {
-                inn = rateB
-                if (archetypeName == "tapeStop" || archetypeName == "echoFreeze"),
-                   p > handoffAt - 0.12 {
-                    let brake = Self.smoothstep((p - (handoffAt - 0.12)) / 0.12)
-                    out = rateA + (max(0.88, rateA - 0.06) - rateA) * brake
-                } else {
-                    out = rateA
-                }
-            } else {
-                let t = Self.smoothstep((p - settleAt) / max(0.001, 1 - settleAt))
-                out = rateA + (1 - rateA) * t
-                inn = rateB + (1 - rateB) * t
-            }
+            // Both decks must move by the same multiplier while they overlap:
+            // independently returning them to 1.0 breaks the shared beat grid.
+            // Begin easing early enough to reach B's natural speed by LAND when
+            // both resulting rates remain within the engine's safe range.
+            let a = max(0.92, min(1.08, rateA))
+            let b = max(0.92, min(1.08, rateB))
+            let lower = max(0.92 / a, 0.92 / b)
+            let upper = min(1.08 / a, 1.08 / b)
+            let targetScale = max(lower, min(upper, 1 / b))
+            let land = automixLandProgress
+            let releaseAt = max(0, min(settleAt, land - 0.22))
+            let t = Self.smoothstep((p - releaseAt) / max(0.001, land - releaseAt))
+            let scale = 1 + (targetScale - 1) * t
+            out = a * scale
+            inn = b * scale
         } else {
             let lockAt = tempoLockUntil
             if p < lockAt {
