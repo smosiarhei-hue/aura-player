@@ -21,6 +21,7 @@ struct SettingsView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showYandexAuthSheet = false
     @State private var showEqualizerSheet = false
+    @State private var autoMixLogCopied = false
     @State private var isSyncingLikes = false
 
     @ViewBuilder
@@ -285,6 +286,7 @@ struct SettingsView: View {
 
                     Button {
                         AutoMixSessionLog.shared.copyReportToClipboard()
+                        autoMixLogCopied = true
                         Haptics.tap(.light)
                     } label: {
                         Label(
@@ -293,8 +295,14 @@ struct SettingsView: View {
                         )
                     }
 
+                    if autoMixLogCopied {
+                        Text(l10n.isRussian ? "Скопировано — вставьте отчёт в чат." : "Copied — paste the report into chat.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Button(role: .destructive) {
                         AutoMixSessionLog.shared.clear()
+                        autoMixLogCopied = false
                         Haptics.tap(.light)
                     } label: {
                         Label(
@@ -307,8 +315,8 @@ struct SettingsView: View {
                 } footer: {
                     Text(
                         l10n.isRussian
-                            ? "Пишет каждое действие и каждую секунду состояние сведения. Скопируй лог и пришли в чат после проверки Mashup/Duet."
-                            : "Records every action and a once-per-second Automix snapshot. Copy the log and paste it in chat after testing Mashup/Duet."
+                            ? "Сразу после проблемного перехода скопируйте отчёт и вставьте в чат: он содержит последние 300 записей. Журнал хранится в памяти до закрытия приложения и содержит названия треков и сведения об ошибках; проверьте его перед отправкой. Автоматической отправки нет."
+                            : "Right after the problem, copy the report and paste it into chat; it contains the latest 300 entries. The log stays in memory until the app closes and includes track names and error details; review it before sharing. Nothing is sent automatically."
                     )
                 }
 

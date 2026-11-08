@@ -32,6 +32,44 @@ Sonivo AutoMix Session Log
 
 
 class AnalyzeAutoMixSessionLogTests(unittest.TestCase):
+    def test_safe_fade_completion_does_not_require_land(self):
+        sample = """
+[01:00:00.000][EVENT] transition.schedule mode=automix
+[01:00:00.010][EVENT] transition.decision exec=safe-fade plan=crossfade pairMatch=1
+[01:00:04.000][EVENT] transition.handoff-attempt exec=safe-fade progress=1.000 bReady=1 bState=playing
+[01:00:04.001][EVENT] transition.promoted exec=safe-fade position=4.00 backend=stream
+[01:00:05.000][TICK] play=1 tx=0 pos=4.0 A=B#2 B=-
+"""
+        result = MOD.analyze(sample)
+        self.assertEqual(result["verdict"], "no_issue_detected")
+        self.assertNotIn("missing_land_event", result["problems"])
+        self.assertEqual(result["execution_decisions"][0]["exec"], "safe-fade")
+        self.assertEqual(result["transition_completions"][0]["position"], "4.00")
+        self.assertNotIn("transition_outcome_unconfirmed", result["limitations"])
+
+    def test_partial_schedule_is_not_a_proven_failure(self):
+        result = MOD.analyze("[01:00:00.000][EVENT] transition.schedule mode=automix\n[01:00:01.000][TICK] play=1 tx=0 pos=1.0")
+        self.assertNotEqual(result["verdict"], "broken")
+        self.assertIn("transition_outcome_unconfirmed", result["limitations"])
+
+    def test_later_incomplete_transition_is_not_masked_by_earlier_completion(self):
+        sample = """
+[01:00:00.000][EVENT] transition.schedule mode=automix
+[01:00:01.000][EVENT] transition.promoted exec=safe-fade
+[01:00:02.000][EVENT] transition.schedule mode=automix
+"""
+        result = MOD.analyze(sample)
+        self.assertEqual(result["unconfirmed_transitions"], 1)
+        self.assertEqual(result["verdict"], "insufficient_data")
+
+    def test_action_snapshots_and_buffering_are_not_a_freeze(self):
+        states = "\n".join(f"[01:00:00.{i:03}][STATE] play=1 pos=1.0 A=track" for i in range(8))
+        ticks = "\n".join(f"[01:00:{i:02}.000][TICK] play=1 bufferA=1 pos=1.0 A=track" for i in range(1, 8))
+        self.assertNotIn("playback_frozen", MOD.analyze(states + "\n" + ticks)["problems"])
+
+    def test_empty_or_unrecognized_report_is_inconclusive(self):
+        self.assertEqual(MOD.analyze("Sonivo AutoMix Session Log\n")["verdict"], "insufficient_data")
+
     def test_detects_freeze_and_bake_without_ready(self):
         result = MOD.analyze(SAMPLE_FREEZE)
         self.assertEqual(result["verdict"], "broken")
@@ -39,6 +77,19 @@ class AnalyzeAutoMixSessionLogTests(unittest.TestCase):
         self.assertIn("bake_started_without_ready", result["problems"])
         self.assertTrue(result["had_bake_start"])
         self.assertFalse(result["had_bake_ready"])
+
+    def test_app_report_has_bounded_context_and_route_evidence(self):
+        log = (ROOT / "Sonivo/AutoMixSessionLog.swift").read_text()
+        core = (ROOT / "Sonivo/playercore.swift").read_text()
+        settings = (ROOT / "Sonivo/settingsview.swift").read_text()
+        for token in ("maxExportLines = 300", "lines.suffix(maxExportLines)",
+                      "Earlier lines discarded", "rateSource=planned-style",
+                      "core.incomingPlaybackStatePublic", "if isEnabled, PlayerCore.isSharedReady"):
+            self.assertIn(token, log)
+        for token in ("transition.decision exec=", "transition.started exec=",
+                      "transition.promoted exec=", "transition.safe-wait", "transition.safe-abort"):
+            self.assertIn(token, core)
+        self.assertIn("Автоматической отправки нет", settings)
 
     def test_script_exists(self):
         self.assertTrue((ROOT / "tools" / "analyze_automix_session_log.py").is_file())
@@ -50,8 +101,8 @@ class AnalyzeAutoMixSessionLogTests(unittest.TestCase):
 [04:31:34.895][TICK] mode=automix play=1 stream=1 tx=0 pos=0.0 A=TrackC#1 B=-
 """
         result = MOD.analyze(sample)
-        self.assertIn("skipped_landed_track", result["problems"])
-        self.assertEqual(result["verdict"], "broken")
+        self.assertIn("possible_skip_after_land", result["problems"])
+        self.assertEqual(result["verdict"], "degraded")
 
     def test_detects_dual_full_stem_mixing(self):
         sample = """

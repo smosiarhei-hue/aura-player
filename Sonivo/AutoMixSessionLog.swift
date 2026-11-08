@@ -9,7 +9,10 @@ final class AutoMixSessionLog {
 
     private let defaultsKey = "automix.sessionLog.enabled"
     private let maxLines = 2_400
+    // Keep the copied report manageable; the in-memory ring remains longer.
+    private let maxExportLines = 300
     private var lines: [String] = []
+    private var droppedLines = 0
     private var heartbeat: Timer?
     private var lastActionFingerprint = ""
     private var lastTickPos: Double?
@@ -80,6 +83,7 @@ final class AutoMixSessionLog {
 
     func clear() {
         lines.removeAll(keepingCapacity: true)
+        droppedLines = 0
         lastTickPos = nil
         stuckTickCount = 0
         lastFrozenFaultAt = nil
@@ -87,32 +91,38 @@ final class AutoMixSessionLog {
     }
 
     func buildReport() -> String {
+        let exported = Array(lines.suffix(maxExportLines))
+        let omitted = max(0, lines.count - exported.count)
         guard let core = playerCoreIfReady() else {
             return """
             Sonivo AutoMix Session Log
             Generated: \(ISO8601DateFormatter().string(from: Date()))
             PlayerCore: not ready
-            Lines: \(lines.count)
+            Recording: \(isEnabled ? "on" : "off")
+            Lines: \(exported.count) of \(lines.count); omitted from export: \(omitted); discarded: \(droppedLines)
 
-            """ + lines.joined(separator: "\n")
+            """ + exported.joined(separator: "\n")
         }
         let track = core.displayTrack ?? core.currentTrack
         let header = """
         Sonivo AutoMix Session Log
+        Report format: 2
         Generated: \(ISO8601DateFormatter().string(from: Date()))
+        Recording: \(isEnabled ? "on" : "off")
+        Earlier lines discarded: \(droppedLines)
         App: \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "-") (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "-"))
         Device: \(UIDevice.current.systemName) \(UIDevice.current.systemVersion)
         Mode: \(core.transitionMode.rawValue)
         Playing: \(core.isPlaying)
         Track: \(track?.title ?? "none") — \(track?.artist ?? "none")
-        Lines: \(lines.count)
+        Lines: \(exported.count) of \(lines.count); omitted from export: \(omitted)
 
         """
-        return header + lines.joined(separator: "\n")
+        return header + exported.joined(separator: "\n")
     }
 
     func copyReportToClipboard() {
-        if PlayerCore.isSharedReady {
+        if isEnabled, PlayerCore.isSharedReady {
             snapshot(tag: "STATE")
         }
         UIPasteboard.general.string = buildReport()
@@ -201,6 +211,11 @@ final class AutoMixSessionLog {
             "stream=\(core.usesStreamingBackend ? 1 : 0)",
             "tx=\(core.isTransitioningPublic ? 1 : 0)",
             "txReady=\(core.incomingLaneReadyPublic ? 1 : 0)",
+            "exec=\(core.transitionExecutionPublic)",
+            "blend=\(String(format: "%.2f", core.transitionBlendDurationPublic))",
+            "srcB=\(core.incomingBackendPublic)",
+            "bState=\(core.incomingPlaybackStatePublic)",
+            "bufferA=\(core.usesStreamingBackend && core.isStreamBuffering ? 1 : 0)",
             "txP=\(String(format: "%.3f", dj.transitionProgress))",
             "badge=\(dj.statusBadge ?? "-")",
             "pos=\(String(format: "%.1f", core.playbackProgress))",
@@ -212,6 +227,7 @@ final class AutoMixSessionLog {
             "bake=\(core.mashupBakeActivePublic ? 1 : 0)",
             "volA=\(String(format: "%.2f", core.activeDeckVolumePublic))",
             "volB=\(String(format: "%.2f", core.idleDeckVolumePublic))",
+            "rateSource=planned-style",
             "rateA=\(String(format: "%.3f", core.mashupLockedRateAPublic))",
             "rateB=\(String(format: "%.3f", core.mashupLockedRateBPublic))",
             "pitchB=\(String(format: "%.0f", core.mashupPitchCentsBPublic))",
@@ -255,7 +271,9 @@ final class AutoMixSessionLog {
     private func appendRaw(_ entry: String) {
         lines.append(entry)
         if lines.count > maxLines {
-            lines.removeFirst(lines.count - maxLines)
+            let removed = lines.count - maxLines
+            droppedLines += removed
+            lines.removeFirst(removed)
         }
         #if DEBUG
         print(entry)

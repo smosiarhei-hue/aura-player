@@ -51,22 +51,33 @@ def analyze(text: str) -> dict:
     def has_event(prefix: str) -> bool:
         return any(e.startswith(prefix) or prefix in e for e in events)
 
+    # Only consecutive heartbeat samples can indicate a freeze. ACTION-triggered
+    # STATE snapshots can repeat within milliseconds and must not count as seconds.
     freeze_runs = 0
     run = 0
     last_pos = None
+    last_track = None
+    last_second = None
     for t in ticks:
-        if t.get("play") != "1":
-            run = 0
-            last_pos = None
+        if t.get("_tag") != "TICK":
             continue
-        pos = t.get("pos")
-        if pos is not None and pos == last_pos:
+        try:
+            hh, mm, ss = t["_ts"].split(":")
+            second = int(hh) * 3600 + int(mm) * 60 + float(ss)
+        except (KeyError, ValueError):
+            second = None
+        pos, track = t.get("pos"), t.get("A")
+        gap = ((second - last_second) % 86400) if second is not None and last_second is not None else None
+        eligible = t.get("play") == "1" and t.get("bufferA") != "1" and pos is not None
+        if eligible and pos == last_pos and track == last_track and gap is not None and 0.5 <= gap <= 2.5:
             run += 1
             if run == 5:
                 freeze_runs += 1
         else:
-            run = 1
-            last_pos = pos
+            run = 1 if eligible else 0
+        last_pos = pos if eligible else None
+        last_track = track if eligible else None
+        last_second = second
 
     mixing = [t for t in ticks if t.get("badge") == "MIXING" or t.get("tx") == "1"]
     mixing_pos_zero = bool(mixing) and all(t.get("pos") in ("0.0", "0") for t in mixing)
@@ -79,13 +90,20 @@ def analyze(text: str) -> dict:
     if not has_event("bake.ready") and has_event("bake.start"):
         problems.append("bake_started_without_ready")
         verdict = "degraded"
-    if has_event("transition.schedule") and not (
-        has_event("land.hardcut") or has_event("land.stream-fallback") or has_event("land.native-fallback")
-    ):
-        # Transition may still be in progress in a partial paste.
-        if any(t.get("tx") == "0" for t in ticks[len(ticks) // 2 :]):
-            problems.append("missing_land_event")
-            verdict = "broken"
+    # Safe/ordinary crossfades finish without LAND. Old logs and partial pastes
+    # cannot prove an absent LAND is a failure, so leave the outcome unconfirmed.
+    outcome_names = ("transition.promoted", "transition.cancel", "transition.safe-abort",
+                     "land.hardcut", "land.stream-fallback", "land.native-fallback")
+    pending, unconfirmed = False, 0
+    for event in events:
+        if event.startswith("transition.schedule"):
+            if pending:
+                unconfirmed += 1
+            pending = True
+        elif pending and any(event.startswith(name) for name in outcome_names):
+            pending = False
+    unconfirmed += int(pending)
+    transition_unconfirmed = unconfirmed > 0
     if any("land.recover" in f for f in faults + events):
         problems.append("land_recovery_fired")
         verdict = "broken"
@@ -109,8 +127,10 @@ def analyze(text: str) -> dict:
         if land_then_next:
             break
     if land_then_next:
-        problems.append("skipped_landed_track")
-        verdict = "broken"
+        # next() has both user and internal callers; this alone cannot prove a bug.
+        problems.append("possible_skip_after_land")
+        if verdict == "ok":
+            verdict = "degraded"
 
     # Stem MIXING with dual-full volumes = pre-bed mud (field 1047).
     dual_full = 0
@@ -147,8 +167,21 @@ def analyze(text: str) -> dict:
         - {""}
     )
 
+    decisions = [parse_fields(e) for e in events if e.startswith("transition.decision")]
+    completions = [parse_fields(e) for e in events if e.startswith("transition.promoted")]
+    if verdict == "ok" and (not has_event("transition.schedule") or transition_unconfirmed):
+        verdict = "insufficient_data"
+    elif verdict == "ok":
+        verdict = "no_issue_detected"
     return {
         "verdict": verdict,
+        "limitations": (["transition_outcome_unconfirmed"] if transition_unconfirmed else [])
+                       + ["log_only_not_proof_of_audible_quality"],
+        "unconfirmed_transitions": unconfirmed,
+        "execution_decisions": decisions,
+        "transition_completions": completions,
+        "safe_fade_waits": sum(e.startswith("transition.safe-wait") for e in events),
+        "safe_fade_aborts": sum(e.startswith("transition.safe-abort") for e in events),
         "problems": problems,
         "events": events,
         "faults": faults,

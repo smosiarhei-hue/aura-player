@@ -540,6 +540,36 @@ final class PlayerCore {
     var mashupLockedRateAPublic: Float { activeMashupStyle.rateA }
     var mashupLockedRateBPublic: Float { activeMashupStyle.rateB }
     var mashupPitchCentsBPublic: Float { activeMashupStyle.pitchCentsB }
+    /// Diagnostic labels reflect the frozen execution path, not a new playback decision.
+    var transitionExecutionPublic: String {
+        guard isTransitioning else { return "none" }
+        if automixSafeCrossfade { return "safe-fade" }
+        switch executionTransitionMode {
+        case .automix: return "automix"
+        case .duet: return "duet"
+        case .crossfade: return "crossfade"
+        case .gapless: return "gapless"
+        case .off: return "off"
+        }
+    }
+    var transitionBlendDurationPublic: Double { isTransitioning ? transitionDuration : 0 }
+    var incomingBackendPublic: String { isTransitioning ? (incomingIsStream ? "stream" : "native") : "none" }
+    var incomingPlaybackStatePublic: String {
+        guard isTransitioning else { return "none" }
+        if !incomingIsStream {
+            guard incomingAudioFile != nil else { return "preparing" }
+            return idlePlayer.isPlaying ? "playing" : "paused"
+        }
+        guard let item = idleStreamingPlayer.currentItem else { return "no-item" }
+        if item.status == .failed { return "failed" }
+        if item.status != .readyToPlay { return "preparing" }
+        switch idleStreamingPlayer.timeControlStatus {
+        case .playing: return "playing"
+        case .waitingToPlayAtSpecifiedRate: return "waiting"
+        case .paused: return "paused"
+        @unknown default: return "unknown"
+        }
+    }
     var playbackRequestID: Int { generation }
     @ObservationIgnored private var lyricsSeekTarget: (id: UUID, track: UUID?, generation: Int, seconds: Double)?
 
@@ -3329,6 +3359,11 @@ final class PlayerCore {
     /// and if the song is already over (or silent), start the next one a single time.
     private func giveUpMashupAndKeepPlaying(_ error: Error) {
         if !isMashupTransitionMode {
+            // Record the actual failure without exposing URLs or localized error text.
+            if automixSafeCrossfade {
+                let fault = error as NSError
+                AutoMixSessionLog.shared.event("transition.safe-abort code=\(fault.code) domain=\(fault.domain) bState=\(incomingPlaybackStatePublic)")
+            }
             // Do not retry a failed fallback on every playhead tick.
             if automixSafeCrossfade { mashupGiveUpTrackID = currentTrack?.id }
             cancelTransition()
@@ -3895,6 +3930,28 @@ final class PlayerCore {
         let pairMatches = analysis.currentProfile.map { mashupProfileMatches($0, track: current) } == true
             && analysis.nextProfile.map { mashupProfileMatches($0, track: nextTrack) } == true
         activeTransitionPlan = (mashupStyle != nil && pairMatches) ? analysis.transitionPlan : nil
+        // Report only a plan verified for this pair. Planned FX are not proof of audible FX.
+        let diagnosticPlan: TransitionPlan?
+        if pairMatches, let out = analysis.currentProfile, let inc = analysis.nextProfile {
+            diagnosticPlan = analysis.plan(for: out.trackID, nextID: inc.trackID)
+        } else {
+            diagnosticPlan = nil
+        }
+        let aProfile = pairMatches ? analysis.currentProfile : nil
+        let bProfile = pairMatches ? analysis.nextProfile : nil
+        func metric(_ value: Float?) -> String {
+            guard let value, value.isFinite else { return "-" }
+            return String(format: "%.2f", value)
+        }
+        AutoMixSessionLog.shared.event(
+            "transition.decision exec=\(transitionExecutionPublic) plan=\(diagnosticPlan?.type.rawValue ?? "unavailable") " +
+            "pairMatch=\(pairMatches ? 1 : 0) bpmA=\(metric(aProfile?.bpm)) bpmB=\(metric(bProfile?.bpm)) " +
+            "bpmConfA=\(metric(aProfile?.confidence.bpm)) bpmConfB=\(metric(bProfile?.confidence.bpm)) " +
+            "downConfA=\(metric(aProfile?.confidence.downbeats)) downConfB=\(metric(bProfile?.confidence.downbeats)) " +
+            "planCueA=\(diagnosticPlan.map { String(format: "%.1f", $0.aOutStartSec) } ?? "-") " +
+            "planCueB=\(diagnosticPlan.map { String(format: "%.1f", $0.bInStartSec) } ?? "-") " +
+            "actualCueB=\(String(format: "%.1f", incomingStart))"
+        )
         // Phrase-loop cue: musical outgoing start (stem mounts remapped to 0).
         mashupPhraseLoopCueSec = outgoingCue
             ?? (isUsingStreamPlayer ? progress : liveProgress())
@@ -4562,6 +4619,11 @@ final class PlayerCore {
                 }
                 self.incomingLaneReady = true
                 self.transitionStartTime = Date()
+                AutoMixSessionLog.shared.event(
+                    String(format: "transition.started exec=%@ bState=%@ blend=%.2f remainingA=%.2f",
+                           self.transitionExecutionPublic, self.incomingPlaybackStatePublic,
+                           self.transitionDuration, max(0, self.duration - self.playbackProgress))
+                )
                 // Seed beatmatch + mashup EQ so the first frames already lock tempo / vocal bed.
                 if self.isMashupTransitionMode {
                     if self.isUsingStreamPlayer, let item = self.activeStreamingPlayer.currentItem {
@@ -4635,13 +4697,17 @@ final class PlayerCore {
         }
         if automixSafeCrossfade && incomingIsStream {
             if idleStreamingPlayer.timeControlStatus != .playing {
-                if safeCrossfadeStalledAt == nil { safeCrossfadeStalledAt = Date() }
+                if safeCrossfadeStalledAt == nil {
+                    safeCrossfadeStalledAt = Date()
+                    AutoMixSessionLog.shared.event("transition.safe-wait bState=\(incomingPlaybackStatePublic)")
+                }
                 if let stalled = safeCrossfadeStalledAt, Date().timeIntervalSince(stalled) >= 1 {
                     giveUpMashupAndKeepPlaying(URLError(.timedOut))
                 }
                 return
             }
             if let stalled = safeCrossfadeStalledAt {
+                AutoMixSessionLog.shared.event(String(format: "transition.safe-resume wait=%.2f", Date().timeIntervalSince(stalled)))
                 transitionStartTime = start.addingTimeInterval(Date().timeIntervalSince(stalled))
                 safeCrossfadeStalledAt = nil
             }
@@ -4971,6 +5037,12 @@ final class PlayerCore {
         guard isTransitioning, !isCompletingTransition else { return }
         isCompletingTransition = true
         defer { isCompletingTransition = false }
+        let diagnosticExecution = transitionExecutionPublic
+        AutoMixSessionLog.shared.event(
+            String(format: "transition.handoff-attempt exec=%@ progress=%.3f bReady=%d bState=%@",
+                   diagnosticExecution, AutoMixDJEngine.shared.transitionProgress,
+                   incomingLaneReady ? 1 : 0, incomingPlaybackStatePublic)
+        )
 
         // Field 1076: starve→complete armed B, then the prep Task kept running and
         // logged bake.pending AFTER land — restarted MIXING with tx=0 / B=- and
@@ -5305,6 +5377,11 @@ final class PlayerCore {
 
         isTransitioning = false
         transitionScheduled = false
+        // A deck promotion is not proof that audio is audible; preserve that distinction.
+        AutoMixSessionLog.shared.event(
+            String(format: "transition.promoted exec=%@ position=%.2f backend=%@",
+                   diagnosticExecution, resolvedPos, isUsingStreamPlayer ? "stream" : "native")
+        )
         // Drop mashup EQ on both native decks and stream taps so the new track is clean.
         resetTransitionEQOffsets()
         activeMashupStyle = .fallback
