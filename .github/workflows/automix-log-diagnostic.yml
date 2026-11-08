@@ -17,8 +17,8 @@ jobs:
           set -euo pipefail
           gh api repos/smosiarhei-hue/aura-player/actions/artifacts/13625098668/zip > "$RUNNER_TEMP/test-log.zip"
           unzip -p "$RUNNER_TEMP/test-log.zip" > "$RUNNER_TEMP/test.log"
-          grep -Ei 'error:|failed|failure|unavailable|unsupported|cannot find' "$RUNNER_TEMP/test.log" | tail -n 25 | while IFS= read -r line; do
+          grep -E '(^|[[:space:]])[^[:space:]]+\.swift:[0-9]+:[0-9]+: error:|xcodebuild: error:|\*\* TEST FAILED \*\*' "$RUNNER_TEMP/test.log" | head -n 40 | while IFS= read -r line; do
             line="${line:0:700}"
             line="${line//'%'/'%25'}"
-            echo "::notice title=iOS test diagnostic::$line"
+            echo "::notice title=iOS compiler error::$line"
           done || true
