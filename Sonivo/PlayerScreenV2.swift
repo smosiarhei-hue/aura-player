@@ -140,28 +140,28 @@ struct PlayerScreenV2: View {
                 )
 
                 ZStack(alignment: .top) {
-                    // Native UIBlur of the cover — soft top dissolve + lyrics backdrop
-                    // (WWDC26: blur the art so it sits behind the transcript).
+                    // Lyrics retain the native blurred-cover atmosphere. The standard
+                    // player uses a single artwork-derived tone instead.
                     NowPlayingAtmosphere(
                         primary: coverWashPrimary,
                         secondary: coverWashSecondary,
                         secondaryAmount: coverWashAmount
                     )
                     .frame(width: totalWidth, height: totalHeight)
-                    .opacity(isFullScreenVideoShot ? 0 : 1)
+                    .opacity(isFullScreenVideoShot || !showLyricsMode ? 0 : 1)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
 
-                    // Palette bloom only in Island clearance + control deck — never mid-cover.
+                    // The multicolour wash belongs to lyrics only, not the standard player.
                     coverAccentWash
                         .frame(width: totalWidth, height: totalHeight)
-                        .opacity(isFullScreenVideoShot ? 0 : (showLyricsMode ? 0.40 : 1))
+                        .opacity(isFullScreenVideoShot || !showLyricsMode ? 0 : 0.40)
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
 
                     background
                         .frame(width: totalWidth, height: totalHeight)
-                        .opacity(isFullScreenVideoShot ? 1 : (showLyricsMode ? 0.28 : 0.06))
+                        .opacity(isFullScreenVideoShot ? 1 : (showLyricsMode ? 0.28 : 1))
                         .clipped()
 
                     // Attach the native rendering layer during preparation too. Readiness
@@ -357,11 +357,12 @@ struct PlayerScreenV2: View {
     }
 
     private var background: some View {
-        // A spatially uniform cover tint over semantic light/dark background.
+        // A spatially uniform, contrast-safe tone derived from the cover.
         // Never display a previous track's extracted palette while the new cover is loading.
         let coverColor = resolvedArtworkPaletteTrackID == track?.id ? dominantArtworkColor : nil
-        let base = showLyricsMode ? Color.black : SN.bg
-        return AnyView(base.overlay((coverColor ?? Color.clear).opacity(0.22))
+        // Cap luminance even for white artwork to keep white controls readable.
+        // Missing/transparent artwork falls back to neutral black, never an invented hue.
+        return AnyView(Color.black.overlay((coverColor ?? Color.clear).opacity(0.28))
             .ignoresSafeArea()
             .allowsHitTesting(false))
     }
@@ -1029,7 +1030,7 @@ struct PlayerScreenV2: View {
         let mixP = coverMixAmount
 
         // Lab Automix stage: the next cover replaces this one by opacity only.
-        // The mirrored wash underneath carries the blur.
+        // Its edges dissolve into the current artwork tone.
         if mixP > 0,
            let outgoing = player.currentTrack,
            let incoming = player.incomingTrack ?? player.displayTrack,

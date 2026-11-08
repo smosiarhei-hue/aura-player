@@ -46,6 +46,12 @@ class PlayerIntentTests(unittest.TestCase):
     def test_background_is_one_cover_area_color_without_saturation_weight(self):
         block=SCREEN.split('private var background:',1)[1].split('private var topHeader:',1)[0]
         self.assertIn('dominantArtworkColor',block)
+        self.assertIn('Color.black.overlay',block)
+        self.assertIn('opacity(0.28)',block)
+        layers=SCREEN.split('ZStack(alignment: .top)',1)[1].split('// Attach the native rendering layer',1)[0]
+        self.assertIn('.opacity(isFullScreenVideoShot || !showLyricsMode ? 0 : 1)', layers)
+        self.assertIn('.opacity(isFullScreenVideoShot || !showLyricsMode ? 0 : 0.40)', layers)
+        self.assertIn('(showLyricsMode ? 0.28 : 1)', layers)
         for token in ['RadialGradient','LinearGradient','palette.first']:
             self.assertNotIn(token,block)
         extraction=(R/'Sonivo/PlayerInteractionPolicy.swift').read_text().split('enum PlayerArtworkToneMath',1)[1]

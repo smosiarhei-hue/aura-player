@@ -69,7 +69,7 @@ class NowPlayingCoverAppleMusicTests(unittest.TestCase):
         self.assertIn("matchedGeometryEffect(", PLAYER)
         self.assertIn("LyricsPresentationMotion.coverMorphID", PLAYER)
         # Atmosphere stays under lyrics (WWDC26 blurred-cover backdrop).
-        self.assertIn(".opacity(isFullScreenVideoShot ? 0 : 1)", PLAYER)
+        self.assertIn(".opacity(isFullScreenVideoShot || !showLyricsMode ? 0 : 1)", PLAYER)
         self.assertNotIn(
             ".opacity(showLyricsMode || isFullScreenVideoShot ? 0 : 1)",
             PLAYER.split("NowPlayingAtmosphere(", 1)[1].split("coverAccentWash", 1)[0],

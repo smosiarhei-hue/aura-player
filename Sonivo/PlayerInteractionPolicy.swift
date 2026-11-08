@@ -25,7 +25,7 @@ nonisolated enum PlayerArtworkToneMath {
             let alpha = Float(rgba[i + 3]) / 255
             guard alpha > 0.2 else { continue }
             let rgb = SIMD3(Float(rgba[i]), Float(rgba[i + 1]), Float(rgba[i + 2])) / (255 * alpha)
-            let q = [rgb.x, rgb.y, rgb.z].map { min(15, max(0, Int($0 * 15))) }
+            let q = [rgb.x, rgb.y, rgb.z].map { min(7, max(0, Int($0 * 8))) }
             let key = (q[0] << 8) | (q[1] << 4) | q[2]
             var bucket = buckets[key] ?? (0, SIMD3<Float>(repeating: 0))
             bucket.weight += alpha; bucket.sum += rgb * alpha

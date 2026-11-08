@@ -37,6 +37,17 @@ def verify_player_dismiss(root):
         precondition(abs(gray.x - gray.y) < 0.0001 && abs(gray.y - gray.z) < 0.0001)
         let mostlyBlue = pixels([20,40,140,255], count: 75) + pixels([255,20,0,255], count: 25)
         precondition(PlayerArtworkToneMath.dominantRGB(rgba: mostlyBlue)!.z > 0.5)
+        // Near-white pixels must count together, not lose to a smaller black region.
+        let mostlyWhite = pixels([255,255,255,255], count: 30) + pixels([240,243,246,255], count: 30) + pixels([0,0,0,255], count: 40)
+        let white = PlayerArtworkToneMath.dominantRGB(rgba: mostlyWhite)!
+        precondition(white.x > 0.9 && white.y > 0.9 && white.z > 0.9)
+        let mostlyBlack = pixels([0,0,0,255], count: 65) + pixels([255,255,255,255], count: 35)
+        precondition(PlayerArtworkToneMath.dominantRGB(rgba: mostlyBlack)! == SIMD3<Float>(repeating: 0))
+        let mostlyRed = pixels([200,20,20,255], count: 65) + pixels([255,255,255,255], count: 35)
+        let red = PlayerArtworkToneMath.dominantRGB(rgba: mostlyRed)!
+        precondition(red.x > red.y * 3 && red.x > red.z * 3)
+        let transparent = pixels([0,0,0,0], count: 80) + pixels([255,255,255,255], count: 20)
+        precondition(PlayerArtworkToneMath.dominantRGB(rgba: transparent)!.x > 0.99)
         precondition(PlayerArtworkToneMath.dominantRGB(rgba: [1]) == nil)
         precondition(PlayerArtworkToneMath.dominantRGB(rgba: pixels([0,0,0,0], count: 20)) == nil)
         let black = PlayerArtworkToneMath.dominantRGB(rgba: pixels([0,0,0,255], count: 20))!
