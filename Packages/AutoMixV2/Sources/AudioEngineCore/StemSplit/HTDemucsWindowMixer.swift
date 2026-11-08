@@ -2,6 +2,13 @@ import Foundation
 
 /// Mix a neural stem back toward the dry signal, then bloom to dry at LAND.
 public enum HTDemucsWindowMixer {
+    /// Match the AutoMix deck's supported locked-rate range when positioning
+    /// the stem-to-dry bloom. This is not an audio-clock synchronisation.
+    public static func automixBakeRate(_ plannedRate: Double) -> Double {
+        guard plannedRate.isFinite else { return 1 }
+        return min(1.08, max(0.92, plannedRate))
+    }
+
     public static func render(
         dryL: [Float],
         dryR: [Float],

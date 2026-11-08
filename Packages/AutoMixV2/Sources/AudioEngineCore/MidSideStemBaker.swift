@@ -374,7 +374,7 @@ public enum MidSideStemBaker {
     ) throws -> (outgoing: URL, incoming: URL) {
         let musical = min(maximumDurationSec, max(4, blendSec))
         let duration = min(maximumDurationSec, musical + max(0, padSec))
-        let rate = min(1.04, max(0.96, playbackRate))
+        let rate = HTDemucsWindowMixer.automixBakeRate(playbackRate)
         let handoff = min(0.92, max(0.35, handoffProgress))
         let fadeWall = landFadeSec > 0.25 ? landFadeSec : max(0.9, min(2.4, musical * 0.12))
         var landWall = musical * handoff

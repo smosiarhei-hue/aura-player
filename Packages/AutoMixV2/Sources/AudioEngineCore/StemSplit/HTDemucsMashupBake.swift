@@ -53,7 +53,8 @@ public enum HTDemucsMashupBake {
         guard HTDemucsModelStore.shared.installedPackageURL() != nil else { return nil }
         let musical = min(MidSideStemBaker.maximumDurationSec, max(4, blendSec))
         let duration = min(MidSideStemBaker.maximumDurationSec, musical + max(0, padSec))
-        let rate = min(1.04, max(0.96, playbackRate))
+        // Duet ramps its rate differently; preserve that path.
+        let rate = duet ? min(1.04, max(0.96, playbackRate)) : HTDemucsWindowMixer.automixBakeRate(playbackRate)
         let handoff = duet ? min(0.72, max(0.52, handoffProgress)) : min(0.92, max(0.35, handoffProgress))
         let fadeWall = landFadeSec > 0.25 ? landFadeSec : max(0.9, min(2.4, musical * 0.12))
         var landWall = musical * handoff
