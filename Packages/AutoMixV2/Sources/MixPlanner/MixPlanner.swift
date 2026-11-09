@@ -851,7 +851,7 @@ public enum CamelotCompatibility {
         return false
     }
 
-    /// - Parameter maxSemitones: pitch compensation ceiling (AutoMix ±2, Duet ±3).
+    /// - Parameter maxSemitones: maximum pitch correction in semitones.
     public static func match(_ keyA: String?, _ keyB: String?, maxSemitones: Int = 2) -> HarmonicMatch {
         guard let rawA = keyA, let rawB = keyB,
               let a = parse(rawA), let b = parse(rawB) else {
@@ -877,19 +877,38 @@ public enum CamelotCompatibility {
         if semitones < -6 { semitones += 12 }
 
         let cap = max(0, min(6, maxSemitones))
-        // Always bias B toward A within the cap — field 1053 left pitchB=0 on
-        // 6-semitone clashes so Automix never keyed the incoming stem.
+        // The original target-only comparison missed safe moves to a neighboring
+        // Camelot key: e.g. 12A transposed one semitone becomes 5A or 7A,
+        // either adjacent to 6A. Search the actual wheel after each allowed shift.
+        // Prefer the smallest pitch change, then an exact/relative key over an
+        // adjacent one at the same distance. Never exceed the configured cap.
+        if cap > 0 {
+            for distance in 1...cap {
+                let preferredDirection = semitones < 0 ? -1 : 1
+                let shifts = [distance * preferredDirection, -distance * preferredDirection]
+                let candidates: [(shift: Int, number: Int)] = shifts.compactMap { shift in
+                    let shiftedPC = (pcB + shift + 12) % 12
+                    guard let number = (1...12).first(where: {
+                        pitchClass(number: $0, letter: b.letter) == shiftedPC
+                    }), areCompatible(rawA, "\(number)\(b.letter)") else { return nil }
+                    return (shift, number)
+                }
+                if let choice = candidates.first(where: { $0.number == a.number }) ?? candidates.first {
+                    let cents = Float(choice.shift * 100)
+                    let sign = cents > 0 ? "+\(Int(cents))" : "\(Int(cents))"
+                    return HarmonicMatch(
+                        isNaturallyCompatible: false,
+                        pitchShiftCents: cents,
+                        isHarmonicallyViable: true,
+                        description: "Гармоническая подстройка: \(sign) центов (\(rawB) → \(choice.number)\(b.letter), совместимо с \(rawA))"
+                    )
+                }
+            }
+        }
+        // Capped partial pitch is not considered a match. The planner retains
+        // the safe crossfade when no compatible key exists within the cap.
         let applied = max(-cap, min(cap, semitones))
         let cents = Float(applied * 100)
-        if abs(semitones) <= cap {
-            let sign = cents > 0 ? "+\(Int(cents))" : "\(Int(cents))"
-            return HarmonicMatch(
-                isNaturallyCompatible: false,
-                pitchShiftCents: cents,
-                isHarmonicallyViable: true,
-                description: "Гармоническая подстройка: \(sign) центов (\(rawA) ↔ \(rawB))"
-            )
-        }
 
         let partial = cents == 0 ? "" : " · partial \(cents > 0 ? "+" : "")\(Int(cents))¢"
         return HarmonicMatch(
