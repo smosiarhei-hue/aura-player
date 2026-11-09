@@ -141,7 +141,9 @@ struct MixPlannerStage2Tests {
         )
         #expect(match.archetype != clash.archetype || abs(match.bars - clash.bars) > 0.5)
         #expect(match.reason != clash.reason)
-        #expect(cliff.archetype == .tapeStop || cliff.reason != match.reason)
+        #expect(cliff.archetype == .spaceReverb)
+        #expect(cliff.type == .beatmatchedShort && cliff.bars >= 8)
+        #expect(!cliff.reason.contains("Tape Stop"))
         #expect(Set([match.archetype, clash.archetype, cliff.archetype]).count >= 2)
     }
 

@@ -15,14 +15,14 @@ class AutoMixTempoPolicyTests(unittest.TestCase):
     def test_field_pairs_use_natural_fade(self):
         main = r'''
 import Foundation
-func profile(_ id: String, _ bpm: Float, confidence: Float = 1) -> TrackProfile {
+func profile(_ id: String, _ bpm: Float, confidence: Float = 1, energy: Float? = nil) -> TrackProfile {
     TrackProfile(trackID: TrackID(raw: id), durationSec: 240, sourceSampleRate: 48000,
         sourceBitrateKbps: nil, bpm: bpm,
         beatsSec: Array(stride(from: 0.0, to: 240, by: 0.5)),
         downbeatsSec: Array(stride(from: 0.0, to: 240, by: 2)),
         phraseStartsSec: Array(stride(from: 0.0, to: 240, by: 16)),
         tempoStability: 1, camelotKey: "8A", integratedLUFS: -14,
-        loudnessCurveLUFS: [], energyCurve: [], hasFadeOut: false,
+        loudnessCurveLUFS: [], energyCurve: energy.map { Array(repeating: $0, count: 10) } ?? [], hasFadeOut: false,
         endsInSilence: false, vocalPresence: [], segments: [], mixInSec: 8,
         mixOutSec: 220, mixable: true,
         confidence: Confidence(bpm: confidence, downbeats: confidence, key: 1))
@@ -48,7 +48,22 @@ for (a, b) in fieldPairs {
                  "fallback must not schedule rhythmic effects or loops")
     precondition(p.reason.contains("темпы"), "diagnostic reason missing")
 }
+let cliff = MixPlanner.plan(from: profile("a", 129.2, energy: 0.8),
+    to: profile("b", 123, energy: 0.35), aMeta: meta("a"), bMeta: meta("b"),
+    settings: MixSettings(mode: .automix))
+precondition(cliff.archetype == .spaceReverb && cliff.type == .beatmatchedShort && cliff.bars >= 8,
+             "live AutoMix must not select an inaudible 4-bar tape-stop plan")
 precondition(plan(120, 128).type != .crossfade, "matched-tempo path regressed")
+let balancedPairs: [(Float, Float)] = [(123, 136), (136, 123), (105.5, 94)]
+for (a, b) in balancedPairs {
+    let match = BeatGridSynchronization.tempoMatch(aBPM: a, bBPM: b)!
+    precondition(abs(match.rateA - 1) <= 0.080001 && abs(match.rateB - 1) <= 0.080001)
+    precondition(abs(a * match.rateA - b * match.rateB) < 0.001, "rates must really meet")
+    let p = plan(a, b)
+    precondition(p.type != .crossfade, "moderate field tempo should be planned")
+    precondition(abs(p.rateA * a - p.rateB * b) < 0.001)
+}
+precondition(BeatGridSynchronization.tempoMatch(aBPM: 94, bBPM: 112.3) == nil, "rate limit must be respected")
 precondition(plan(120, 128, confidence: 0.4).type == .crossfade, "weak-grid fallback")
 precondition(plan(99, 172, mode: .off).type == .none, "off mode changed")
 precondition(plan(99, 172, mode: .duet).type != .crossfade, "Duet policy changed")

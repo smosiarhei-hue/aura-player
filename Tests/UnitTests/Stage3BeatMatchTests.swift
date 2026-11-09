@@ -24,6 +24,19 @@ struct Stage3BeatMatchTests {
         #expect(abs(Float(pair.0) * rateA - Float(pair.1) * rateB) < 0.5)
     }
 
+    @Test("Moderate gaps balance both decks within their actual playback range")
+    func balancedTempo() {
+        let balancedPairs: [(Float, Float)] = [(123, 136), (136, 123), (105.5, 94)]
+    for (a, b) in balancedPairs {
+            let match = BeatGridSynchronization.tempoMatch(aBPM: a, bBPM: b)
+            #expect(match != nil)
+            guard let match else { continue }
+            #expect(abs(match.rateA - 1) <= 0.080001)
+            #expect(abs(match.rateB - 1) <= 0.080001)
+            #expect(abs(a * match.rateA - b * match.rateB) < 0.001)
+        }
+    }
+
     @Test("Unsafe / wide tempo falls back")
     func unsafeTempo() {
         #expect(BeatGridSynchronization.tempoMatch(aBPM: 100, bBPM: 135) == nil)

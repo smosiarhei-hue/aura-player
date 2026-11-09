@@ -38,6 +38,19 @@ check(1, 1.05, expectNaturalAtLand: true)
 check(1, 0.95, expectNaturalAtLand: true)
 check(1.07, 1, expectNaturalAtLand: true)
 check(0.92, 1.08, expectNaturalAtLand: false)
+let balancedPairs: [(Float, Float)] = [(123, 136), (136, 123), (105.5, 94)]
+for (a, b) in balancedPairs {
+    let match = BeatGridSynchronization.tempoMatch(aBPM: a, bBPM: b)!
+    check(match.rateA, match.rateB, expectNaturalAtLand: false)
+    var balanced = MashupLiveStyle.fallback
+    balanced.isBeatmatched = true
+    balanced.rateA = match.rateA; balanced.rateB = match.rateB
+    balanced.handoffAt = 0.86; balanced.moodLand = 0.86
+    for i in 0...860 {
+        let rates = balanced.playbackRates(progress: Double(i) / 1000)
+        precondition(abs(a * rates.outgoing - b * rates.incoming) < 0.001, "balanced lock drifted")
+    }
+}
 var entry = MashupLiveStyle.fallback
 entry.applyAutomixPlaybackCharacter()
 entry.targetBPM = 129
