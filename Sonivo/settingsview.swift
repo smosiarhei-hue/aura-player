@@ -275,6 +275,13 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        HTDemucsDiagnosticView()
+                    } label: {
+                        Label("Диагностика HTDemucs", systemImage: "waveform.badge.magnifyingglass")
+                    }
+                    .accessibilityIdentifier("settings.htdemucs.diagnostics")
+
                     Toggle(
                         l10n.isRussian ? "Лог AutoMix каждую секунду" : "AutoMix second-by-second log",
                         isOn: Binding(
