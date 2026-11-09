@@ -460,7 +460,22 @@ final class AutoMixV2AnalysisRuntime {
                         plan.type.rawValue, plan.reason
                     )
                 )
-                AutoMixSessionLog.shared.event("demucs.plan id=\(diagnosticID) type=\(plan.type.rawValue)")
+                // Structured, path-free pair evidence survives even when the verbose
+                // session log is disabled. Never export titles or raw error strings.
+                let fallbackCause: String
+                if plan.type != .crossfade { fallbackCause = "none" }
+                else if plan.reason.contains("темпы") { fallbackCause = "tempo" }
+                else if plan.reason.contains("Тональный конфликт") { fallbackCause = "key" }
+                else if plan.reason.contains("сетки") || plan.reason.contains("сетка") { fallbackCause = "grid" }
+                else if plan.reason.contains("фазовое") { fallbackCause = "phase" }
+                else if plan.reason.contains("короткий трек") { fallbackCause = "short" }
+                else if plan.reason.contains("не предназначен") { fallbackCause = "unmixable" }
+                else { fallbackCause = "other" }
+                AutoMixSessionLog.shared.event(String(
+                    format: "demucs.plan id=%@ type=%@ cause=%@ bpmA=%.2f bpmB=%.2f bpmConfA=%.2f bpmConfB=%.2f downConfA=%.2f downConfB=%.2f",
+                    diagnosticID, plan.type.rawValue, fallbackCause, a.bpm, b.bpm,
+                    a.confidence.bpm, b.confidence.bpm, a.confidence.downbeats, b.confidence.downbeats
+                ))
                 if plan.type != .none && plan.type != .crossfade {
                     let outFile = currentFile
                     let inFile = nextFile

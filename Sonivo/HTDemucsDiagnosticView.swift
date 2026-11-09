@@ -41,7 +41,7 @@ struct HTDemucsDiagnosticView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            Section("Последний переход") {
+            Section("Последнее событие перехода") {
                 Text(diagnostics.state.lastTransition)
                 if let time = diagnostics.state.lastTransitionAt {
                     Text("Обновлено: \(time.formatted(date: .omitted, time: .standard))")
@@ -119,7 +119,7 @@ struct HTDemucsDiagnosticView: View {
         Model: \(modelStatus)
         Analysis: \(analysis.pipelineStatus)
         Last preparation: \(state.pairStatus)
-        Last transition: \(state.lastTransition)
+        Last transition event: \(state.lastTransition)
         Thermal: \(thermal)
         Low power: \(ProcessInfo.processInfo.isLowPowerModeEnabled)
         Events (this app session, oldest first):
