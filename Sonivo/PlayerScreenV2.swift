@@ -55,7 +55,7 @@ struct PlayerScreenV2: View {
     @State private var currentArtworkImage: UIImage?
     @State private var cachedPhrases: [LyricPhrase] = []
     @State private var spectrum = SpectrumAnalyzer.shared
-    /// Menu-sheet dismissal races the next `.sheet` presentation; defer and cancel so EQ/queue/settings
+    /// Menu dismissal races `.sheet` presentation; defer and cancel so EQ/queue/settings
     /// do not open then bounce closed, and stale taps cannot land after the player closes.
     @State private var pendingModalTask: Task<Void, Never>?
     private let tapSide: CGFloat = SN.tapTarget
@@ -92,7 +92,7 @@ struct PlayerScreenV2: View {
     }
 
     enum ActivePlayerModal: String, Identifiable {
-        case more, queue, equalizer, sleepTimer, settings, quality, artistSelection, lyrics
+        case queue, equalizer, sleepTimer, settings, quality, artistSelection, lyrics
         var id: String { rawValue }
     }
 
@@ -230,8 +230,6 @@ struct PlayerScreenV2: View {
             // NavigationStack / presentationDetents (EQ, Settings, Quality) — nested
             // stacks make sheets flash, snap detent, or leave chrome non-interactive.
             switch modal {
-            case .more:
-                moreActionsSheet
             case .queue:
                 NavigationStack { QueueSheetView() }
             case .equalizer:
@@ -1475,183 +1473,85 @@ struct PlayerScreenV2: View {
     }
 
     private var moreMenuButton: some View {
-        Button { openModal(.more) } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 22, weight: .bold))
-                .foregroundStyle(SN.ink.opacity(0.90))
-                .frame(width: tapSide, height: tapSide)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Ещё")
+        let current = track
+        let waveAvailability = trackWaveMenuAvailability
+        return PlayerMoreMenu(
+            snapshot: .init(
+                trackID: current?.id,
+                disliked: current.map { UserTasteEngine.shared.isDisliked(track: $0) } ?? false,
+                waveAvailable: waveAvailability.catalog, waveActive: waveAvailability.active,
+                waveLoading: waveLoading, vibeGenerating: AIDJService.shared.isVibeWaveGenerating,
+                videoEnabled: isVideoShotEnabled, hasVideo: videoShotURL != nil,
+                videoGenerating: aiVideoShotService.isGenerating,
+                neuralEnabled: SettingsStore.shared.isNeuralEngineEnabled,
+                timerText: player.sleepTimerFormatted
+            ),
+            tint: UIColor(SN.ink.opacity(0.90)),
+            perform: handleMoreAction
+        )
+        .frame(width: tapSide, height: tapSide)
     }
 
-    /// A persistent sheet rather than a native Menu anchored to the live player.
-    /// Playback/spectrum updates can refresh the player many times per second; they
-    /// must not reset the menu's scroll position or interrupt a tap.
-    private var moreActionsSheet: some View {
-        NavigationStack {
-            List {
-                if let current = track {
-                    Section {
-                        let disliked = UserTasteEngine.shared.isDisliked(track: current)
-                        Button(role: disliked ? nil : .destructive) {
-                            dismissMoreActions()
-                            if disliked {
-                                player.reportWaveDislike(current, isDisliked: false)
-                                UserTasteEngine.shared.removeDislike(track: current)
-                                waveMessage = "Трек снова может появиться в волне"
-                            } else {
-                                player.reportWaveDislike(current, isDisliked: true)
-                                UserTasteEngine.shared.recordDislike(track: current)
-                                MoodRadioEngine.shared.recordFeedback(track: current, action: .dislike)
-                                waveMessage = "Дизлайк учтён для рекомендаций"
-                                player.next()
-                            }
-                        } label: {
-                            Label(
-                                disliked ? "Отменить дизлайк" : "Не рекомендовать этот трек",
-                                systemImage: disliked ? "hand.thumbsdown.fill" : "hand.thumbsdown"
-                            )
-                        }
-                    }
-                }
-
-                Section {
-                    let waveAvailability = trackWaveMenuAvailability
-                    Button {
-                        dismissMoreActions()
-                        startTrackWave()
-                    } label: {
-                        Label(
-                            waveLoading
-                                ? "Настраиваем волну…"
-                                : (waveAvailability.active
-                                    ? "Моя волна по треку · активна"
-                                    : "Моя волна по текущему треку"),
-                            systemImage: waveAvailability.active ? "checkmark.circle.fill" : "dot.radiowaves.left.and.right"
-                        )
-                    }
-                    .disabled(!waveAvailability.catalog || waveLoading)
-
-                    Button {
-                        dismissMoreActions()
-                        startAIVibeWave()
-                    } label: {
-                        Label("AI Вайб-волна (похожие по вайбу)", systemImage: "sparkles")
-                    }
-                    .disabled(track == nil || waveLoading || AIDJService.shared.isVibeWaveGenerating)
-
-                    Toggle("Видеошоты", isOn: $isVideoShotEnabled)
-                    if videoShotURL != nil {
-                        Button {
-                            dismissMoreActions()
-                            generateAIVideoShot(forceRegenerate: true)
-                        } label: {
-                            Label("Перегенерировать AI Видео-шот (новый вайб)", systemImage: "arrow.triangle.2.circlepath")
-                        }
-                        .disabled(track == nil || aiVideoShotService.isGenerating)
-
-                        Button(role: .destructive) {
-                            dismissMoreActions()
-                            deleteCurrentVideoShot()
-                        } label: {
-                            Label("Удалить видео-шот", systemImage: "trash")
-                        }
-                    } else {
-                        Button {
-                            dismissMoreActions()
-                            generateAIVideoShot()
-                        } label: {
-                            Label("Создать AI Видео-шот (MiniMax H3)", systemImage: "sparkles.tv")
-                        }
-                        .disabled(track == nil || aiVideoShotService.isGenerating)
-                    }
-                }
-
-                Section {
-                    Button {
-                        dismissMoreActions()
-                        SettingsStore.shared.isNeuralEngineEnabled.toggle()
-                        waveMessage = SettingsStore.shared.isNeuralEngineEnabled ? "🧠 Apple Neural Engine включён" : "🧠 Apple Neural Engine выключен"
-                        Task {
-                            try? await Task.sleep(for: .seconds(2.0))
-                            waveMessage = nil
-                        }
-                        Task { await loadLyrics() }
-                    } label: {
-                        Label(
-                            SettingsStore.shared.isNeuralEngineEnabled ? "Neural Engine: Включён" : "Neural Engine: Выключен",
-                            systemImage: SettingsStore.shared.isNeuralEngineEnabled ? "brain.fill" : "brain"
-                        )
-                    }
-                }
-
-                Section {
-                    Button {
-                        // Wait for the actions sheet to dismiss before changing the player layout.
-                        scheduleAfterMenuDismiss {
-                            withAnimation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion)) { showLyricsMode.toggle() }
-                        }
-                    } label: {
-                        Label("Текст песни", systemImage: "quote.bubble")
-                    }
-
-                    Button { openModal(.queue, deferForMenu: true) } label: {
-                        Label("Очередь", systemImage: "list.bullet")
-                    }
-                    Button { openModal(.equalizer, deferForMenu: true) } label: {
-                        Label { Text("Эквалайзер") } icon: { SonivoEqualizerGlyph(size: 20).foregroundStyle(SN.accent) }
-                    }
-                    Button { openModal(.sleepTimer, deferForMenu: true) } label: {
-                        if let timerText = player.sleepTimerFormatted {
-                            Label("Таймер сна (\(timerText))", systemImage: "moon.zzz.fill")
-                        } else {
-                            Label("Таймер сна", systemImage: "moon.zzz")
-                        }
-                    }
-                    Button { openModal(.settings, deferForMenu: true) } label: {
-                        Label("Настройки", systemImage: "gearshape")
-                    }
-                }
-
-                Section {
-                    Button {
-                        dismissMoreActions()
-                        AutoMixSessionLog.shared.copyReportToClipboard()
-                        waveMessage = "✅ Лог AutoMix скопирован — вставь в чат"
-                        Task {
-                            try? await Task.sleep(for: .seconds(2.5))
-                            if waveMessage?.contains("Лог AutoMix") == true { waveMessage = nil }
-                        }
-                    } label: {
-                        Label("Скопировать лог AutoMix", systemImage: "doc.on.clipboard")
-                    }
-
-                    Button(role: .destructive) {
-                        dismissMoreActions()
-                        player.stopAndClear()
-                        close()
-                    } label: {
-                        Label("Остановить и очистить", systemImage: "stop.fill")
-                    }
-                }
+    private func handleMoreAction(_ action: PlayerMoreMenu.Action, trackID: UUID?) {
+        switch action {
+        case .dislike:
+            guard let current = track, current.id == trackID else { return }
+            let disliked = UserTasteEngine.shared.isDisliked(track: current)
+            if disliked {
+                player.reportWaveDislike(current, isDisliked: false)
+                UserTasteEngine.shared.removeDislike(track: current)
+                waveMessage = "Трек снова может появиться в волне"
+            } else {
+                player.reportWaveDislike(current, isDisliked: true)
+                UserTasteEngine.shared.recordDislike(track: current)
+                MoodRadioEngine.shared.recordFeedback(track: current, action: .dislike)
+                waveMessage = "Дизлайк учтён для рекомендаций"
+                player.next()
             }
-            .navigationTitle("Действия")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Закрыть") { dismissMoreActions() }
-                }
+        case .trackWave:
+            guard track?.id == trackID else { return }
+            startTrackWave()
+        case .vibeWave:
+            guard track?.id == trackID, !AIDJService.shared.isVibeWaveGenerating else { return }
+            startAIVibeWave()
+        case .toggleVideo:
+            isVideoShotEnabled.toggle()
+        case .generateVideo:
+            guard track?.id == trackID, !aiVideoShotService.isGenerating else { return }
+            generateAIVideoShot()
+        case .regenerateVideo:
+            guard track?.id == trackID, !aiVideoShotService.isGenerating else { return }
+            generateAIVideoShot(forceRegenerate: true)
+        case .deleteVideo:
+            guard track?.id == trackID else { return }
+            deleteCurrentVideoShot()
+        case .toggleNeural:
+            SettingsStore.shared.isNeuralEngineEnabled.toggle()
+            waveMessage = SettingsStore.shared.isNeuralEngineEnabled ? "🧠 Apple Neural Engine включён" : "🧠 Apple Neural Engine выключен"
+            Task {
+                try? await Task.sleep(for: .seconds(2.0))
+                waveMessage = nil
             }
+            Task { await loadLyrics() }
+        case .lyrics:
+            scheduleAfterMenuDismiss {
+                withAnimation(LyricsPresentationMotion.animation(reduceMotion: reduceMotion)) { showLyricsMode.toggle() }
+            }
+        case .queue: openModal(.queue, deferForMenu: true)
+        case .equalizer: openModal(.equalizer, deferForMenu: true)
+        case .sleepTimer: openModal(.sleepTimer, deferForMenu: true)
+        case .settings: openModal(.settings, deferForMenu: true)
+        case .copyLog:
+            AutoMixSessionLog.shared.copyReportToClipboard()
+            waveMessage = "✅ Лог AutoMix скопирован — вставь в чат"
+            Task {
+                try? await Task.sleep(for: .seconds(2.5))
+                if waveMessage?.contains("Лог AutoMix") == true { waveMessage = nil }
+            }
+        case .stop:
+            player.stopAndClear()
+            close()
         }
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
-        .presentationContentInteraction(.scrolls)
-    }
-
-    private func dismissMoreActions() {
-        if activeModal == .more { activeModal = nil }
     }
 
     private var artistSelectionSheet: some View {
@@ -1853,7 +1753,7 @@ struct PlayerScreenV2: View {
     private func openModal(_ modal: ActivePlayerModal, deferForMenu: Bool = false) {
         Haptics.tap(.light)
         if deferForMenu {
-            // The actions sheet fights an immediate `.sheet` — match the artist-picker
+            // Menu dismissal fights an immediate `.sheet` — match the artist-picker
             // 320 ms handoff so EQ/queue/settings do not flash then bounce closed.
             scheduleAfterMenuDismiss { activeModal = modal }
         } else {
@@ -1864,7 +1764,6 @@ struct PlayerScreenV2: View {
 
     private func scheduleAfterMenuDismiss(_ action: @escaping @MainActor () -> Void) {
         pendingModalTask?.cancel()
-        dismissMoreActions()
         pendingModalTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(320))
             guard !Task.isCancelled, isPresented else { return }

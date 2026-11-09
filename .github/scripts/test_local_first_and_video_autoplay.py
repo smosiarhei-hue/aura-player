@@ -60,7 +60,8 @@ class LocalFirstAndVideoAutoplayTests(unittest.TestCase):
         self.assertIn('@AppStorage("sonivo_videoshot_enabled") private var isVideoShotEnabled = true', player)
         self.assertIn('@AppStorage("sonivo_videoshot_enabled") private var videoShotsEnabled = true', settings)
         self.assertIn('Toggle("Видеошоты", isOn: $videoShotsEnabled)', settings)
-        self.assertIn('Toggle("Видеошоты", isOn: $isVideoShotEnabled)', player)
+        self.assertIn('case .toggleVideo:\n            isVideoShotEnabled.toggle()', player)
+        self.assertIn('action("Видеошоты", "", .toggleVideo, checked: s.videoEnabled)', source("PlayerMoreMenu.swift"))
         generation = player.split('private func generateAIVideoShot', 1)[1].split('private func deleteCurrentVideoShot', 1)[0]
         self.assertNotIn('isVideoShotEnabled = true', generation)
         self.assertNotIn('UserDefaults.standard.set(true', generation)

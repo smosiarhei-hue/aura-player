@@ -358,7 +358,8 @@ class AntigravitySpecTests(unittest.TestCase):
 
         player_screen = self.repo_root / "Sonivo" / "PlayerScreenV2.swift"
         ps_content = player_screen.read_text(encoding="utf-8")
-        self.assertIn("Перегенерировать AI Видео-шот (новый вайб)", ps_content)
+        menu_content = (self.repo_root / "Sonivo" / "PlayerMoreMenu.swift").read_text(encoding="utf-8")
+        self.assertIn("Перегенерировать AI Видео-шот (новый вайб)", menu_content)
         self.assertIn("deleteCurrentVideoShot", ps_content)
         self.assertIn("forceRegenerate: true", ps_content)
 
@@ -511,7 +512,8 @@ class AntigravitySpecTests(unittest.TestCase):
         player_file = self.repo_root / "Sonivo" / "PlayerScreenV2.swift"
         player_content = player_file.read_text(encoding="utf-8")
         self.assertIn("player.sleepTimerFormatted", player_content)
-        self.assertIn("Таймер сна (\\(timerText))", player_content)
+        native_menu = (self.repo_root / "Sonivo" / "PlayerMoreMenu.swift").read_text(encoding="utf-8")
+        self.assertIn("Таймер сна (\\($0))", native_menu)
 
         # 5. SleepTimerSheetView active countdown and progress
         chrome_file = self.repo_root / "Sonivo" / "playerchrome.swift"

@@ -106,7 +106,8 @@ class PlaybackConflictFixesTests(unittest.TestCase):
         more_menu = content.split("private var moreMenuButton:", 1)[1].split(
             "private var artistSelectionSheet", 1
         )[0]
-        self.assertIn('Label("Текст песни"', more_menu)
+        native_menu = (self.repo_root / 'Sonivo' / 'PlayerMoreMenu.swift').read_text(encoding='utf-8')
+        self.assertIn('action("Текст песни"', native_menu)
         self.assertIn("scheduleAfterMenuDismiss", more_menu)
         self.assertIn("openModal(.equalizer, deferForMenu: true)", more_menu)
         # Leaving lyrics must not wipe EQ/queue sheets.

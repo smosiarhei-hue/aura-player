@@ -59,7 +59,7 @@ class PlayerTrackWaveTests(unittest.TestCase):
             self.assertIn(expected,utility)
         menu=screen.split('private var moreMenuButton',1)[1].split('private var artistSelectionSheet',1)[0]
         self.assertIn('startTrackWave()',menu)
-        self.assertIn('"Моя волна по текущему треку"',menu)
+        self.assertIn('"Моя волна по текущему треку"',source('PlayerMoreMenu.swift'))
         self.assertIn('trackWaveMenuAvailability',menu)
         self.assertNotIn('private var trackWaveButton',screen)
         self.assertNotIn('private var secondaryPlayerActions',screen)
@@ -93,12 +93,16 @@ class PlayerTrackWaveTests(unittest.TestCase):
         self.assertNotIn('DragGesture(minimumDistance: 15)',sliders)
     def test_wave_menu_item_is_accessible_and_loading_or_local_track_is_disabled(self):
         menu=source('PlayerScreenV2.swift').split('private var moreMenuButton',1)[1].split('private var artistSelectionSheet',1)[0]
-        for expected in ['startTrackWave()','trackWaveMenuAvailability','.disabled(!waveAvailability.catalog || waveLoading)','"Моя волна по текущему треку"']:
+        for expected in ['startTrackWave()','trackWaveMenuAvailability']:
             self.assertIn(expected,menu)
+        native=source('PlayerMoreMenu.swift')
+        for expected in ['disabled: !s.waveAvailable || s.waveLoading','"Моя волна по текущему треку"']:
+            self.assertIn(expected,native)
     def test_wave_menu_has_no_provider_brand(self):
         menu=source('PlayerScreenV2.swift').split('private var moreMenuButton',1)[1].split('private var artistSelectionSheet',1)[0]
-        self.assertIn('"Моя волна по текущему треку"',menu)
-        self.assertNotIn('Яндекс',menu)
+        native=source('PlayerMoreMenu.swift')
+        self.assertIn('"Моя волна по текущему треку"',native)
+        self.assertNotIn('Яндекс',native)
     def test_player_background_is_uniform_cover_tint_and_home_is_untouched(self):
         text=source('PlayerScreenV2.swift')
         block=text.split('private var background:',1)[1].split('private var topHeader:',1)[0]
