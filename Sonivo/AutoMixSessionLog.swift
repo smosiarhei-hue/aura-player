@@ -66,6 +66,8 @@ final class AutoMixSessionLog {
     }
 
     func event(_ message: String) {
+        // HTDemucs diagnostics remain available even when the verbose log is off.
+        HTDemucsDiagnostics.shared.record(message)
         guard isEnabled else { return }
         append(tag: "EVENT", message)
     }
