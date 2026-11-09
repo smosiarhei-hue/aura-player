@@ -187,7 +187,7 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn("DUET ·", planner)
         self.assertIn("maximumRateChange: 0.18", planner)
         self.assertIn("maxSemitones: 3", planner)
-        # Field 1148/1151: ±8% A-locked only — no geometric sludge, no half-time bBest.
+        # Field 1148/1151: ±8% bounded rates — no geometric sludge or half-time bBest.
         tempo_fn = planner.split("public static func tempoMatch(", 1)[1].split(
             "public static func duration(", 1
         )[0]
@@ -669,10 +669,10 @@ class AutoMixMashupTests(unittest.TestCase):
         self.assertIn(".instrumentalize", executor)
 
     def test_tempo_match_rejects_wide_gap_sludge(self):
-        """Mirror BeatGridSynchronization.tempoMatch: ±8% A-prefer locks only."""
+        """Mirror bounded ±8% A-preferred or balanced locks."""
 
         def tempo_match(a: float, b: float, maximum: float = 0.08):
-            slack = maximum + 0.005
+            slack = maximum + 0.000001
             cands = []
             direct_b = a / b
             if abs(direct_b - 1) <= slack:
@@ -680,12 +680,21 @@ class AutoMixMashupTests(unittest.TestCase):
             direct_a = b / a
             if abs(direct_a - 1) <= slack:
                 cands.append((b, direct_a, 1.0, abs(direct_a - 1) * 2 + abs(1 - 1)))
+            if not cands and maximum <= 0.08:
+                target = 2 * a / (1 + a / b)
+                ra, rb = target / a, target / b
+                if abs(ra - 1) <= slack and abs(rb - 1) <= slack:
+                    cands.append((target, ra, rb, abs(ra - 1) * 2 + abs(rb - 1)))
             if not cands:
                 return None
             return min(cands, key=lambda c: c[3])
 
         self.assertIsNone(tempo_match(66, 99))
         self.assertIsNone(tempo_match(91, 120))
+        balanced = tempo_match(123, 136)
+        self.assertIsNotNone(balanced)
+        self.assertAlmostEqual(balanced[1] * 123, balanced[2] * 136, places=5)
+        self.assertLessEqual(max(abs(balanced[1] - 1), abs(balanced[2] - 1)), .08)
         close = tempo_match(110, 112)
         self.assertIsNotNone(close)
         assert close is not None
