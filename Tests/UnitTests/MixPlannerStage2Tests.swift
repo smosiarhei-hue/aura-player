@@ -53,13 +53,26 @@ struct MixPlannerStage2Tests {
     func automixKeyClashFallsBack() {
         let plan = MixPlanner.plan(
             from: profile("a", bpm: 129.2, key: "6A"),
-            to: profile("b", bpm: 120.19, key: "12A"),
+            to: profile("b", bpm: 120.19, key: "9A"),
             aMeta: meta("a"), bMeta: meta("b"),
             settings: MixSettings(mode: .automix, skipTransitionsWithinAlbum: false)
         )
         #expect(plan.type == .crossfade)
         #expect(plan.pitchShiftCentsB == 0)
         #expect(plan.reason.contains("Тональный конфликт"))
+    }
+
+    @Test("Automix accepts a one-semitone move to a neighboring Camelot key")
+    func automixTruncatedTargetSearchRegression() {
+        let plan = MixPlanner.plan(
+            from: profile("a", bpm: 120, key: "6A"),
+            to: profile("b", bpm: 120, key: "12A"),
+            aMeta: meta("a"), bMeta: meta("b"),
+            settings: MixSettings(mode: .automix, skipTransitionsWithinAlbum: false)
+        )
+        #expect(plan.type != .crossfade && plan.type != .none)
+        #expect(abs(plan.pitchShiftCentsB) == 100)
+        #expect(plan.reason.contains("Гармоническая подстройка"))
     }
 
     @Test("Short tracks still receive an automatic safe transition")

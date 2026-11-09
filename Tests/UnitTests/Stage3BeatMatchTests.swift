@@ -41,16 +41,22 @@ struct Stage3BeatMatchTests {
         #expect(!CamelotCompatibility.areCompatible("8A", "2B"))
     }
 
-    @Test("Hard Camelot clash still returns capped partial pitch")
-    func camelotPartialPitchOnClash() {
-        // 4A vs 10A is a 6-semitone conflict (field 1053 Fantasm→Другая).
-        let match = CamelotCompatibility.match("4A", "10A", maxSemitones: 2)
-        #expect(!match.isHarmonicallyViable)
-        #expect(abs(match.pitchShiftCents) == 200)
-        #expect(match.description.contains("partial"))
-        // Automix live path uses ±1 semitone to avoid cheap TimePitch dirt.
-        let automix = CamelotCompatibility.match("4A", "10A", maxSemitones: 1)
-        #expect(abs(automix.pitchShiftCents) == 100)
+    @Test("Camelot search considers shifted neighboring keys without exceeding the limit")
+    func camelotShiftedNeighbors() {
+        // 12A shifted by one semitone becomes 5A or 7A, adjacent to 6A.
+        let match = CamelotCompatibility.match("6A", "12A", maxSemitones: 1)
+        #expect(match.isHarmonicallyViable)
+        #expect(!match.isNaturallyCompatible)
+        #expect(abs(match.pitchShiftCents) == 100)
+        #expect(match.description.contains("совместимо с 6A"))
+        let withoutPitch = CamelotCompatibility.match("6A", "12A", maxSemitones: 0)
+        #expect(!withoutPitch.isHarmonicallyViable)
+        #expect(withoutPitch.pitchShiftCents == 0)
+        // E minor (9A) cannot be made compatible with G minor (6A) by ±1.
+        let clash = CamelotCompatibility.match("6A", "9A", maxSemitones: 1)
+        #expect(!clash.isHarmonicallyViable)
+        #expect(abs(clash.pitchShiftCents) == 100)
+        #expect(clash.description.contains("partial"))
     }
 
     @Test("Reliable pair selects beatmatched transition")

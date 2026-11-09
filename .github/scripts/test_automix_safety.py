@@ -48,8 +48,34 @@ func meta(_ id: String, _ duration: Double = 240) -> TrackMeta {
     TrackMeta(id: TrackID(raw: id), title: id, artist: "Test", albumID: nil, durationSec: duration, artworkURL: nil)
 }
 let settings = MixSettings(mode: .automix, skipTransitionsWithinAlbum: false)
-let clash = MixPlanner.plan(from: p("a", "6A", 129.2), to: p("b", "12A", 120.19), aMeta: meta("a"), bMeta: meta("b"), settings: settings)
+let clash = MixPlanner.plan(from: p("a", "6A", 129.2), to: p("b", "9A", 120.19), aMeta: meta("a"), bMeta: meta("b"), settings: settings)
 precondition(clash.type == .crossfade && clash.pitchShiftCentsB == 0 && clash.reason.contains("Тональный конфликт"))
+let shifted = CamelotCompatibility.match("6A", "12A", maxSemitones: 1)
+precondition(shifted.isHarmonicallyViable && abs(shifted.pitchShiftCents) == 100)
+precondition(!CamelotCompatibility.match("6A", "12A", maxSemitones: 0).isHarmonicallyViable)
+let corrected = MixPlanner.plan(from: p("a", "6A", 120), to: p("b", "12A", 120), aMeta: meta("a"), bMeta: meta("b"), settings: settings)
+precondition(corrected.type != .crossfade && corrected.type != .none && abs(corrected.pitchShiftCentsB) == 100)
+// Exhaust all major/minor pairs and confirm every nonzero viable shift actually
+// lands on a naturally compatible Camelot key and is minimal under its cap.
+let minorPC = [8,3,10,5,0,7,2,9,4,11,6,1]
+let majorWheel = [11,6,1,8,3,10,5,0,7,2,9,4]
+for letterA in ["A", "B"] { for numA in 1...12 { for letterB in ["A", "B"] { for numB in 1...12 {
+    let a = "\(numA)\(letterA)", b = "\(numB)\(letterB)"
+    let pcs = letterB == "A" ? minorPC : majorWheel
+    for cap in 0...2 {
+        let result = CamelotCompatibility.match(a, b, maxSemitones: cap)
+        let options = (-cap...cap).filter { shift in
+            let pc = (pcs[numB - 1] + shift + 12) % 12
+            let index = pcs.firstIndex(of: pc)!
+            return CamelotCompatibility.areCompatible(a, "\(index + 1)\(letterB)")
+        }
+        precondition(result.isHarmonicallyViable == !options.isEmpty, "bad viability: \(a) \(b) cap=\(cap)")
+        if result.isHarmonicallyViable {
+            let shift = Int(result.pitchShiftCents / 100)
+            precondition(options.contains(shift) && abs(shift) == options.map { abs($0) }.min()!)
+        }
+    }
+}}}}
 let short = MixPlanner.plan(from: p("a", "8A", 120, 30), to: p("b", "8A", 120), aMeta: meta("a", 30), bMeta: meta("b"), settings: settings)
 precondition(short.type == .crossfade && short.rateA == 1 && short.rateB == 1)
 let good = MixPlanner.plan(from: p("a", "8A", 120), to: p("b", "8B", 120), aMeta: meta("a"), bMeta: meta("b"), settings: settings)
