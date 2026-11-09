@@ -101,9 +101,11 @@ public enum MixPlanner {
             archetype = .beatStutter
             ladderBars = min(ladderBars, 8.0)
         } else if harmonic.isNaturallyCompatible && bpmClose && energyOut >= 0.65 && energyJump <= -0.18 {
-            // Energy cliff → vinyl brake before soft B.
-            archetype = .tapeStop
-            ladderBars = min(ladderBars, 4.0)
+            // The live AutoMix path does not render the plan's tape-stop rate
+            // automation. Use its actual stem/EQ + plate-wash path instead of
+            // advertising a brake that is never heard; retain an 8-bar overlap.
+            archetype = .spaceReverb
+            ladderBars = min(ladderBars, 8.0)
         } else if harmonic.isNaturallyCompatible && bpmClose
                     && energyOut >= 0.38 && energyOut <= 0.62
                     && abs(energyJump) <= 0.14 && !hasIncomingDrop
@@ -741,9 +743,9 @@ public enum MixPlanner {
 public enum BeatGridSynchronization {
     public struct TempoMatch: Sendable, Equatable { public let targetBPM: Float; public let rateA: Float; public let rateB: Float }
     /// Pick a shared grid tempo. Rates are always `target / naturalFileBPM`.
-    /// Default ±8% matches `MashupLiveStyle.clampRate` — wider geometric "locks"
-    /// (field 1151: 91↔120 → 1.15/0.87) were crushed to 1.08/0.92 and never met.
-    /// Prefer A locked so the playing track does not pitch-shift during lead-in.
+    /// AutoMix is bounded by the player's ±8% TimePitch range. Prefer one deck
+    /// unchanged; if neither deck can lock alone, balance only when BOTH rates
+    /// fit that actual range. Wide gaps still fall back to an unmodified fade.
     public static func tempoMatch(aBPM: Float, bBPM: Float, maximumRateChange: Float = 0.08) -> TempoMatch? {
         guard aBPM.isFinite, bBPM.isFinite, aBPM > 30, bBPM > 30 else { return nil }
 
@@ -755,7 +757,10 @@ public enum BeatGridSynchronization {
             var cost: Float { abs(rateA - 1) * 2 + abs(rateB - 1) }
         }
 
-        let slack = maximumRateChange + 0.005
+        guard maximumRateChange.isFinite, maximumRateChange >= 0 else { return nil }
+        // A looser tolerance would be independently clipped by the live player,
+        // causing the two actual tempos to drift. Only allow float-rounding error.
+        let slack = maximumRateChange + 0.000_001
         var cands: [Cand] = []
 
         // A locked: only B shifts toward A.
@@ -769,6 +774,18 @@ public enum BeatGridSynchronization {
             cands.append(Cand(target: bBPM, rateA: directA, rateB: 1))
         }
 
+        // For moderate gaps, share the adjustment instead of pushing one deck
+        // past its limit. The harmonic mean gives equal and opposite percentage
+        // changes, and unlike the former wide geometric lock cannot be clamped
+        // apart by the live ±8% rate envelope. Leave Duet policy unchanged.
+        if cands.isEmpty, maximumRateChange <= 0.08 {
+            let target = 2 * aBPM / (1 + aBPM / bBPM)
+            let rateA = target / aBPM
+            let rateB = target / bBPM
+            if target.isFinite, abs(rateA - 1) <= slack, abs(rateB - 1) <= slack {
+                cands.append(Cand(target: target, rateA: rateA, rateB: rateB))
+            }
+        }
         // Wide gaps (66↔99, 91↔120) return nil; AutoMix uses a safe fade.
         guard let best = cands.min(by: { $0.cost < $1.cost }) else { return nil }
         guard abs(best.rateA - 1) <= slack, abs(best.rateB - 1) <= slack else { return nil }
