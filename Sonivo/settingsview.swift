@@ -295,15 +295,18 @@ struct SettingsView: View {
                         AutoMixSessionLog.shared.copyReportToClipboard()
                         autoMixLogCopied = true
                         Haptics.tap(.light)
+                        Task {
+                            _ = try? await AutoMixSessionLog.shared.uploadReport()
+                        }
                     } label: {
                         Label(
-                            l10n.isRussian ? "Скопировать лог AutoMix" : "Copy AutoMix log",
+                            l10n.isRussian ? "Скопировать и отправить лог AutoMix" : "Copy & send AutoMix log",
                             systemImage: "doc.on.clipboard"
                         )
                     }
 
                     if autoMixLogCopied {
-                        Text(l10n.isRussian ? "Скопировано — вставьте отчёт в чат." : "Copied — paste the report into chat.")
+                        Text(l10n.isRussian ? "Скопировано и передано агенту." : "Copied and transmitted to agent.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

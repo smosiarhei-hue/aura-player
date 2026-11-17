@@ -215,10 +215,11 @@ enum MashupLiveEQEnvelope {
         // A: ONE BASS early + HPF dissolve into LAND (audible DJ filter-out, not a cut).
         let outVocal = 1 - ramp(p, from: max(0.05, handoff - 0.10), to: min(1, handoff + 0.12))
         let outFilter = ramp(p, from: max(0.05, handoff - 0.28), to: handoff)
+        let aBassKill = ramp(p, from: 0.0, to: max(0.04, bassAt))
         if out.count >= 10 {
-            out[0] = clampDB(min(out[0], -13 * ramp(p, from: 0, to: max(0.08, bassAt))))
-            out[1] = clampDB(min(out[1], -11 * ramp(p, from: 0, to: max(0.08, bassAt))))
-            out[2] = clampDB(min(out[2], -7 * ramp(p, from: 0.02, to: max(0.12, bassAt))))
+            out[0] = clampDB(min(out[0], -18 * aBassKill))
+            out[1] = clampDB(min(out[1], -15 * aBassKill))
+            out[2] = clampDB(min(out[2], -9 * aBassKill))
             out[3] = clampDB(min(out[3], -7 * hpfD * outFilter))
             out[4] = clampDB(min(out[4], -9.5 * hpfD * outFilter))
             out[5] = clampDB(max(out[5], 1.3 * outVocal))
@@ -228,11 +229,13 @@ enum MashupLiveEQEnvelope {
             out[9] = clampDB(min(out[9], -5 * hpfD * (1 - outVocal)))
         }
         // B: instrumental carve until LAND, then release dry vocal across ~a bar.
+        // ONE BASS: kill incoming bass until bass swap point, then release cleanly.
+        let bBassEnter = ramp(p, from: max(0.02, bassAt - 0.05), to: bassAt + 0.06)
         let inInstr = 1 - ramp(p, from: handoff - 0.08, to: min(0.99, handoff + 0.08))
         let inLeadFloor = clampDB(-13 * max(1.0, pocketD) * inInstr)
         if inn.count >= 10 {
-            inn[0] = clampDB(max(inn[0], 1.6 * inInstr))
-            inn[1] = clampDB(max(inn[1], 1.1 * inInstr))
+            inn[0] = clampDB(min(inn[0], -20 * (1 - bBassEnter)))
+            inn[1] = clampDB(min(inn[1], -16 * (1 - bBassEnter)))
             inn[5] = clampDB(min(inn[5], inLeadFloor * 0.9))
             inn[6] = clampDB(min(inn[6], inLeadFloor))
             inn[7] = clampDB(min(inn[7], inLeadFloor * 0.8))

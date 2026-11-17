@@ -132,6 +132,29 @@ final class AutoMixSessionLog {
         SonivoDiagnostics.log("AutoMix session log copied (\(lines.count) lines)", tag: "DIAG")
     }
 
+    @discardableResult
+    func uploadReport(customURL: URL? = nil) async throws -> String {
+        if isEnabled, PlayerCore.isSharedReady {
+            snapshot(tag: "STATE")
+        }
+        let reportText = buildReport()
+        let serverStr = UserDefaults.standard.string(forKey: "automix.serverURL") ?? "http://192.168.0.150:8080/upload"
+        guard let endpoint = customURL ?? URL(string: serverStr) else {
+            throw URLError(.badURL)
+        }
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("text/plain; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        request.httpBody = reportText.data(using: .utf8)
+        request.timeoutInterval = 8.0
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        action("upload.success", details: "\(reportText.count) bytes")
+        return String(data: data, encoding: .utf8) ?? "OK"
+    }
+
     func ensureHeartbeat() {
         startHeartbeatIfNeeded()
     }

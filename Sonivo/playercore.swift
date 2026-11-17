@@ -1397,9 +1397,9 @@ final class PlayerCore {
             ? style.targetBPM
             : (activeTransitionPlan?.tempoTargetBPM ?? 120)
         let safeBPM = bpm > 30 ? bpm : 120
-        let barFrac = min(0.22, max(0.10, (4 * 60 / Double(safeBPM)) / max(4, transitionDuration)))
-        let echoStart = max(0.20, land - barFrac * 1.8)
-        let echoPeak = max(echoStart + 0.01, land - barFrac * 0.6)
+        let barFrac = min(0.30, max(0.12, (4 * 60 / Double(safeBPM)) / max(4, transitionDuration)))
+        let echoStart = max(0.15, land - barFrac * 2.2)
+        let echoPeak = max(echoStart + 0.02, land - barFrac * 0.5)
         let echoEnd = land
 
         var amount: Float = 0
@@ -1422,16 +1422,16 @@ final class PlayerCore {
         let plateLevel: Float
         switch activeTransitionPlan?.archetype {
         case .echoFreeze?:
-            echoLevel = 0.50; plateLevel = 0.16
+            echoLevel = 0.65; plateLevel = 0.35
         case .spaceReverb?:
-            echoLevel = 0.16; plateLevel = 0.50
+            echoLevel = 0.25; plateLevel = 0.70
         case .seamlessLoop?:
-            echoLevel = 0.26; plateLevel = 0.28
+            echoLevel = 0.45; plateLevel = 0.45
         default:
-            echoLevel = 0.34; plateLevel = 0.22
+            echoLevel = 0.50; plateLevel = 0.45
         }
         let echoWet = echoLevel * amount
-        let echoFb = 0.22 * amount
+        let echoFb = 0.35 * amount
         let plate = plateLevel * amount
         publishLiveMixFX(
             echoWet: echoWet,
@@ -1502,12 +1502,12 @@ final class PlayerCore {
         outDelay.bypass = false
         outPlate.bypass = false
         outDelay.delayTime = TimeInterval(min(1.2, max(0.08, delaySec)))
-        // Low feedback — high feedback slap doubles the vocal and feels like stutter.
-        outDelay.feedback = min(28, max(0, echoFeedback * 40))
+        // Feedback trails instead of doubling vocal.
+        outDelay.feedback = min(42, max(0, echoFeedback * 60))
         outDelay.lowPassCutoff = 9_500
-        // wetDryMix is 0…100 — keep the send subtle so the next song stays clean.
-        outDelay.wetDryMix = min(28, max(0, echoWet * 36))
-        outPlate.wetDryMix = min(22, max(0, reverbWet * 28))
+        // wetDryMix is 0…100 — keep the send musical so the wash is clearly heard.
+        outDelay.wetDryMix = min(48, max(0, echoWet * 55))
+        outPlate.wetDryMix = min(45, max(0, reverbWet * 50))
     }
 
     private func clearLiveMixFX() {
