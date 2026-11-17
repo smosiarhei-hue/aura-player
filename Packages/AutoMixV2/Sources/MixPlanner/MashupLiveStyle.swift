@@ -200,11 +200,17 @@ public struct MashupLiveStyle: Sendable, Equatable {
     public func pitchCents(progress: Double) -> Float {
         guard abs(pitchCentsB) >= 0.5 else { return 0 }
         let p = min(1, max(0, progress))
-        let holdEnd = max(0.15, handoffAt)
         if !isDuet {
-            if p <= holdEnd { return pitchCentsB }
-            let t = Self.smoothstep((p - holdEnd) / max(0.001, 1 - holdEnd))
-            return pitchCentsB * (1 - t)
+            let aFadeDuration = min(0.14, max(0.05, handoffAt * 0.16))
+            let aFadeStart = max(0.10, handoffAt - aFadeDuration)
+            if p <= aFadeStart {
+                return pitchCentsB
+            } else if p < handoffAt {
+                let t = Self.smoothstep((p - aFadeStart) / max(0.001, handoffAt - aFadeStart))
+                return pitchCentsB * (1 - t)
+            } else {
+                return 0
+            }
         }
         let rampInEnd = min(0.22, max(0.08, tempoLockUntil))
         let duetHold = max(rampInEnd + 0.05, handoffAt)
@@ -256,10 +262,12 @@ public struct MashupLiveStyle: Sendable, Equatable {
         let handoff = automixLandProgress
         let lag = min(0.08, max(0.02, incomingVolumeLag > 0 ? incomingVolumeLag : 0.04))
         // Gentle A body taper mid-window, then soft LAND fade (~14% of blend).
-        let bodyTaperStart = 0.38
-        let bodyTaperEnd = max(0.58, handoff - 0.18)
+        // Ensure fade window scales dynamically with handoff to prevent 0-duration clicks when handoff <= 0.58.
+        let aFadeDuration = min(0.14, max(0.05, handoff * 0.16))
+        let aFadeStart = handoff - aFadeDuration
+        let bodyTaperEnd = max(0.40, min(handoff * 0.65, aFadeStart - 0.02))
+        let bodyTaperStart = min(0.38, bodyTaperEnd * 0.65)
         let aHold: Float = 0.82
-        let aFadeStart = max(bodyTaperEnd, handoff - 0.14)
         let outgoing: Float
         if p < bodyTaperStart {
             outgoing = 1
@@ -276,7 +284,8 @@ public struct MashupLiveStyle: Sendable, Equatable {
         }
         let bed = automixIncomingBedGain
         // Bloom only in the last ~18% so mid-window stays A-lead × quiet bed.
-        let bloomStart = max(lag + 0.06, handoff - 0.18)
+        let bloomDuration = min(0.18, max(0.06, handoff * 0.22))
+        let bloomStart = max(lag + 0.06, handoff - bloomDuration)
         let incoming: Float
         if p <= lag {
             incoming = Self.smoothstep(p / lag) * bed

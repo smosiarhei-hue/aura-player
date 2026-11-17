@@ -70,11 +70,16 @@ public enum MixPlanner {
               let beatB = b.downbeatsSec.filter({ $0.isFinite }).min(by: { abs($0 - testIn) < abs($1 - testIn) }) else {
             return crossfade(a, b, settings, "Fallback: нет надёжной сетки долей")
         }
-        let phaseA = testOut - beatA
-        let phaseB = testIn - beatB
-        let phaseError = BeatGridSynchronization.phaseErrorMilliseconds(outgoingBeat: phaseA, incomingBeat: phaseB, rateA: tempo.rateA, rateB: tempo.rateB)
+        var phaseA = testOut - beatA
+        var phaseB = testIn - beatB
+        var phaseError = BeatGridSynchronization.phaseErrorMilliseconds(outgoingBeat: phaseA, incomingBeat: phaseB, rateA: tempo.rateA, rateB: tempo.rateB)
         if phaseError > 120 {
-            return crossfade(a, b, settings, "Fallback: фазовое расхождение > 120ms")
+            // Beat-snap incoming test cue to the nearest downbeat before giving up.
+            phaseB = 0
+            phaseError = BeatGridSynchronization.phaseErrorMilliseconds(outgoingBeat: phaseA, incomingBeat: phaseB, rateA: tempo.rateA, rateB: tempo.rateB)
+            if phaseError > 120 {
+                return crossfade(a, b, settings, "Fallback: фазовое расхождение > 120ms")
+            }
         }
 
         let availableOutro = max(0, a.durationSec - a.mixOutSec)

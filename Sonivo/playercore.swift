@@ -3108,7 +3108,7 @@ final class PlayerCore {
             let dryGain = Float(ease)
             let done = u >= 1
             if done { timer.invalidate() }
-            Task { @MainActor [weak self] in
+            MainActor.assumeIsolated {
                 guard let self, self.landOverlapToken == token else { return }
                 let baked = stemIsA ? self.playerA : self.playerB
                 let song = stemIsA ? self.playerB : self.playerA
@@ -4965,7 +4965,7 @@ final class PlayerCore {
         transitionTimer?.invalidate()
         // 60 Hz keeps mashup volumes / EQ envelopes continuous (30 Hz felt stepped).
         let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tickTransition() }
+            MainActor.assumeIsolated { self?.tickTransition() }
         }
         RunLoop.main.add(t, forMode: .common)
         transitionTimer = t
@@ -5187,10 +5187,16 @@ final class PlayerCore {
         let cents = outgoing ? 0 : activeMashupStyle.pitchCents(progress: progress)
         let needsPitch = abs(cents) >= 0.5
         let needsRate = abs(rate - 1) >= 0.002
-        node.bypass = !(needsPitch || needsRate)
         if needsRate || needsPitch {
+            if node.bypass { node.bypass = false }
             node.rate = rate
             node.pitch = cents
+        } else if !node.bypass {
+            node.rate = 1.0
+            node.pitch = 0
+            if abs(node.rate - 1.0) < 0.0005 && abs(node.pitch) < 0.1 {
+                node.bypass = true
+            }
         }
     }
 
@@ -5425,7 +5431,7 @@ final class PlayerCore {
             idleStreamingPlayer.pause()
             activeStreamingPlayer.volume = 0
             idleStreamingPlayer.volume = 0
-            if !usedBake {
+            if !usedBake && realURL == nil {
                 activeTimePitch.rate = 1
                 activeTimePitch.pitch = 0
                 activeTimePitch.bypass = true
@@ -5749,7 +5755,7 @@ final class PlayerCore {
         let releaseStart = Date()
         let duration: TimeInterval = 4.0
         let timer = Timer(timeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            MainActor.assumeIsolated {
                 guard let self else { return }
                 let progress = min(1, max(0, -releaseStart.timeIntervalSinceNow / duration))
                 let eased = Float(progress * progress * (3 - 2 * progress))

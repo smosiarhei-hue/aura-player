@@ -619,6 +619,9 @@ private struct CachedWindow: Sendable {
 
     var endSec: Double { startSec + Double(dryL.count) / rate }
 
+    private static let revisionLock = NSLock()
+    private static var revisionCache: [String: (inode: UInt64, size: Int64, modDate: Date, hash: String)] = [:]
+
     /// Identify audio by its bytes, not by cache path or mutable access time.
     /// Separate playback and analysis caches may contain the identical file,
     /// and both update modification dates when accessed. Reject a file that
@@ -631,8 +634,15 @@ private struct CachedWindow: Sendable {
               size > 0, size <= 128 * 1_024 * 1_024,
               let changed = before[.modificationDate] as? Date,
               let inode = before[.systemFileNumber] as? NSNumber,
-              let device = before[.systemNumber] as? NSNumber,
-              let file = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return nil }
+              let device = before[.systemNumber] as? NSNumber else { return nil }
+        let inodeVal = inode.uint64Value
+        revisionLock.lock()
+        if let cached = revisionCache[path], cached.inode == inodeVal, cached.size == size, cached.modDate == changed {
+            revisionLock.unlock()
+            return cached.hash
+        }
+        revisionLock.unlock()
+        guard let file = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return nil }
         defer { try? file.close() }
         var digest = SHA256()
         do {
@@ -645,7 +655,12 @@ private struct CachedWindow: Sendable {
               (after[.modificationDate] as? Date) == changed,
               (after[.systemFileNumber] as? NSNumber) == inode,
               (after[.systemNumber] as? NSNumber) == device else { return nil }
-        return digest.finalize().map { String(format: "%02x", $0) }.joined()
+        let result = digest.finalize().map { String(format: "%02x", $0) }.joined()
+        revisionLock.lock()
+        if revisionCache.count > 128 { revisionCache.removeAll() }
+        revisionCache[path] = (inode: inodeVal, size: size, modDate: changed, hash: result)
+        revisionLock.unlock()
+        return result
     }
 
     func covers(startSec: Double, durationSec: Double) -> Bool {
