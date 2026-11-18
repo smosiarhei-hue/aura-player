@@ -9,6 +9,9 @@ struct HTDemucsDiagnosticView: View {
     @State private var player = PlayerCore.shared
     @State private var modelStatus = "Проверка…"
     @State private var copied = false
+    @State private var isDownloading = false
+    @State private var downloadProgress: Double = 0
+    @State private var downloadError: String? = nil
 
     private var modeSupportsStems: Bool { player.transitionMode == .automix || player.transitionMode == .duet }
     private var thermal: String {
@@ -69,6 +72,24 @@ struct HTDemucsDiagnosticView: View {
                     }
                 }
             }
+            Section("Загрузка модели HTDemucs (~423 МБ)") {
+                if isDownloading {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ProgressView(value: downloadProgress)
+                        Text("Загрузка модели: \(Int(downloadProgress * 100))%")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                } else {
+                    Button {
+                        startModelDownload()
+                    } label: {
+                        Label(modelStatus.contains("найдены") ? "Перекачать модель HTDemucs" : "Скачать модель HTDemucs", systemImage: "arrow.down.circle")
+                    }
+                }
+                if let downloadError {
+                    Text("Ошибка: \(downloadError)").font(.caption).foregroundStyle(.red)
+                }
+            }
             Section {
                 Button { Task { await refreshModelStatus() } } label: {
                     Label("Обновить проверку", systemImage: "arrow.clockwise")
@@ -100,6 +121,31 @@ struct HTDemucsDiagnosticView: View {
         case "model-not-installed": modelStatus = "Не установлена или файлы неполные"
         case "model-load-refused": modelStatus = "Не удалось открыть; повторная попытка позже"
         default: modelStatus = "Файлы модели найдены; работоспособность не проверена отдельно"
+        }
+    }
+
+    private func startModelDownload() {
+        isDownloading = true
+        downloadProgress = 0
+        downloadError = nil
+        Task {
+            do {
+                _ = try await HTDemucsModelStore.shared.prepare { fraction in
+                    Task { @MainActor in
+                        downloadProgress = fraction
+                    }
+                }
+                await MainActor.run {
+                    isDownloading = false
+                    downloadProgress = 1.0
+                }
+                await refreshModelStatus()
+            } catch {
+                await MainActor.run {
+                    isDownloading = false
+                    downloadError = (error as? HTDemucsModelError)?.description ?? error.localizedDescription
+                }
+            }
         }
     }
 

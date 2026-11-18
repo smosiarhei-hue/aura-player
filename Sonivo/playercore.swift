@@ -5793,6 +5793,7 @@ final class PlayerCore {
             activeLocalURL = nil
             localSegmentTokens.removeAll()
             lyricsLocalSegments.removeAll()
+            releaseActiveStreamRateToUnity()
         }
 
         lastNowPlayingSync = nil
@@ -5818,7 +5819,7 @@ final class PlayerCore {
         }
         node.bypass = false
         let releaseStart = Date()
-        let duration: TimeInterval = 4.0
+        let duration: TimeInterval = 0.85
         let timer = Timer(timeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -5849,7 +5850,7 @@ final class PlayerCore {
             return
         }
         let releaseStart = Date()
-        let duration: TimeInterval = 4.0
+        let duration: TimeInterval = 0.85
         let tick: TimeInterval = 1.0 / 20.0
         let timer = Timer(timeInterval: tick, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
