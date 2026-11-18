@@ -8,20 +8,21 @@ public enum VocalIsolationUIConfig {
     public static let cornerAlignment: Alignment = .bottomTrailing
     /// Edge insets from cover borders
     public static let cornerPadding: CGFloat = 14
-    /// Expanded capsule dimensions matching reference design
+    /// Resting slim width and expanded interaction width (Apple Music Sing / iOS 27 Liquid Glass)
+    public static let restingWidth: CGFloat = 36
     public static let capsuleWidth: CGFloat = 50
     public static let expandedHeight: CGFloat = 132
-    public static let collapsedHeight: CGFloat = 50
+    public static let collapsedHeight: CGFloat = 46
 }
 
 // MARK: - Vocal Isolation Capsule Control View
 //
-// Real-time Apple Music Sing-style vertical pill slider overlay.
-// Faithfully implements the user-provided reference design (media_1790343985298.png):
-// - Translucent frosted glass dark capsule container
-// - Bottom-to-top dynamic white fill level representing vocal attenuation
-// - Custom stylized microphone icon with accent sparkles
-// - Smooth vertical drag gesture with haptic feedback and click-free audio ramp
+// Real-time Apple Music Sing-style vertical Liquid Glass slider.
+// Native iOS 26/27 visionOS design language:
+// - Single clean Liquid Glass capsule track: translucent gray where inactive, solid white where active
+// - Dynamic expansion: expands to 50pt wide when touched/dragged, smoothly shrinks to 36pt at rest
+// - Embedded stylized microphone icon with sparkles that inverts to dark ink when covered by white fill
+// - Click-free exponential audio parameter smoothing with multi-band stem protection
 
 struct VocalIsolationControlView: View {
     @State private var manager = VocalIsolationManager.shared
@@ -35,6 +36,10 @@ struct VocalIsolationControlView: View {
 
     private var fillFraction: CGFloat {
         CGFloat(max(0.0, min(1.0, currentLevel)))
+    }
+
+    private var activeWidth: CGFloat {
+        isDragging ? VocalIsolationUIConfig.capsuleWidth : VocalIsolationUIConfig.restingWidth
     }
 
     var body: some View {
@@ -59,27 +64,31 @@ struct VocalIsolationControlView: View {
             let fillHeight = max(0, min(totalHeight, totalHeight * fillFraction))
 
             ZStack(alignment: .bottom) {
-                // 1. Frosted Liquid Glass Capsule Background
+                // 1. Single Native Liquid Glass Track (Translucent Gray Inactive Portion)
                 Capsule()
                     .fill(.ultraThinMaterial)
+                    .glassEffect(.regular.interactive(), in: .capsule)
                     .overlay(
                         Capsule()
-                            .fill(Color(red: 0.14, green: 0.12, blue: 0.12).opacity(0.82))
+                            .fill(Color(white: 0.22).opacity(0.65))
                     )
                     .overlay(
                         Capsule()
                             .strokeBorder(
                                 LinearGradient(
-                                    colors: [Color.white.opacity(0.35), Color.white.opacity(0.10)],
+                                    stops: [
+                                        .init(color: .white.opacity(0.42), location: 0.0),
+                                        .init(color: .white.opacity(0.10), location: 1.0)
+                                    ],
                                     startPoint: .top,
                                     endPoint: .bottom
                                 ),
-                                lineWidth: 0.6
+                                lineWidth: 0.75
                             )
                     )
-                    .shadow(color: .black.opacity(0.40), radius: 12, y: 6)
+                    .shadow(color: .black.opacity(0.35), radius: 12, y: 6)
 
-                // 2. Dynamic Bottom-to-Top White Fill
+                // 2. Pure Solid White Fill (Active Portion)
                 Capsule()
                     .fill(Color.white)
                     .frame(height: fillHeight)
@@ -88,8 +97,8 @@ struct VocalIsolationControlView: View {
                 // 3. Bottom Centered Microphone + Sparkles Icon
                 VStack {
                     Spacer()
-                    stylizedMicrophoneIcon(isFilled: fillFraction > 0.32)
-                        .frame(width: VocalIsolationUIConfig.capsuleWidth, height: VocalIsolationUIConfig.capsuleWidth)
+                    stylizedMicrophoneIcon(isFilled: fillFraction > 0.28)
+                        .frame(width: activeWidth, height: activeWidth)
                         .contentShape(Rectangle())
                         .onTapGesture {
                             Haptics.tap(.medium)
@@ -104,49 +113,55 @@ struct VocalIsolationControlView: View {
                 }
             }
             .contentShape(Capsule())
+            .scaleEffect(isDragging ? 1.04 : 1.0)
             .gesture(
-                DragGesture(minimumDistance: 1)
+                DragGesture(minimumDistance: 0)
                     .onChanged { value in
                         if !isDragging {
-                            isDragging = true
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+                                isDragging = true
+                            }
                             dragStartLevel = manager.isolationLevel
                             Haptics.tap(.light)
                         }
                         // Dragging upwards increases isolation (fill goes up)
                         let deltaY = -value.translation.height
-                        let deltaFraction = Float(deltaY / (totalHeight - 20))
+                        let deltaFraction = Float(deltaY / (totalHeight - 16))
                         let newLevel = max(0.0, min(1.0, dragStartLevel + deltaFraction))
                         if abs(newLevel - manager.isolationLevel) > 0.01 {
                             manager.isolationLevel = newLevel
                         }
                     }
                     .onEnded { _ in
-                        isDragging = false
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+                            isDragging = false
+                        }
                         Haptics.tap(.light)
-                        // If pulled down to 0, keep expanded so user can see it or tap to close
                     }
             )
         }
-        .frame(width: VocalIsolationUIConfig.capsuleWidth, height: VocalIsolationUIConfig.expandedHeight)
+        .frame(width: activeWidth, height: VocalIsolationUIConfig.expandedHeight)
+        .animation(.spring(response: 0.35, dampingFraction: 0.78), value: isDragging)
         .overlay(alignment: .topTrailing) {
-            // Dismiss button on double-tap or top tap
-            Button {
-                Haptics.tap(.light)
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
-                    manager.isExpanded = false
+            if isDragging || currentLevel > 0.05 {
+                Button {
+                    Haptics.tap(.light)
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+                        manager.isExpanded = false
+                    }
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(fillFraction > 0.88 ? Color.black.opacity(0.65) : Color.white.opacity(0.65))
+                        .padding(.top, 7)
                 }
-            } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(fillFraction > 0.88 ? Color.black.opacity(0.6) : Color.white.opacity(0.6))
-                    .padding(.top, 7)
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, alignment: .top)
             }
-            .buttonStyle(.plain)
-            .frame(maxWidth: .infinity, alignment: .top)
         }
     }
 
-    // MARK: - Collapsed Icon Button
+    // MARK: - Collapsed Icon Button (Native Liquid Glass Circle)
 
     private var collapsedIconButton: some View {
         Button {
@@ -161,22 +176,23 @@ struct VocalIsolationControlView: View {
             ZStack {
                 Circle()
                     .fill(.ultraThinMaterial)
+                    .glassEffect(.regular.interactive(), in: .circle)
                     .overlay(
                         Circle()
-                            .fill(Color(red: 0.14, green: 0.12, blue: 0.12).opacity(0.80))
+                            .fill(Color(white: 0.20).opacity(0.70))
                     )
                     .overlay(
                         Circle()
                             .strokeBorder(
                                 LinearGradient(
-                                    colors: [
-                                        manager.isolationLevel > 0.05 ? Color.white.opacity(0.65) : Color.white.opacity(0.30),
-                                        manager.isolationLevel > 0.05 ? Color.white.opacity(0.25) : Color.white.opacity(0.10)
+                                    stops: [
+                                        .init(color: .white.opacity(manager.isolationLevel > 0.05 ? 0.65 : 0.35), location: 0.0),
+                                        .init(color: .white.opacity(0.08), location: 1.0)
                                     ],
                                     startPoint: .top,
                                     endPoint: .bottom
                                 ),
-                                lineWidth: 0.6
+                                lineWidth: 0.75
                             )
                     )
                     .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
@@ -188,27 +204,29 @@ struct VocalIsolationControlView: View {
         .buttonStyle(TactileButtonStyle(scale: 0.94))
     }
 
-    // MARK: - Original Stylized Microphone + Sparkles Graphic
+    // MARK: - Stylized Microphone + Sparkles Graphic
 
     private func stylizedMicrophoneIcon(isFilled: Bool) -> some View {
         ZStack {
             // Main tilted microphone
             Image(systemName: "mic.fill")
-                .font(.system(size: 19, weight: .bold))
+                .font(.system(size: isDragging ? 18 : 15, weight: .bold))
                 .rotationEffect(.degrees(-35))
-                .offset(x: -3, y: -2)
+                .offset(x: -2, y: -2)
 
             // Accent sparkles / stars in bottom right of the mic
             Image(systemName: "sparkle")
-                .font(.system(size: 10, weight: .bold))
-                .offset(x: 10, y: 7)
+                .font(.system(size: isDragging ? 9 : 7.5, weight: .bold))
+                .offset(x: isDragging ? 9 : 7, y: isDragging ? 6 : 5)
                 .opacity(0.85)
 
             Image(systemName: "sparkle")
-                .font(.system(size: 6, weight: .semibold))
-                .offset(x: 4, y: 12)
+                .font(.system(size: isDragging ? 5.5 : 4.5, weight: .semibold))
+                .offset(x: isDragging ? 4 : 3, y: isDragging ? 10 : 8)
                 .opacity(0.60)
         }
-        .foregroundStyle(isFilled ? Color(red: 0.13, green: 0.12, blue: 0.11) : Color.white)
+        .foregroundStyle(isFilled ? Color(red: 0.11, green: 0.11, blue: 0.13) : Color.white)
+        .animation(.easeInOut(duration: 0.15), value: isFilled)
+        .animation(.spring(response: 0.35, dampingFraction: 0.78), value: isDragging)
     }
 }
