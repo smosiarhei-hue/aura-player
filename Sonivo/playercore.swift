@@ -1619,6 +1619,65 @@ final class PlayerCore {
         }
     }
 
+    /// Safe DJ transition EQ for wide-tempo / unaligned tracks.
+    /// Progressively filters out A low-end while entering B cleanly (ONE BASS).
+    private func applySafeCrossfadeTransitionEQ(progress: Double) {
+        let p = min(1.0, max(0.0, progress))
+        let aBassKill = Float(min(1.0, p / 0.45))
+        let aHPF = Float(min(1.0, max(0.0, (p - 0.12) / 0.60)))
+        var outBands = [Float](repeating: 0, count: PlayerCore.bandFrequencies.count)
+        if outBands.count >= 10 {
+            outBands[0] = -22.0 * aBassKill
+            outBands[1] = -18.0 * aBassKill
+            outBands[2] = -12.0 * aBassKill
+            outBands[3] = -7.0 * aHPF
+            outBands[4] = -4.0 * aHPF
+        }
+
+        var inBands = [Float](repeating: 0, count: PlayerCore.bandFrequencies.count)
+        if inBands.count >= 10, p < 0.20 {
+            let bBassHold = Float(1.0 - (p / 0.20))
+            inBands[0] = -14.0 * bBassHold
+            inBands[1] = -10.0 * bBassHold
+        }
+
+        let activeOff = Self.normalized(outBands)
+        let idleOff = Self.normalized(inBands)
+        if activePlayer === playerA {
+            eqOffsetA = activeOff
+            eqOffsetB = idleOff
+        } else {
+            eqOffsetB = activeOff
+            eqOffsetA = idleOff
+        }
+
+        nativeEQRamp?.cancel()
+        nativeEQRamp = nil
+
+        let out = mashupComposedGains(offset: activeOff)
+        let incoming = mashupComposedGains(offset: idleOff)
+
+        if !isUsingStreamPlayer {
+            let node = activePlayer === playerA ? eqNodeA : eqNodeB
+            let preamp = EQHeadroom.preamp(gains: out.gains, sampleRate: node.inputFormat(forBus: 0).sampleRate)
+            writeBands(node, out.gains, globalGain: preamp)
+            outputLimiter.bypass = true
+        }
+        if !incomingIsStream {
+            let node = idlePlayer === playerA ? eqNodeA : eqNodeB
+            let preamp = EQHeadroom.preamp(gains: incoming.gains, sampleRate: node.inputFormat(forBus: 0).sampleRate)
+            writeBands(node, incoming.gains, globalGain: preamp)
+            outputLimiter.bypass = true
+        }
+
+        if isUsingStreamPlayer, let item = activeStreamingPlayer.currentItem {
+            StreamBeatTap.shared.setItemEQOverride(for: item, gains: out.gains, enabled: out.enabled)
+        }
+        if incomingIsStream, let item = idleStreamingPlayer.currentItem {
+            StreamBeatTap.shared.setItemEQOverride(for: item, gains: incoming.gains, enabled: incoming.enabled)
+        }
+    }
+
     @ObservationIgnored private var nativeEQRamp: Task<Void, Never>?
     @ObservationIgnored private var nativeEQWasEnabled: Bool?
 
@@ -5026,14 +5085,20 @@ final class PlayerCore {
                 ? mashupHeardVolumes(progress: p)
                 : (automixSafeCrossfade ? AutoMixSafeCrossfade.gains(progress: p)
                    : CrossfadeCurve.gains(progress: p))
-            // No invented tempo on unaligned tracks: a bounded, non-rhythmic
-            // reverb wash is applied only to A, and clears before the handoff.
+            // Wide-gap / unaligned tracks: DJ Echo Out + Reverb Wash build-up on A
+            // with ONE BASS HPF filter sweep, clearing into a punchy, clean B entry.
             if automixSafeCrossfade {
-                let wash = Float(sin(min(1, max(0, p)) * .pi)) * 0.50
+                let wash = Float(sin(min(1, max(0, p)) * .pi))
+                let echo = wash * 0.42
+                let reverb = wash * 0.52
                 if wash > 0.001 {
-                    publishLiveMixFX(echoWet: 0, echoFeedback: 0, delaySec: 0.35, reverbWet: wash)
+                    publishLiveMixFX(echoWet: echo, echoFeedback: 0.40, delaySec: 0.35, reverbWet: reverb)
+                    applySafeCrossfadeTransitionEQ(progress: p)
+                    AutoMixDJEngine.shared.markMashupProgress(p)
+                    AutoMixDJEngine.shared.statusBadge = "Echo Out · Reverb Wash"
                 } else {
                     clearLiveMixFX()
+                    resetTransitionEQOffsets()
                 }
             }
             let gatedOutgoing: Float = mashup

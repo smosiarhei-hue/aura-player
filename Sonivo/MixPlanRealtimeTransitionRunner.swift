@@ -232,7 +232,7 @@ enum MashupLiveEQEnvelope {
         // ONE BASS: kill incoming bass until bass swap point, then release cleanly.
         let bBassEnter = ramp(p, from: max(0.02, bassAt - 0.05), to: bassAt + 0.06)
         let inInstr = 1 - ramp(p, from: handoff - 0.08, to: min(0.99, handoff + 0.08))
-        let inLeadFloor = clampDB(-13 * max(1.0, pocketD) * inInstr)
+        let inLeadFloor = clampDB(-6 * max(1.0, pocketD) * inInstr)
         if inn.count >= 10 {
             inn[0] = clampDB(min(inn[0], -20 * (1 - bBassEnter)))
             inn[1] = clampDB(min(inn[1], -16 * (1 - bBassEnter)))
