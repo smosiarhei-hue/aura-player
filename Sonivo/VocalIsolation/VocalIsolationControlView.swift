@@ -59,14 +59,25 @@ struct VocalIsolationControlView: View {
             let fillHeight = max(0, min(totalHeight, totalHeight * fillFraction))
 
             ZStack(alignment: .bottom) {
-                // 1. Frosted Dark Capsule Background
+                // 1. Frosted Liquid Glass Capsule Background
                 Capsule()
-                    .fill(Color(red: 0.16, green: 0.14, blue: 0.13).opacity(0.88))
+                    .fill(.ultraThinMaterial)
                     .overlay(
                         Capsule()
-                            .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5)
+                            .fill(Color(red: 0.14, green: 0.12, blue: 0.12).opacity(0.82))
                     )
-                    .shadow(color: .black.opacity(0.40), radius: 10, y: 5)
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [Color.white.opacity(0.35), Color.white.opacity(0.10)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                ),
+                                lineWidth: 0.6
+                            )
+                    )
+                    .shadow(color: .black.opacity(0.40), radius: 12, y: 6)
 
                 // 2. Dynamic Bottom-to-Top White Fill
                 Capsule()
@@ -149,14 +160,23 @@ struct VocalIsolationControlView: View {
         } label: {
             ZStack {
                 Circle()
-                    .fill(Color(red: 0.16, green: 0.14, blue: 0.13).opacity(0.85))
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        Circle()
+                            .fill(Color(red: 0.14, green: 0.12, blue: 0.12).opacity(0.80))
+                    )
                     .overlay(
                         Circle()
                             .strokeBorder(
-                                manager.isolationLevel > 0.05
-                                    ? Color.white.opacity(0.55)
-                                    : Color.white.opacity(0.18),
-                                lineWidth: 0.5
+                                LinearGradient(
+                                    colors: [
+                                        manager.isolationLevel > 0.05 ? Color.white.opacity(0.65) : Color.white.opacity(0.30),
+                                        manager.isolationLevel > 0.05 ? Color.white.opacity(0.25) : Color.white.opacity(0.10)
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                ),
+                                lineWidth: 0.6
                             )
                     )
                     .shadow(color: .black.opacity(0.35), radius: 8, y: 4)

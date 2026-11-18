@@ -430,16 +430,24 @@ struct PlayerScreenV2: View {
                 .padding(.top, 18)
                 .padding(.bottom, 6)
 
-            inlineLyricsStage(width: width, height: height)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .clipped()
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    revealLyricsControls()
-                }
-                .simultaneousGesture(DragGesture(minimumDistance: 5)
-                    .onChanged { _ in lyricsControlsHideTask?.cancel() }
-                    .onEnded { _ in scheduleLyricsControlsHide() })
+            ZStack(alignment: .bottomTrailing) {
+                inlineLyricsStage(width: width, height: height)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        revealLyricsControls()
+                    }
+                    .simultaneousGesture(DragGesture(minimumDistance: 5)
+                        .onChanged { _ in lyricsControlsHideTask?.cancel() }
+                        .onEnded { _ in scheduleLyricsControlsHide() })
+
+                // Apple Music Sing real-time vocal isolation slider in lyrics mode
+                VocalIsolationControlView()
+                    .padding(.trailing, 20)
+                    .padding(.bottom, lyricsControlsVisible ? 8 : 16)
+                    .zIndex(10)
+            }
 
             if lyricsControlsVisible {
                 lyricsControlsDeck(safeAreaBottom: safeAreaBottom, coverWidth: width)
