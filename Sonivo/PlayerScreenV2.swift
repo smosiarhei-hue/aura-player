@@ -521,6 +521,7 @@ struct PlayerScreenV2: View {
                         height: 24
                     )
                 }
+                .contentShape(Rectangle())
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
@@ -1263,6 +1264,7 @@ struct PlayerScreenV2: View {
         return HStack(alignment: .center, spacing: 14) {
             Button(action: openArtist) {
                 metadataCarousel(coverWidth: coverWidth)
+                    .contentShape(Rectangle())
                     .accessibilityHidden(true)
             }
             .buttonStyle(.plain)
@@ -1863,8 +1865,18 @@ struct PlayerScreenV2: View {
     }
     private func close() { Haptics.tap(.light); isPresented = false }
     private func openArtist() {
-        guard let track else { return }; resolvingArtist = true
-        Task { let result = await YandexMusicService.shared.resolvePlayerArtists(for: track); resolvingArtist = false; artistChoices = result; if result.count == 1 { selectedArtist = result[0] } else if !result.isEmpty { activeModal = .artistSelection } }
+        guard let track else { return }
+        resolvingArtist = true
+        Task { @MainActor in
+            let result = await YandexMusicService.shared.resolvePlayerArtists(for: track)
+            resolvingArtist = false
+            artistChoices = result
+            if result.count == 1 {
+                selectedArtist = result[0]
+            } else if !result.isEmpty {
+                activeModal = .artistSelection
+            }
+        }
     }
     private func startTrackWave() {
         guard !waveLoading, let current = track,

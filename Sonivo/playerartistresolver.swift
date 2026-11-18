@@ -7,7 +7,8 @@ struct PlayerArtistLink: Identifiable, Hashable {
 
 extension YandexMusicService {
     func resolvePlayerArtists(for track: Track) async -> [PlayerArtistLink] {
-        if let trackId = Self.ymId(fromFileName: track.fileName),
+        let trackId = PlayerCore.yandexTrackID(from: track)
+        if !trackId.isEmpty,
            let exact = await loadArtistsForPlayerTrack(trackId),
            !exact.isEmpty {
             return exact
