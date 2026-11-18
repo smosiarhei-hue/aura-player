@@ -107,8 +107,37 @@ struct RootView: View {
         .modifier(SonivoLiveActivityLifecycle())
         .accessibilityIdentifier("sonivo.root.tabs")
         .tint(themeManager.accentColor).tabBarMinimizeBehavior(.onScrollDown)
-        .tabViewBottomAccessory {
-            if miniVisible { NativeMiniPlayer(showPlayer: $showPlayer, zoomNamespace: playerTransition) }
+        .toolbar(.hidden, for: .tabBar)
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 8) {
+                if miniVisible {
+                    NativeMiniPlayer(showPlayer: $showPlayer, zoomNamespace: playerTransition)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(.ultraThinMaterial)
+                                .glassEffect(.regular, in: .rect(cornerRadius: 18))
+                                .sonivoMetal(corner: 18, emphasis: 0.22)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .shadow(color: .black.opacity(0.18), radius: 14, x: 0, y: 6)
+                        .padding(.horizontal, 16)
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .bottom).combined(with: .opacity),
+                            removal: .opacity.combined(with: .scale(scale: 0.95))
+                        ))
+                }
+
+                LiquidGlassTabBar(
+                    selectedTab: $tab,
+                    isLoggedIn: ym.isUserLoggedIn,
+                    accentColor: themeManager.accentColor
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 4)
+            }
+            .animation(SN.spring, value: miniVisible)
         }
         .sheet(item: $rootSheet) { sheet in
             switch sheet {
