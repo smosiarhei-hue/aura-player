@@ -19,9 +19,11 @@ public enum VocalIsolationUIConfig {
 //
 // Real-time Apple Music Sing-style vertical Liquid Glass slider.
 // Native iOS 26/27 visionOS design language:
-// - Single clean Liquid Glass capsule track: translucent gray where inactive, solid white where active
+// - Single clean Liquid Glass capsule track: translucent gray where inactive, solid white fluid where active
+// - Zero inner capsule duplication: level fill is masked cleanly to the single capsule track shape
 // - Dynamic expansion: expands to 50pt wide when touched/dragged, smoothly shrinks to 36pt at rest
 // - Embedded stylized microphone icon with sparkles that inverts to dark ink when covered by white fill
+// - Auto-collapse after 2.5s of inactivity so lyrics remain unobstructed
 // - Click-free exponential audio parameter smoothing with multi-band stem protection
 
 struct VocalIsolationControlView: View {
@@ -58,7 +60,7 @@ struct VocalIsolationControlView: View {
         .accessibilityValue("\(Int(currentLevel * 100)) процентов")
     }
 
-    // MARK: - Expanded Vertical Capsule Slider
+    // MARK: - Expanded Vertical Capsule Slider (Single Unified Native Liquid Glass Pill)
 
     private var expandedCapsuleSlider: some View {
         GeometryReader { geo in
@@ -90,11 +92,10 @@ struct VocalIsolationControlView: View {
                     )
                     .shadow(color: .black.opacity(0.35), radius: 12, y: 6)
 
-                // 2. Pure Solid White Fill (Active Portion)
-                Capsule()
+                // 2. Pure Solid White Level Fill (Continuous fluid column inside the single capsule)
+                Rectangle()
                     .fill(Color.white)
                     .frame(height: fillHeight)
-                    .clipShape(Capsule())
 
                 // 3. Bottom Centered Microphone + Sparkles Icon
                 VStack {
@@ -114,24 +115,23 @@ struct VocalIsolationControlView: View {
                         }
                 }
             }
+            .clipShape(Capsule())
             .contentShape(Capsule())
-            .scaleEffect(isDragging ? 1.04 : 1.0)
-            .gesture(
+            .simultaneousGesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
                         autoCollapseTask?.cancel()
                         if !isDragging {
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
-                                isDragging = true
-                            }
+                            isDragging = true
+                            dragStartY = value.startLocation.y
                             dragStartLevel = manager.isolationLevel
                             Haptics.tap(.light)
                         }
-                        // Dragging upwards increases isolation (fill goes up)
-                        let deltaY = -value.translation.height
-                        let deltaFraction = Float(deltaY / (totalHeight - 16))
-                        let newLevel = max(0.0, min(1.0, dragStartLevel + deltaFraction))
-                        if abs(newLevel - manager.isolationLevel) > 0.01 {
+                        // Upwards drag increases isolation level, downwards drag decreases it
+                        let deltaY = dragStartY - value.location.y
+                        let levelDelta = Float(deltaY / (totalHeight - 20))
+                        let newLevel = max(0.0, min(1.0, dragStartLevel + levelDelta))
+                        if abs(newLevel - manager.isolationLevel) > 0.005 {
                             manager.isolationLevel = newLevel
                         }
                     }

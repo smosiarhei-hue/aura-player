@@ -4220,7 +4220,7 @@ final class PlayerCore {
                 // have no cache yet — materialize both sides or the mix is just a badge.
                 var outURLForBake = outgoingCacheURL
                 var inURLForBake = nextURL ?? self.findLocalOrCachedAudioFile(for: nextTrack)
-                if mashup {
+                if mashup && !safeAutomixFallback {
                     if outURLForBake == nil {
                         outURLForBake = try? await self.materializeLocalAudio(for: current)
                     }
@@ -4251,7 +4251,7 @@ final class PlayerCore {
                         AutoMixSessionLog.shared.event("bake.start blend=\(String(format: "%.1f", self.transitionDuration))s")
                     }
                 }
-                let shouldBakeStems = mashup && outURLForBake != nil && inURLForBake != nil
+                let shouldBakeStems = mashup && !safeAutomixFallback && outURLForBake != nil && inURLForBake != nil
                 if shouldBakeStems,
                    let outURL = outURLForBake,
                    let inURL = inURLForBake {
@@ -4269,7 +4269,8 @@ final class PlayerCore {
                           self.transitionRequestID == transitionID, self.validatePendingAutomaticTransition(),
                           self.currentTrack?.id == current.id,
                           self.incomingTrack?.id == nextTrack.id, self.isTransitioning else { return }
-                    if self.executionTransitionMode == .automix,
+                    if !safeAutomixFallback,
+                       self.executionTransitionMode == .automix,
                        self.activeTransitionMode == self.transitionMode,
                        let a = AutoMixV2AnalysisRuntime.shared.currentProfile,
                        let b = AutoMixV2AnalysisRuntime.shared.nextProfile,
@@ -4900,9 +4901,9 @@ final class PlayerCore {
                         if safeAutomixFallback {
                             // Only fade A after B has actually started, not merely
                             // because AVPlayerItem was created. B starts at zero.
-                            targetStream.play()
+                            targetStream.playImmediately(atRate: 1.0)
                             var ready = false
-                            for _ in 0..<60 {
+                            for _ in 0..<100 {
                                 guard !Task.isCancelled, self.generation == token,
                                       self.transitionRequestID == transitionID,
                                       self.currentTrack?.id == current.id,
@@ -5051,7 +5052,7 @@ final class PlayerCore {
                     safeCrossfadeStalledAt = Date()
                     AutoMixSessionLog.shared.event("transition.safe-wait bState=\(incomingPlaybackStatePublic)")
                 }
-                if let stalled = safeCrossfadeStalledAt, Date().timeIntervalSince(stalled) >= 1 {
+                if let stalled = safeCrossfadeStalledAt, Date().timeIntervalSince(stalled) >= 5.0 {
                     giveUpMashupAndKeepPlaying(URLError(.timedOut))
                 }
                 return
@@ -5089,7 +5090,7 @@ final class PlayerCore {
             // Apple Automix live grammar (A lead × B bed → LAND) even when bake is
             // still cooking. Equal-power was used after bake.pending and left B
             // silent on the stream path (field 1129 volB=0 through MIXING).
-            let useMashupVolumes = mashup
+            let useMashupVolumes = mashup && !automixSafeCrossfade
             let gains = useMashupVolumes
                 ? mashupHeardVolumes(progress: p)
                 : (automixSafeCrossfade ? AutoMixSafeCrossfade.gains(progress: p)
@@ -5163,35 +5164,36 @@ final class PlayerCore {
                 return
             }
 
-            let beatRates: (outgoing: Float, incoming: Float) = mashup
+            let beatRates: (outgoing: Float, incoming: Float) = (mashup && !automixSafeCrossfade)
                 ? activeMashupStyle.playbackRates(progress: p)
                 : (outgoing: 1, incoming: 1)
 
             if isUsingStreamPlayer {
                 activeStreamingPlayer.volume = sourceLevel * volume
-                if mashup {
-                    // Hold beatmatched tempo for A (not cosmetic ±1% wiggles).
-                    activeStreamingPlayer.rate = isPlaying ? beatRates.outgoing : 0
-                } else {
-                    activeStreamingPlayer.rate = isPlaying ? 1.0 : 0
+                let targetRate: Float = (mashup && !automixSafeCrossfade)
+                    ? (isPlaying ? beatRates.outgoing : 0)
+                    : (isPlaying ? 1.0 : 0)
+                if abs(activeStreamingPlayer.rate - targetRate) > 0.005 {
+                    activeStreamingPlayer.rate = targetRate
                 }
             } else {
                 activePlayer.volume = sourceLevel
-                if mashup {
+                if mashup && !automixSafeCrossfade {
                     applyMashupTimePitch(progress: p, outgoing: true, rate: beatRates.outgoing)
                 }
             }
 
             if incomingIsStream {
                 idleStreamingPlayer.volume = targetLevel * volume
-                if mashup {
-                    idleStreamingPlayer.rate = isPlaying ? beatRates.incoming : 0
-                } else {
-                    idleStreamingPlayer.rate = isPlaying ? 1.0 : 0
+                let targetRate: Float = (mashup && !automixSafeCrossfade)
+                    ? (isPlaying ? beatRates.incoming : 0)
+                    : (isPlaying ? 1.0 : 0)
+                if abs(idleStreamingPlayer.rate - targetRate) > 0.005 {
+                    idleStreamingPlayer.rate = targetRate
                 }
             } else {
                 idlePlayer.volume = targetLevel
-                if mashup {
+                if mashup && !automixSafeCrossfade {
                     applyMashupTimePitch(progress: p, outgoing: false, rate: beatRates.incoming)
                 }
             }

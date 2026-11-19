@@ -108,6 +108,7 @@ targets:
       path: Sonivo/Info.plist
       properties:
         CFBundleDisplayName: Sonivo
+        LSApplicationCategoryType: public.app-category.music
         NSSupportsLiveActivities: true
         SonivoLiveActivityEmbedded: true
         CFBundleDevelopmentRegion: ru
