@@ -3619,8 +3619,9 @@ final class PlayerCore {
                     // Unknown/weak grid or wide tempo gap: apply professional DJ Echo Out + Reverb Wash
                     // with highpass bass cut on A and clean drop on B.
                     let suggested = plan?.bars ?? 8
-                    let fade = min(9, max(6, suggested.isFinite ? suggested : 8))
-                    let cue = max(0, totalDur - fade)
+                    let fade = min(10, max(6, suggested.isFinite ? suggested : 8))
+                    // Start preparation 6s ahead of the fade window so streaming track B can resolve & buffer.
+                    let cue = max(0, totalDur - fade - 6)
                     guard currentPos >= cue else { return }
                     let remaining = max(0, totalDur - currentPos)
                     guard remaining >= 1 else { return }
