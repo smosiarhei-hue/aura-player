@@ -4993,11 +4993,11 @@ final class PlayerCore {
                         AutoMixDJEngine.shared.markMashupProgress(0)
                         AutoMixDJEngine.shared.currentBPM = Double(self.activeMashupStyle.targetBPM)
                         AutoMixDJEngine.shared.statusBadge = self.activeMashupStyle.phaseLabel(progress: 0)
+                        SonivoDiagnostics.log(
+                            "[Mashup] beatmatch A×\(String(format: "%.3f", rates.outgoing)) B×\(String(format: "%.3f", rates.incoming)) @\(Int(self.activeMashupStyle.targetBPM)) BPM · \(self.activeMashupStyle.reason)",
+                            tag: "AUDIO"
+                        )
                     }
-                    SonivoDiagnostics.log(
-                        "[Mashup] beatmatch A×\(String(format: "%.3f", rates.outgoing)) B×\(String(format: "%.3f", rates.incoming)) @\(Int(self.activeMashupStyle.targetBPM)) BPM · \(self.activeMashupStyle.reason)",
-                        tag: "AUDIO"
-                    )
                 }
                 self.startTransitionTimer()
                 self.transitionPreparationTask = nil

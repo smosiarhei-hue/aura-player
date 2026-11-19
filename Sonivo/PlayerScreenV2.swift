@@ -994,7 +994,7 @@ struct PlayerScreenV2: View {
             .accessibilityLabel("Развернуть текст песни на весь экран")
 
             // 4. Оверлей управления вокалом (караоке-режим / Apple Music Sing style)
-            if isVocalToggleVisible {
+            if isVocalToggleVisible && !showLyricsMode {
                 VocalIsolationControlView()
                     .padding(VocalIsolationUIConfig.cornerPadding)
                     .frame(maxWidth: side, maxHeight: side, alignment: VocalIsolationUIConfig.cornerAlignment)

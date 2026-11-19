@@ -29,6 +29,7 @@ struct VocalIsolationControlView: View {
     @State private var dragStartY: CGFloat = 0
     @State private var dragStartLevel: Float = 0
     @State private var isDragging: Bool = false
+    @State private var autoCollapseTask: Task<Void, Never>?
 
     private var currentLevel: Float {
         manager.isolationLevel
@@ -51,6 +52,7 @@ struct VocalIsolationControlView: View {
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.78), value: manager.isExpanded)
+        .onDisappear { autoCollapseTask?.cancel() }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Изоляция вокала")
         .accessibilityValue("\(Int(currentLevel * 100)) процентов")
@@ -117,6 +119,7 @@ struct VocalIsolationControlView: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
+                        autoCollapseTask?.cancel()
                         if !isDragging {
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
                                 isDragging = true
@@ -137,6 +140,15 @@ struct VocalIsolationControlView: View {
                             isDragging = false
                         }
                         Haptics.tap(.light)
+                        // Auto-collapse after 2.5s of inactivity so lyrics remain unobstructed
+                        autoCollapseTask?.cancel()
+                        autoCollapseTask = Task { @MainActor in
+                            do { try await Task.sleep(for: .seconds(2.5)) } catch { return }
+                            guard !isDragging else { return }
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+                                manager.isExpanded = false
+                            }
+                        }
                     }
             )
         }
