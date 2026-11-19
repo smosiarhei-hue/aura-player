@@ -2209,6 +2209,20 @@ final class PlayerCore {
             "next",
             details: "from=\(currentTrack?.title ?? "-") to=\(peekNext(auto: false)?.title ?? "-")"
         )
+        if isMashupTransitionMode, isPlaying, !isTransitioning,
+           let current = currentTrack, let target = peekNext(auto: false) {
+            scheduleSimpleTransition(
+                current: current,
+                nextTrack: target,
+                blendDuration: 3.5,
+                incomingStart: 0,
+                mashupBadge: "AutoMix · Quick Drop",
+                mashupStyle: nil,
+                outgoingCue: isUsingStreamPlayer ? progress : liveProgress(),
+                safeAutomixFallback: true
+            )
+            return
+        }
         cancelTransition()
         reportWaveSkipIfNeeded()
         if let nextTrack = peekNext(auto: false) {
