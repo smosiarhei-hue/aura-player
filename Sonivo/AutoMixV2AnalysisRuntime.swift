@@ -494,7 +494,7 @@ final class AutoMixV2AnalysisRuntime {
                             cue: cue, blend: MashupTransitionExecutor.durationSeconds(for: plan)
                         )
                         let plannedDuration = MashupTransitionExecutor.durationSeconds(for: plan)
-                        if (plan.type == .beatmatchedShort || plan.type == .beatmatchedLong),
+                        if (plan.type == .beatmatchedShort || plan.type == .beatmatchedLong || plan.type == .filterEcho),
                            let plannedCue = MashupBlendScheduler.plannedCueIfUsable(
                                cue: plan.aOutStartSec, duration: a.durationSec, blend: plannedDuration,
                                outgoingRate: Double(plan.rateA)

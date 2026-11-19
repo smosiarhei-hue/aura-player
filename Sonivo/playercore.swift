@@ -4776,6 +4776,7 @@ final class PlayerCore {
                         let sepLabel = stemPair.neural
                             ? "htdemucs"
                             : MidSideStemBaker.lastSeparationBackend.rawValue
+                        AutoMixDJEngine.shared.lastSeparationEngine = sepLabel == "htdemucs" ? "HTDemucs" : sepLabel
                         AutoMixDJEngine.shared.statusBadge = sepLabel == "htdemucs"
                             ? "HTDemucs"
                             : self.activeMashupStyle.phaseLabel(progress: enterP)
@@ -5168,7 +5169,10 @@ final class PlayerCore {
                 }
                 AutoMixDJEngine.shared.markMashupProgress(p)
                 AutoMixDJEngine.shared.currentBPM = Double(activeMashupStyle.targetBPM)
-                AutoMixDJEngine.shared.statusBadge = activeMashupStyle.phaseLabel(progress: p)
+                let basePhase = activeMashupStyle.phaseLabel(progress: p)
+                AutoMixDJEngine.shared.statusBadge = AutoMixDJEngine.shared.lastSeparationEngine == "HTDemucs"
+                    ? "HTDemucs · \(basePhase)"
+                    : basePhase
                 applyMashupTransitionEQ(progress: p)
                 let landAt = activeMashupStyle.isDuet
                     ? activeMashupStyle.handoffAt
@@ -5218,7 +5222,10 @@ final class PlayerCore {
         if mashup {
             AutoMixDJEngine.shared.markMashupProgress(p)
             AutoMixDJEngine.shared.currentBPM = Double(activeMashupStyle.targetBPM)
-            AutoMixDJEngine.shared.statusBadge = activeMashupStyle.phaseLabel(progress: p)
+            let basePhase = activeMashupStyle.phaseLabel(progress: p)
+            AutoMixDJEngine.shared.statusBadge = AutoMixDJEngine.shared.lastSeparationEngine == "HTDemucs"
+                ? "HTDemucs · \(basePhase)"
+                : basePhase
             applyMashupTransitionEQ(progress: p)
         }
 

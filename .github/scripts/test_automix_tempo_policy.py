@@ -41,12 +41,12 @@ let fieldPairs: [(Float, Float)] = [(99.38, 172.27), (172.27, 63.80),
                                      (60.09, 103.36), (90, 174), (66, 99)]
 for (a, b) in fieldPairs {
     let p = plan(a, b)
-    precondition(p.type == .crossfade, "wide-tempo pair must not use mashup")
+    precondition(p.type == .filterEcho && p.archetype == .echoFreeze, "wide-tempo pair must use echo freeze mashup")
     precondition(p.rateA == 1 && p.rateB == 1 && p.pitchShiftCentsB == 0,
                  "fallback must keep natural speed and pitch")
-    precondition(p.loopBarsA == 0 && p.fx.allSatisfy { $0.kind == .volume },
-                 "fallback must not schedule rhythmic effects or loops")
-    precondition(p.reason.contains("темпы"), "diagnostic reason missing")
+    precondition(p.loopBarsA == 0,
+                 "fallback must not schedule loops")
+    precondition(p.reason.contains("BPM gap") || p.reason.contains("Echo Freeze"), "diagnostic reason missing")
 }
 let cliff = MixPlanner.plan(from: profile("a", 129.2, energy: 0.8),
     to: profile("b", 123, energy: 0.35), aMeta: meta("a"), bMeta: meta("b"),
@@ -91,8 +91,8 @@ precondition(plan(99, 172, mode: .duet).type != .crossfade, "Duet policy changed
         planner = PLANNER.read_text()
         branch = planner.split('guard let tempo = BeatGridSynchronization.tempoMatch', 1)[1].split(
             '// Проверка фазового расхождения', 1)[0]
-        self.assertIn('return crossfade(', branch)
-        self.assertNotIn('planEchoFreeze(', branch)
+        self.assertIn('planEchoFreeze(', branch)
+        self.assertNotIn('return crossfade(', branch)
 
 if __name__ == '__main__':
     unittest.main()

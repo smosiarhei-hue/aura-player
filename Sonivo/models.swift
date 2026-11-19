@@ -43,7 +43,14 @@ final class AutoMixDJEngine {
     var isTransitionActive: Bool = false
     var transitionProgress: Double = 0.0
     var activeStrategyName: String = "GAPLESS"
-    var statusBadge: String? = nil
+    var statusBadge: String? = nil {
+        didSet {
+            if statusBadge == nil {
+                lastSeparationEngine = nil
+            }
+        }
+    }
+    var lastSeparationEngine: String? = nil
     var currentBPM: Double = 0
     var isDropTriggered: Bool = false
     var dropProgress: Double = 0.50

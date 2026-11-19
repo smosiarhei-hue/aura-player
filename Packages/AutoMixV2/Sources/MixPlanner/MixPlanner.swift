@@ -54,10 +54,11 @@ public enum MixPlanner {
 
         // Подбор темпа через динамический питч-фейдер
         guard let tempo = BeatGridSynchronization.tempoMatch(aBPM: a.bpm, bBPM: b.bpm) else {
-            // A long natural-rate mashup here cannot hold a common beat. Do not
-            // apply rhythmic FX or stem separation to an unalignable pair.
-            // PlayerCore routes this plan to the neutral, short safe fade.
-            return crossfade(a, b, settings, "Fallback: темпы нельзя безопасно совместить")
+            // When tempos are too far to stretch cleanly (gap > 8%), use Echo Freeze / Wash transition
+            // instead of falling back to a dry crossfade.
+            // Outgoing deck echos out with HPF and vocal ducking, incoming drops on beat,
+            // stems are separated via HTDemucs, and both tracks keep their natural rate.
+            return planEchoFreeze(from: a, to: b, tempo: nil, settings: settings, harmonic: harmonic)
         }
 
         // Проверка фазового расхождения сетки
@@ -78,7 +79,7 @@ public enum MixPlanner {
             phaseB = 0
             phaseError = BeatGridSynchronization.phaseErrorMilliseconds(outgoingBeat: phaseA, incomingBeat: phaseB, rateA: tempo.rateA, rateB: tempo.rateB)
             if phaseError > 120 {
-                return crossfade(a, b, settings, "Fallback: фазовое расхождение > 120ms")
+                return planEchoFreeze(from: a, to: b, tempo: tempo, settings: settings, harmonic: harmonic)
             }
         }
 

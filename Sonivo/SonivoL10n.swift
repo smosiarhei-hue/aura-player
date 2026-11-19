@@ -76,6 +76,7 @@ final class SonivoL10n {
     /// Localize live mashup phase codes from `MashupLiveStyle.phaseLabel`.
     func automixPhase(_ raw: String?) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
+        if raw.contains("HTDemucs") { return "HTDemucs" }
         if raw.hasPrefix("DUET LOCK") {
             let bpm = raw.split(separator: " ").dropFirst(2).joined(separator: " ")
             if isRussian {
