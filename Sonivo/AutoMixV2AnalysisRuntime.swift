@@ -451,7 +451,7 @@ final class AutoMixV2AnalysisRuntime {
                 pipelineStatus = plan.type == .none
                     ? "План запретил переход; трек доиграет до конца"
                     : (plan.type == .crossfade && planMode == .automix
-                       ? "Безопасный кроссфейд · \(plan.reason)"
+                       ? "AutoMix · Echo Out & Reverb Wash (\(Int(a.bpm))→\(Int(b.bpm)) BPM)"
                        : "План перехода готов · \(plan.archetype.rawValue) · A@\(String(format: "%.0f", a.mixOutSec))s")
                 AutoMixSessionLog.shared.event(
                     String(

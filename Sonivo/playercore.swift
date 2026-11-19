@@ -3602,10 +3602,10 @@ final class PlayerCore {
                     && automixUnalignedPair?.incoming == nextTrack.id
                 if let plan, plan.type == .none { return }
                 if finalGridFailed || plan == nil || plan?.type == .crossfade {
-                    // Unknown/weak grid: preserve the outro and the beginning of B;
-                    // do not invent a beat grid, force stems, pitch or rhythmic FX.
-                    let suggested = plan?.bars ?? 4
-                    let fade = min(5, max(3, suggested.isFinite ? suggested : 4))
+                    // Unknown/weak grid or wide tempo gap: apply professional DJ Echo Out + Reverb Wash
+                    // with highpass bass cut on A and clean drop on B.
+                    let suggested = plan?.bars ?? 8
+                    let fade = min(9, max(6, suggested.isFinite ? suggested : 8))
                     let cue = max(0, totalDur - fade)
                     guard currentPos >= cue else { return }
                     let remaining = max(0, totalDur - currentPos)
@@ -3615,7 +3615,7 @@ final class PlayerCore {
                     scheduleSimpleTransition(
                         current: current, nextTrack: nextTrack,
                         blendDuration: min(fade, remaining), incomingStart: 0,
-                        mashupBadge: nil, mashupStyle: nil, outgoingCue: nil,
+                        mashupBadge: "AutoMix · Echo Out & Reverb Wash", mashupStyle: nil, outgoingCue: cue,
                         safeAutomixFallback: true
                     )
                     return
@@ -4966,25 +4966,34 @@ final class PlayerCore {
                            self.transitionDuration, max(0, self.duration - self.playbackProgress))
                 )
                 // Seed beatmatch + mashup EQ so the first frames already lock tempo / vocal bed.
-                if self.isMashupTransitionMode {
+                if self.isMashupTransitionMode || self.automixSafeCrossfade {
                     if self.isUsingStreamPlayer, let item = self.activeStreamingPlayer.currentItem {
                         StreamBeatTap.shared.attach(to: item)
                     }
-                    let rates = self.activeMashupStyle.playbackRates(progress: 0)
-                    if self.isUsingStreamPlayer {
-                        self.activeStreamingPlayer.rate = rates.outgoing
-                    } else {
-                        self.applyMashupTimePitch(progress: 0, outgoing: true, rate: rates.outgoing)
+                    if self.incomingIsStream, let item = self.idleStreamingPlayer.currentItem {
+                        StreamBeatTap.shared.attach(to: item)
                     }
-                    if self.incomingIsStream {
-                        self.idleStreamingPlayer.rate = rates.incoming
+                    if self.automixSafeCrossfade {
+                        self.applySafeCrossfadeTransitionEQ(progress: 0)
+                        AutoMixDJEngine.shared.markMashupProgress(0)
+                        AutoMixDJEngine.shared.statusBadge = "Echo Out · Reverb Wash"
                     } else {
-                        self.applyMashupTimePitch(progress: 0, outgoing: false, rate: rates.incoming)
+                        let rates = self.activeMashupStyle.playbackRates(progress: 0)
+                        if self.isUsingStreamPlayer {
+                            self.activeStreamingPlayer.rate = rates.outgoing
+                        } else {
+                            self.applyMashupTimePitch(progress: 0, outgoing: true, rate: rates.outgoing)
+                        }
+                        if self.incomingIsStream {
+                            self.idleStreamingPlayer.rate = rates.incoming
+                        } else {
+                            self.applyMashupTimePitch(progress: 0, outgoing: false, rate: rates.incoming)
+                        }
+                        self.applyMashupTransitionEQ(progress: 0)
+                        AutoMixDJEngine.shared.markMashupProgress(0)
+                        AutoMixDJEngine.shared.currentBPM = Double(self.activeMashupStyle.targetBPM)
+                        AutoMixDJEngine.shared.statusBadge = self.activeMashupStyle.phaseLabel(progress: 0)
                     }
-                    self.applyMashupTransitionEQ(progress: 0)
-                    AutoMixDJEngine.shared.markMashupProgress(0)
-                    AutoMixDJEngine.shared.currentBPM = Double(self.activeMashupStyle.targetBPM)
-                    AutoMixDJEngine.shared.statusBadge = self.activeMashupStyle.phaseLabel(progress: 0)
                     SonivoDiagnostics.log(
                         "[Mashup] beatmatch A×\(String(format: "%.3f", rates.outgoing)) B×\(String(format: "%.3f", rates.incoming)) @\(Int(self.activeMashupStyle.targetBPM)) BPM · \(self.activeMashupStyle.reason)",
                         tag: "AUDIO"
